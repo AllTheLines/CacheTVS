@@ -54,7 +54,7 @@ impl GPU {
     /// Instantiate.
     pub fn new(
         mut constants: total_viewsheds_kernel::kernel::Constants,
-        elevations: &[f32],
+        elevations: Vec<f32>,
         distances_count: usize,
         band_deltas_count: usize,
         total_reserved_rings: usize,
@@ -179,7 +179,7 @@ impl GPU {
     fn setup_buffers(
         device: &wgpu::Device,
         constants: total_viewsheds_kernel::kernel::Constants,
-        elevations: &[f32],
+        elevations: Vec<f32>,
         distances_size: u64,
         band_deltas_size: u64,
         output_rings_size: u64,
@@ -195,7 +195,7 @@ impl GPU {
         let input_elevations_buffer =
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Elevations"),
-                contents: bytemuck::cast_slice(elevations),
+                contents: bytemuck::cast_slice(&elevations),
                 usage: wgpu::BufferUsages::STORAGE,
             });
 
@@ -291,6 +291,8 @@ impl GPU {
             output_rings: output_rings_buffer,
             download_rings: download_rings_buffer,
         };
+
+        drop(elevations); // Free up RAM. Although it gets dropped anyway right??
 
         tracing::trace!("...GPU buffers created.");
         Ok((buffers, bind_group))

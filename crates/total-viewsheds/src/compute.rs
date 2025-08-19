@@ -60,9 +60,11 @@ impl<'compute> Compute<'compute> {
             reason = "The `?` is hard to use in the closure"
         )]
         let gpu = if matches!(method, crate::config::ComputeType::Vulkan) {
+            let elevations = dem.elevations.clone();
+            dem.elevations = Vec::new(); // Free up some RAM.
             Some(super::gpu::GPU::new(
                 constants,
-                &dem.elevations,
+                elevations,
                 usize::try_from(dem.size)?,
                 usize::try_from(dem.band_deltas_size())?,
                 total_reserved_rings,
