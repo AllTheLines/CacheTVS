@@ -9,7 +9,7 @@ typedef struct {
     float observer_height;
 } calculation_constants;
 
-#define EARTH_RADIUS_SQUARED 12742000.0
+#define EARTH_RADIUS_SQUARED (float)12742000.0
 
 #define TOTAL_BANDS 72000000
 #define TVS_WIDTH 6000
@@ -89,7 +89,7 @@ extern "C" __global__ void angle_kernel(
         ull dem_id = pov_id + delta;
 
         float elevation_delta = elevations[dem_id] - pov_elevation;
-        angle_buf[i] = elevation_delta / distance[i];
+        angle_buf[i] = (elevation_delta / distance[i]) - (distances[i] / EARTH_RADIUS_SQUARED);
     }
 
     float prefix_max[BLOCK_SIZE];

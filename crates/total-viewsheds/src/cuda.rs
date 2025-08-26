@@ -177,7 +177,7 @@ impl CudaKernel {
         );
 
         let dims = Dimensions {
-            angles: crate::axes::SECTOR_STEPS as u32,
+            angles: axes::SECTOR_STEPS as u32,
             total_bands: constants.total_bands,
             max_los_as_points: constants.max_los_as_points,
             dem_width: constants.dem_width,
@@ -189,7 +189,7 @@ impl CudaKernel {
         dbg!(constants.tvs_width);
         dbg!(constants.max_los_as_points);
 
-        let mut time = Instant::now();
+        let time = Instant::now();
         self.calculate_angles(
             &dims,
             &elevations,
