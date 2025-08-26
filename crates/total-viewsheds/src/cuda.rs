@@ -8,7 +8,9 @@ use cudarc::nvrtc;
 use cudarc::nvrtc::CompileOptions;
 use cudarc::runtime::result::get_mem_info;
 use std::sync::Arc;
+use std::time::Instant;
 use total_viewsheds_kernel::kernel::Constants;
+use crate::axes;
 
 pub struct CudaKernel {
     ctx: Arc<CudaContext>,
@@ -43,12 +45,9 @@ impl CudaKernel {
                 include_str!("angles.cu"),
                 CompileOptions {
                     options: vec![
-                        // "-G".to_owned(),
-                        "--use_fast_math".to_owned(),
                         "--include-path=/usr/local/cuda/include/".to_owned(),
                         "--include-path=/usr/local/cuda/include/cccl/".to_owned(),
                         "--extra-device-vectorization".to_owned(),
-                        "--generate-line-info".to_owned(),
                     ],
                     ..CompileOptions::default()
                 },
@@ -76,18 +75,24 @@ impl CudaKernel {
         forwards_deltas: &CudaSlice<i32>,
         backward_deltas: &CudaSlice<i32>,
         angle_buf: &CudaSlice<f32>,
-        offset: usize,
-        n: usize,
+        total_sectors: u32,
+        angles: u32,
     ) -> Result<()> {
         // tracing::debug!("Calculating angles for {}", n);
 
         // TODO: this is extremely tuned for Everest, maybe make this a bit more general?
         let launch_cfg = LaunchConfig {
-            block_dim: (1000, 1, 1),
-            grid_dim: (n as u32, 1, 1),
+            block_dim: (750, 1, 1),
+            grid_dim: (total_sectors, angles, 1),
             shared_mem_bytes: 0,
         };
-        
+
+
+        // assert_eq!(
+        //     launch_cfg.block_dim.1 * launch_cfg.grid_dim.1,
+        //     deltas_size as u32
+        // );
+
         let mut builder = self.stream.launch_builder(&self.angle_kernel);
         builder.arg(constants);
         builder.arg(elevations);
@@ -95,7 +100,6 @@ impl CudaKernel {
         builder.arg(forwards_deltas);
         builder.arg(backward_deltas);
         builder.arg(angle_buf);
-        builder.arg(&offset);
 
         unsafe {
             builder.launch(launch_cfg)?;
@@ -172,22 +176,6 @@ impl CudaKernel {
             total / MB
         );
 
-        // allocate 7/8ths of the bytes left after reserving our overhead
-        // for angle calculations
-        let bytes_for_angles = ((free_bytes - overhead) * 7) / 8;
-
-        // Figure out the maximum number of lines we could possibly calculate at a time.
-        // At the time of writing, we need 2*line_size. One goes to the angle calculations
-        // and the other goes to the prefix max that we'll compute immediately after
-        // TODO: make a third of a "mask" of visible sectors
-        let lines_in_buf = bytes_for_angles / line_size;
-
-
-        let total_lines = crate::axes::SECTOR_STEPS as usize * constants.total_bands as usize;
-
-        let execution_count = total_lines.div_ceil(1<<31-1);
-        dbg!(execution_count);
-
         let dims = Dimensions {
             angles: crate::axes::SECTOR_STEPS as u32,
             total_bands: constants.total_bands,
@@ -201,20 +189,22 @@ impl CudaKernel {
         dbg!(constants.tvs_width);
         dbg!(constants.max_los_as_points);
 
-        for angle in 0..crate::axes::SECTOR_STEPS {
-            self.calculate_angles(
-                &dims,
-                &elevations,
-                &band_distances,
-                &forward_deltas,
-                &backward_deltas,
-                &result,
-                (angle as usize) * (constants.total_bands as usize),
-                constants.total_bands as usize,
-            )?;
-        }
+        let mut time = Instant::now();
+        self.calculate_angles(
+            &dims,
+            &elevations,
+            &band_distances,
+            &forward_deltas,
+            &backward_deltas,
+            &result,
+            constants.total_bands,
+            axes::SECTOR_STEPS as u32,
+        )?;
 
-        Ok(self.stream.memcpy_dtov(&result)?)
+        let res = self.stream.memcpy_dtov(&result)?;
+        println!("Took {:?} to process angles: {}", time.elapsed(), 1);
+
+        Ok(res)
     }
 }
 

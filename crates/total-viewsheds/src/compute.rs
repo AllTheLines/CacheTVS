@@ -158,7 +158,7 @@ impl<'compute> Compute<'compute> {
         if matches!(self.method, crate::config::ComputeType::Cuda) {
             let (heatmap, _) = self.compute_cuda()?;
             self.total_surfaces = heatmap.clone();
-            self.render_total_surfaces()?;
+            // self.render_total_surfaces()?;
 
             return Ok((heatmap, vec![]))
         }

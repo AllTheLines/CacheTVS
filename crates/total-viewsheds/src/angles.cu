@@ -15,9 +15,9 @@ typedef struct {
 #define TVS_WIDTH 6000
 #define MAX_LOS_POINTS 6000
 
-#define BLOCK_SIZE 6
+#define BLOCK_SIZE 8
 
-#define TAN_ONE_RAD 0.0174533
+#define TAN_ONE_RAD (float)0.0174533
 
 #define ull unsigned long long
 
@@ -43,16 +43,14 @@ extern "C" __global__ void angle_kernel(
     //           memory accesses?
     const unsigned int* __restrict__ delta_pos,
     const unsigned int* __restrict__ delta_neg,
-    float* result,
-    int offset
+    float* result
 ) {
     // line_num tells us what (kernel_id, angle) we are at
-    ull line_num = offset + blockIdx.x;
+    ull line_num = blockIdx.x;
 
-//     printf("line_num: %d\n", line_num);
 
-    ull tvs_id = line_num % TOTAL_BANDS;
-    ull angle = line_num / TOTAL_BANDS;
+    ull tvs_id = line_num;
+    ull angle = blockIdx.y;
 
     // determine whether we are forwards or backwards facing
     // TODO: this doesn't seem to "fall out" of the implementation
@@ -69,22 +67,24 @@ extern "C" __global__ void angle_kernel(
     // get the dem id for our pov which is where we start our calculation
     ull pov_id = (pov_x * constants.dem_width) + pov_y;
 
-    // calculate he height
+    // calculate the height
     const float pov_elevation = elevations[pov_id] + constants.observer_height;
 
-
+    int deltas[BLOCK_SIZE];
     float angle_buf[BLOCK_SIZE];
-    float prefix_max[BLOCK_SIZE];
     float distance[BLOCK_SIZE];
 
     int delta_index_start = (angle*MAX_LOS_POINTS) + threadIdx.x*BLOCK_SIZE;
 
     #pragma unroll
-    for (int i = 0; i < BLOCK_SIZE; i++) {
-        int delta = forward ? delta_pos[delta_index_start+i]
-                            : -delta_neg[delta_index_start+i];
+    for (int i = 0; i < BLOCK_SIZE / 4; i++) {
+        reinterpret_cast<int4*>(&deltas)[i] = reinterpret_cast<const int4*>(&delta_pos[delta_index_start])[i];
+        reinterpret_cast<float4*>(&distance)[i] = reinterpret_cast<const float4*>(&distances[delta_index_start])[i];
+    }
 
-        distance[i] = distances[delta_index_start + i];
+    #pragma unroll
+    for (int i = 0; i < BLOCK_SIZE; i++) {
+        int delta = forward ? deltas[i] : -deltas[i];
 
         ull dem_id = pov_id + delta;
 
@@ -92,9 +92,9 @@ extern "C" __global__ void angle_kernel(
         angle_buf[i] = elevation_delta / distance[i];
     }
 
-    __syncthreads();
+    float prefix_max[BLOCK_SIZE];
 
-    using BlockScan = cub::BlockScan<float, 1000>;
+    using BlockScan = cub::BlockScan<float, MAX_LOS_POINTS / BLOCK_SIZE>;
     __shared__ typename BlockScan::TempStorage temp_storage;
 
     BlockScan(temp_storage)
