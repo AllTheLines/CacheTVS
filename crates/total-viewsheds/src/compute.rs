@@ -1,6 +1,7 @@
 //! The main entrypoint for running computations.
 
 use color_eyre::Result;
+use crate::axes;
 use crate::cuda::{CudaKernel};
 use crate::gpu::GPU;
 
@@ -27,7 +28,6 @@ pub struct Compute<'compute> {
 #[derive(Debug)]
 pub struct Angle {
     pub forward_deltas: Vec<i32>,
-    pub backward_deltas: Vec<i32>,
     pub band_distances: Vec<f32>,
 }
 
@@ -106,48 +106,15 @@ impl<'compute> Compute<'compute> {
         (band_length_in_km * rings_per_km) as usize
     }
 
-
-    fn build_angle_cache(&mut self) -> Result<Vec<Angle>> {
-        let mut angles = vec![];
-        for angle in 0..crate::axes::SECTOR_STEPS {
-            self.load_or_compute_cache(angle)?;
-
-            let mut forward_deltas = vec![0; self.dem.band_deltas.len()];
-            let mut backward_deltas = vec![0; self.dem.band_deltas.len()];
-
-            let mut sum = 0;
-            let mut diff = 0;
-
-            for (i, delta) in self.dem.band_deltas.iter().enumerate() {
-                sum += delta;
-                diff -= delta;
-
-                forward_deltas[i] = sum;
-                backward_deltas[i] = diff;
-            }
-
-
-            // TODO: make forward distances and backward distances for parallel computation
-            angles.push(Angle{
-                forward_deltas,
-                backward_deltas,
-                band_distances: self.dem.band_distances.clone(),
-            })
-        }
-
-        Ok(angles)
-    }
-
     fn compute_cuda(&mut self) -> Result<(Vec<f32>, Vec<Vec<u32>>)> {
-        let angles = self.build_angle_cache()?;
 
-        let kernel = CudaKernel::new()?;
+        let kernel: CudaKernel = CudaKernel::new()?;
+
         let heatmap = kernel.line_of_sight(
-            &self.constants,
-            &angles,
             &self.dem.elevations,
             self.dem.computable_points_count as usize,
         )?;
+
 
         Ok((heatmap, vec![]))
     }
@@ -158,6 +125,7 @@ impl<'compute> Compute<'compute> {
         if matches!(self.method, crate::config::ComputeType::Cuda) {
             let (heatmap, _) = self.compute_cuda()?;
             self.total_surfaces = heatmap.clone();
+            println!("number bigger: {:?}", self.total_surfaces.iter().cloned().filter(|&f| f > 0.0).count());
             self.render_total_surfaces()?;
 
             return Ok((heatmap, vec![]))
