@@ -67,6 +67,7 @@ enum BandDirection {
 }
 
 /// The kernel
+#[expect(clippy::too_many_lines, reason = "Will refactor soon")]
 #[inline]
 pub fn kernel(
     // The identifier that decides which PoV and band direction to calculate.
@@ -102,6 +103,7 @@ pub fn kernel(
     let mut max_angle = MAX_ANGLE;
     let half_total_bands = constants.total_bands.div_euclid(2);
     let mut is_currently_visible = true;
+    let mut is_previously_visible = true;
     let mut closing = false;
 
     // Keep track of the amount of the earth visible from this particular band
@@ -142,8 +144,13 @@ pub fn kernel(
 
     // We already know that the first point from the PoV is always visible and
     // is therefore the opening of a visible region.
-    save_ring_data(ring_data, ring_data_start + ring_id, pov_id);
-    let mut is_previously_visible = true;
+    save_ring_data(
+        ring_data,
+        constants.reserved_rings_per_band,
+        ring_data_start,
+        ring_id,
+        pov_id,
+    );
 
     // The DEM ID will change as we loop, but the PoV won't. For now we need the PoV
     // ID to start the reconstruction of a unique band from the band delta template.
@@ -158,6 +165,13 @@ pub fn kernel(
             BandDirection::Forward => delta_add(dem_id, delta),
             BandDirection::Backward => delta_subtract(dem_id, delta),
         };
+
+        // TODO: Is there a way to create the deltas so that they never create DEM IDs outside the
+        // DEM? The issue is that bands of sight need to be different lengths for different angles.
+        // Consider how the diagnols reach geographically further with the same number of points.
+        if dem_id >= elevations.len() {
+            break;
+        }
 
         // Pull the actual data needed to make a visibility calculation from global memory.
         // TODO: does getting these all at once before the loop give a speed up?
@@ -219,13 +233,25 @@ pub fn kernel(
         // Store the position on the DEM where the visible region starts.
         if opening {
             ring_id += 1;
-            save_ring_data(ring_data, ring_data_start + ring_id, dem_id);
+            save_ring_data(
+                ring_data,
+                constants.reserved_rings_per_band,
+                ring_data_start,
+                ring_id,
+                dem_id,
+            );
         }
 
         // Store the position on the DEM where the visible region ends.
         if closing {
             ring_id += 1;
-            save_ring_data(ring_data, ring_data_start + ring_id, dem_id);
+            save_ring_data(
+                ring_data,
+                constants.reserved_rings_per_band,
+                ring_data_start,
+                ring_id,
+                dem_id,
+            );
         }
 
         // Prepare for the next iteration.
@@ -236,11 +262,23 @@ pub fn kernel(
     // Close any ring sectors prematurely cut off by a restricted line of sight.
     if is_currently_visible && !closing {
         ring_id += 1;
-        save_ring_data(ring_data, ring_data_start + ring_id, dem_id);
+        save_ring_data(
+            ring_data,
+            constants.reserved_rings_per_band,
+            ring_data_start,
+            ring_id,
+            dem_id,
+        );
     }
 
     // Make a note at the start of the ring sector data of how many rings we found.
-    save_ring_data(ring_data, ring_data_start, ring_id);
+    save_ring_data(
+        ring_data,
+        constants.reserved_rings_per_band,
+        ring_data_start,
+        0,
+        ring_id,
+    );
 
     // Accumulate surfaces for a given DEM ID. Note that this is thread safe, because
     // front/back bands are kept in separate array positions. And that actual
@@ -299,11 +337,15 @@ const fn delta_subtract(dem_id: usize, delta: i32) -> usize {
     "
 )]
 /// Save ring data.
-fn save_ring_data(ring_data: &mut [u32], index: usize, pov_id: usize) {
-    // No-op this for now, it's profoundly memory intensive.
-    // ring_data[index] = pov_id as u32;
-    #[cfg(not(target_arch = "spirv"))]
-    {
-        ring_data[index] = pov_id as u32;
+fn save_ring_data(
+    ring_data: &mut [u32],
+    reserved_rings_per_band: u32,
+    start: usize,
+    index: usize,
+    value: usize,
+) {
+    if index >= reserved_rings_per_band as usize {
+        return;
     }
+    ring_data[start + index] = value as u32;
 }

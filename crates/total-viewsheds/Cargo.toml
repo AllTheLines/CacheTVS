@@ -9,9 +9,14 @@ bytemuck = "1.22.0"
 clap = { version = "4.5.42", features = ["derive"] }
 color-eyre = "0.6.5"
 dirs = "6.0.0"
+fjall = "2.11.2"
 geo = "0.30.0"
+geojson = "0.24.2"
 image = { version = "0.25.6", default-features = false, features = ["png"] }
 pollster = "0.4"
+proj4rs = { version = "0.1.8", features = ["aeqd"] }
+serde = "1.0.219"
+serde_json = "1.0.143"
 total-viewsheds-kernel = { path = "../shader"}
 tracing = { version = "0.1.41" }
 tracing-subscriber = { version = "0.3.19", default-features = false, features = ["env-filter", "ansi"] }
@@ -19,6 +24,7 @@ wgpu = { version = "25", features = ["spirv"] }
 radsort = "0.1.1"
 
 [dev-dependencies]
+googletest = "0.14.2"
 tempfile = "3.20.0"
 
 [lints]

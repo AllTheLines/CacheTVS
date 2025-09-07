@@ -20,3 +20,4 @@ vgcore.*
 /target
 rustc-ice*
 /heatmap.png
+/output

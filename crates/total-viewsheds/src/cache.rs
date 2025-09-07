@@ -87,7 +87,13 @@ mod test {
     #[test]
     fn saves_and_loads() {
         let state_directory = tempfile::tempdir().unwrap();
-        let mut dem = crate::dem::DEM::new(9, 1.0, 3).unwrap();
+        let mut dem = crate::dem::DEM::new(
+            crate::projection::LatLonCoord(geo::Coord::zero()),
+            9,
+            1.0,
+            3,
+        )
+        .unwrap();
         let cache = crate::cache::Cache::new(state_directory.path(), dem.width, 45);
         cache.ensure_directories_exists().unwrap();
         dem.calculate_axes(35.0).unwrap();

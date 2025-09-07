@@ -1,5 +1,7 @@
 //! Load elevation data from a `.bt` file.
 
+// TODO: Move over to GeoTiff. The current blessed crate fails for larger DEMs.
+
 #![expect(
     clippy::little_endian_bytes,
     reason = "The `.bt` file format is little endian"
@@ -23,7 +25,7 @@ pub enum DataType {
     dead_code,
     reason = "I'd like to make this into its own crate at some point."
 )]
-#[derive(Debug)]
+#[derive(Default, Debug)]
 pub struct Header {
     /// Width of DEM raster.
     pub width: u32,
@@ -56,9 +58,9 @@ pub struct Header {
     pub left: f64,
     /// The right-most extent.
     pub right: f64,
-    /// The right-most extent.
+    /// The bottom-most extent.
     pub bottom: f64,
-    /// The right-most extent.
+    /// The top-most extent.
     pub top: f64,
     /// Where to find the projection informaation.
     ///   0: Projection is fully described by this header
@@ -90,9 +92,8 @@ impl BinaryTerrain {
         let mut magic = [0u8; 10];
         file.read_exact(&mut magic)?;
         let magic_str = std::string::String::from_utf8_lossy(&magic);
-        tracing::debug!("Binary Terrain header message: {magic_str}");
         if !magic_str.starts_with("binterr1.3") {
-            color_eyre::eyre::bail!("Not a Binary Terrain v1.3 file");
+            color_eyre::eyre::bail!("Not a Binary Terrain v1.3 file: {}", magic_str);
         }
 
         let width = read_u32_le(&mut file)?;
@@ -144,34 +145,57 @@ impl BinaryTerrain {
         // Elevation data
         tracing::info!("Loading {points_count} DEM points...");
         let data = if is_float {
-            let mut values = std::vec::Vec::with_capacity(points_count);
-            for chunk in buffer.chunks_exact(4) {
-                assert!(chunk.len() == 4, "unreachable");
+            let mut values = vec![0.0; points_count];
+            for (index, chunk) in buffer.chunks_exact(4).enumerate() {
+                assert!(
+                    chunk.len() == 4,
+                    "to prove to clippy that array indexing is okay"
+                );
                 #[expect(
                     clippy::indexing_slicing,
-                    reason = "We've already proven the array size"
+                    reason = "We've already proven the array sizes"
                 )]
-                values.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+                {
+                    let value = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+                    values[Self::flip(index, width, height)?] = value;
+                }
             }
             DataType::Float32(values)
         } else {
             if data_size != 2 {
                 color_eyre::eyre::bail!("Unsupported `.bt` field value for data size: {data_size}");
             }
-            let mut values = std::vec::Vec::with_capacity(points_count);
-            for chunk in buffer.chunks_exact(2) {
-                assert!(chunk.len() == 2, "");
+            let mut values = vec![0; points_count];
+            for (index, chunk) in buffer.chunks_exact(2).enumerate() {
+                assert!(
+                    chunk.len() == 2,
+                    "to prove to clippy that array indexing is okay"
+                );
                 #[expect(
                     clippy::indexing_slicing,
                     reason = "We've already proven the array size"
                 )]
-                values.push(i16::from_le_bytes([chunk[0], chunk[1]]));
+                {
+                    let value = i16::from_le_bytes([chunk[0], chunk[1]]);
+                    values[Self::flip(index, width, height)?] = value;
+                }
             }
             DataType::Int16(values)
         };
 
         tracing::info!("Dem file loaded.");
         Ok(Self { header, data })
+    }
+
+    /// Flip data so that it starts in the top-left and ends at the bottom-right.
+    fn flip(index: usize, width_u32: u32, height_u32: u32) -> Result<usize> {
+        let width = usize::try_from(width_u32)?;
+        let height = usize::try_from(height_u32)?;
+        let x = index.div_euclid(height);
+        let y = index.rem_euclid(height);
+        let y_flipped = (width - 1) - y;
+
+        Ok((y_flipped * height) + x)
     }
 
     /// Derive the scale of the DEM. Units are in meters.
@@ -182,6 +206,11 @@ impl BinaryTerrain {
         let scale = distance / f64::from(self.header.width);
         tracing::debug!("DEM scale calculated to {scale}m.");
         scale
+    }
+
+    /// Get the centre of the tile. We repurpose the extent fields for this.
+    pub fn centre(&self) -> crate::projection::LatLonCoord {
+        crate::projection::LatLonCoord((self.header.left, self.header.top).into())
     }
 }
 
@@ -211,4 +240,38 @@ fn read_f64_le(file: &mut std::fs::File) -> std::io::Result<f64> {
     let mut buffer = [0u8; 8];
     file.read_exact(&mut buffer)?;
     Ok(f64::from_le_bytes(buffer))
+}
+
+#[expect(
+    clippy::default_numeric_fallback,
+    clippy::needless_range_loop,
+    clippy::indexing_slicing,
+    reason = "These are just tests"
+)]
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn flip() {
+        #[rustfmt::skip]
+        let original = [
+            0, 1, 2,
+            3, 4, 5,
+            6, 7, 8
+        ];
+
+        let mut flipped = vec![0; original.len()];
+        for index in 0..original.len() {
+            let flipped_index = BinaryTerrain::flip(index, 3, 3).unwrap();
+            flipped[flipped_index] = original[index];
+        }
+
+        #[rustfmt::skip]
+        assert_eq!(flipped, [
+            2, 5, 8,
+            1, 4, 7,
+            0, 3, 6
+        ]);
+    }
 }

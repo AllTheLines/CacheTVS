@@ -386,7 +386,7 @@ impl GPU {
     }
 
     /// Compute a single sector.
-    pub fn run(&self, distances: &[f32], band_deltas: &[i32]) -> Result<Vec<f32>> {
+    pub fn run(&self, distances: &[f32], band_deltas: &[i32]) -> Result<(Vec<f32>, Vec<u32>)> {
         self.queue
             .write_buffer(&self.buffers.distances, 0, bytemuck::cast_slice(distances));
         self.queue.write_buffer(
@@ -442,31 +442,37 @@ impl GPU {
         // commands in the command buffer in order.
         self.queue.submit([command_buffer]);
 
-        // We now map the download buffer so we can read it. Mapping tells wgpu that we want to read/write
+        // We now map the download buffers so we can read it. Mapping tells wgpu that we want to read/write
         // to the buffer directly by the CPU and it should not permit any more GPU operations on the buffer.
         //
         // Mapping requires that the GPU be finished using the buffer before it resolves, so mapping has a callback
         // to tell you when the mapping is complete.
-        let buffer_slice = self.buffers.download_surfaces.slice(..);
-        buffer_slice.map_async(wgpu::MapMode::Read, |_| {
+        let buffer_slice_surfaces = self.buffers.download_surfaces.slice(..);
+        buffer_slice_surfaces.map_async(wgpu::MapMode::Read, |_| {
             // In this case we know exactly when the mapping will be finished,
             // so we don't need to do anything in the callback.
         });
+        let buffer_slice_rings = self.buffers.download_rings.slice(..);
+        buffer_slice_rings.map_async(wgpu::MapMode::Read, |_| {});
 
         // Wait for the GPU to finish working on the submitted work. This doesn't work on WebGPU, so we would need
         // to rely on the callback to know when the buffer is mapped.
         self.device.poll(wgpu::PollType::Wait)?;
 
         // We can now read the data from the buffer.
-        let data = buffer_slice.get_mapped_range();
+        let surfaces_data = buffer_slice_surfaces.get_mapped_range();
+        let ring_data = buffer_slice_rings.get_mapped_range();
         // Convert the data back to a slice of f32.
-        let result = bytemuck::cast_slice(&data).to_vec();
+        let surfaces_result = bytemuck::cast_slice(&surfaces_data).to_vec();
+        let ring_result = bytemuck::cast_slice(&ring_data).to_vec();
 
-        drop(data);
+        drop(surfaces_data);
+        drop(ring_data);
 
         self.buffers.download_surfaces.unmap();
+        self.buffers.download_rings.unmap();
 
-        Ok(result)
+        Ok((surfaces_result, ring_result))
     }
 
     /// Find a 3D kernel dispatch that balances all dimensions.

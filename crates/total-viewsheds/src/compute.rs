@@ -1,17 +1,21 @@
 //! The main entrypoint for running computations.
 
-use color_eyre::Result;
+use color_eyre::{eyre::Ok, Result};
 
 /// Handles all the computations.
 pub struct Compute<'compute> {
     /// Where to run the kernel computations
-    method: crate::config::ComputeType,
+    backend: crate::config::Backend,
+    /// What to compute.
+    process: Vec<crate::config::Process>,
     /// The GPU manager
     gpu: Option<super::gpu::GPU>,
     /// The OS's state directory for saving our cache into.
     state_directory: Option<std::path::PathBuf>,
     /// Output directory
-    output_dir: Option<std::path::PathBuf>,
+    output_directory: Option<std::path::PathBuf>,
+    /// Storage interface for conputed ring (viewshed) data.
+    storage: Option<crate::output::ring_data::Storage>,
     /// The Digital Elevation Model that we're computing.
     dem: &'compute mut crate::dem::DEM,
     /// The constants for each kernel computation.
@@ -20,19 +24,44 @@ pub struct Compute<'compute> {
     total_reserved_rings: usize,
     /// Keeps track of the cumulative surfaces from every angle.
     pub total_surfaces: Vec<f32>,
+    /// Keeps track of the ring (viewshed) data.
+    pub ring_data: Vec<Vec<u32>>,
 }
 
 impl<'compute> Compute<'compute> {
     /// Instantiate.
     pub fn new(
-        method: crate::config::ComputeType,
+        backend: crate::config::Backend,
+        process: Vec<crate::config::Process>,
         state_directory: Option<std::path::PathBuf>,
-        output_dir: Option<std::path::PathBuf>,
+        maybe_output_directory: Option<std::path::PathBuf>,
         dem: &'compute mut crate::dem::DEM,
         rings_per_km: f32,
     ) -> Result<Self> {
         let total_bands = dem.computable_points_count * 2;
-        let rings_per_band = Self::ring_count_per_band(rings_per_km, dem.max_line_of_sight);
+
+        let rings_per_band = if Self::is_process_viewsheds(&process) {
+            Self::ring_count_per_band(rings_per_km, dem.max_line_of_sight)
+        } else {
+            0
+        };
+        let total_reserved_rings = if Self::is_process_viewsheds(&process) {
+            usize::try_from(total_bands)? * rings_per_band
+        } else {
+            0
+        };
+
+        let storage = if Self::is_process_viewsheds(&process) {
+            match &maybe_output_directory {
+                Some(output_directory) => {
+                    Some(crate::output::ring_data::Storage::new(output_directory)?)
+                }
+                None => None,
+            }
+        } else {
+            None
+        };
+
         let constants = total_viewsheds_kernel::kernel::Constants {
             total_bands,
             max_los_as_points: dem.max_los_as_points,
@@ -43,23 +72,11 @@ impl<'compute> Compute<'compute> {
             ..Default::default()
         };
 
-        #[cfg(test)]
-        let total_reserved_rings = usize::try_from(total_bands)? * rings_per_band;
-        #[expect(
-            clippy::cfg_not_test,
-            reason = "
-              No-op for now, it can be incredibly memory intensive, so we need to be explicit about
-              how we handle it.
-            "
-        )]
-        #[cfg(not(test))]
-        let total_reserved_rings = 1;
-
         #[expect(
             clippy::if_then_some_else_none,
             reason = "The `?` is hard to use in the closure"
         )]
-        let gpu = if matches!(method, crate::config::ComputeType::Vulkan) {
+        let gpu = if matches!(backend, crate::config::Backend::Vulkan) {
             let elevations = dem.elevations.clone();
             dem.elevations = Vec::new(); // Free up some RAM.
             Some(super::gpu::GPU::new(
@@ -74,14 +91,17 @@ impl<'compute> Compute<'compute> {
         };
 
         Ok(Self {
-            method,
+            backend,
+            process,
             gpu,
             state_directory,
-            output_dir,
+            output_directory: maybe_output_directory,
+            storage,
             dem,
             constants,
             total_reserved_rings,
             total_surfaces: Vec::default(),
+            ring_data: Vec::default(),
         })
     }
 
@@ -93,27 +113,63 @@ impl<'compute> Compute<'compute> {
         reason = "Accuracy isn't needed, we're just calculating a value to help find minimum RAM usage."
     )]
     /// Calculate the expected number of rings per band of sight.
-    fn ring_count_per_band(rings_per_km: f32, max_line_of_sight: u32) -> usize {
+    pub const fn ring_count_per_band(rings_per_km: f32, max_line_of_sight: u32) -> usize {
         let meters_per_km = 1000.0;
         let band_length_in_km = (max_line_of_sight as f32) / meters_per_km;
         (band_length_in_km * rings_per_km) as usize
     }
 
-    /// Do alld computations.
-    pub fn run(&mut self) -> Result<(Vec<f32>, Vec<Vec<u32>>)> {
-        let mut cumulative_surfaces = vec![0.0; usize::try_from(self.dem.computable_points_count)?];
-        self.total_surfaces.clone_from(&cumulative_surfaces);
-        let mut all_ring_data = Vec::new();
+    /// Are we computing everything?
+    fn is_process_everything(process: &[crate::config::Process]) -> bool {
+        process.contains(&crate::config::Process::All)
+    }
+
+    /// Are we computing total surface areas?
+    pub fn is_process_surfaces(process: &[crate::config::Process]) -> bool {
+        Self::is_process_everything(process)
+            || process.contains(&crate::config::Process::TotalSurfaces)
+    }
+
+    /// Are we computing viewsheds?
+    pub fn is_process_viewsheds(process: &[crate::config::Process]) -> bool {
+        Self::is_process_everything(process) || process.contains(&crate::config::Process::Viewsheds)
+    }
+
+    /// Do all computations.
+    pub fn run(&mut self) -> Result<()> {
+        let mut sector_surfaces = if Self::is_process_surfaces(&self.process) {
+            let blank = vec![0.0; usize::try_from(self.dem.computable_points_count)?];
+            self.total_surfaces.clone_from(&blank);
+            blank
+        } else {
+            Vec::new()
+        };
+
+        if Self::is_process_viewsheds(&self.process) && self.output_directory.is_some() {
+            self.save_ring_metadata()?;
+        }
 
         for angle in 0..crate::axes::SECTOR_STEPS {
             self.load_or_compute_cache(angle)?;
             let mut sector_ring_data = vec![0; self.total_reserved_rings];
-            self.compute_sector(angle, &mut cumulative_surfaces, &mut sector_ring_data)?;
-            all_ring_data.push(sector_ring_data.clone());
-            self.render_total_surfaces()?;
+            self.compute_sector(angle, &mut sector_surfaces, &mut sector_ring_data)?;
+
+            if Self::is_process_viewsheds(&self.process) {
+                match &self.output_directory {
+                    Some(_) => {
+                        self.save_sector_ring_data(angle, &sector_ring_data)?;
+                    }
+                    None => self.ring_data.push(sector_ring_data.clone()),
+                }
+            }
+
+            if Self::is_process_surfaces(&self.process) {
+                self.add_sector_surfaces_to_running_total(&sector_surfaces);
+                self.render_total_surfaces()?;
+            }
         }
 
-        Ok((cumulative_surfaces, all_ring_data))
+        Ok(())
     }
 
     /// Either load cache from the filesystem or create and save it.
@@ -162,10 +218,53 @@ impl<'compute> Compute<'compute> {
         Ok(())
     }
 
+    /// Add the accumulated total surface areas for the current sector to the running total.
+    fn add_sector_surfaces_to_running_total(&mut self, cumulative_surfaces: &[f32]) {
+        for (left, right) in self
+            .total_surfaces
+            .iter_mut()
+            .zip(cumulative_surfaces.iter())
+        {
+            *left += right;
+        }
+    }
+
+    /// The metadata needed to reconstruct viewsheds based on the DEM and reserved rings.
+    pub fn metadata(&self) -> Result<crate::output::ring_data::MetaData> {
+        Ok(crate::output::ring_data::MetaData {
+            width: self.dem.width,
+            scale: self.dem.scale,
+            max_line_of_sight: self.dem.max_line_of_sight,
+            reserved_ring_size: usize::try_from(self.constants.reserved_rings_per_band)?,
+            sector_shift: crate::axes::SECTOR_SHIFT,
+            centre: self.dem.centre,
+        })
+    }
+
+    /// Save band deltas to cache.
+    pub fn save_sector_ring_data(&self, sector: u16, ring_data: &[u32]) -> Result<()> {
+        let Some(storage) = self.storage.as_ref() else {
+            color_eyre::eyre::bail!("Tried to save sector ring data without any active storage.");
+        };
+
+        storage.save_sector(sector, ring_data)?;
+        Ok(())
+    }
+
+    /// Save the metadata for the ring data (aka viewsheds).
+    pub fn save_ring_metadata(&self) -> Result<()> {
+        let Some(storage) = self.storage.as_ref() else {
+            color_eyre::eyre::bail!("Tried to save ring metadata without any active storage.");
+        };
+
+        storage.save_metadata(&self.metadata()?)?;
+        Ok(())
+    }
+
     /// Render a heatmap of the total surface areas of each point within the computable area of the
     /// DEM.
     fn render_total_surfaces(&self) -> Result<()> {
-        let Some(output_dir) = &self.output_dir else {
+        let Some(output_dir) = &self.output_directory else {
             return Ok(());
         };
 
@@ -187,42 +286,34 @@ impl<'compute> Compute<'compute> {
         ring_data: &mut [u32],
     ) -> Result<()> {
         tracing::info!("Running kernel for {angle}°");
-        match self.method {
-            crate::config::ComputeType::CPU => {
+        match self.backend {
+            crate::config::Backend::CPU => {
                 self.compute_sector_cpu(cumulative_surfaces, ring_data);
             }
-            crate::config::ComputeType::Vulkan => {
-                self.compute_sector_vulkan(cumulative_surfaces)?;
+            crate::config::Backend::Vulkan => {
+                self.compute_sector_vulkan(cumulative_surfaces, ring_data)?;
             }
 
             #[expect(clippy::unimplemented, reason = "Coming Soon!")]
-            crate::config::ComputeType::Cuda => unimplemented!(),
+            crate::config::Backend::Cuda => unimplemented!(),
         }
-
-        self.add_sector_surfaces_to_running_total(cumulative_surfaces);
 
         Ok(())
     }
 
-    /// Add the accumulated total surface areas for the current sector to the running total.
-    fn add_sector_surfaces_to_running_total(&mut self, cumulative_surfaces: &[f32]) {
-        for (left, right) in self
-            .total_surfaces
-            .iter_mut()
-            .zip(cumulative_surfaces.iter())
-        {
-            *left += right;
-        }
-    }
-
     /// Do a whole sector calculation on the GPU using Vulkan.
-    fn compute_sector_vulkan(&mut self, cumulative_surfaces: &mut [f32]) -> Result<()> {
+    fn compute_sector_vulkan(
+        &mut self,
+        cumulative_surfaces: &mut [f32],
+        ring_data: &mut [u32],
+    ) -> Result<()> {
         let Some(gpu) = self.gpu.as_mut() else {
             color_eyre::eyre::bail!("`self.gpu` not instantiated yet.");
         };
 
-        let result = gpu.run(&self.dem.band_distances, &self.dem.band_deltas)?;
-        cumulative_surfaces.copy_from_slice(result.as_slice());
+        let (surfaces, rings) = gpu.run(&self.dem.band_distances, &self.dem.band_deltas)?;
+        cumulative_surfaces.copy_from_slice(surfaces.as_slice());
+        ring_data.copy_from_slice(rings.as_slice());
         Ok(())
     }
 
@@ -242,30 +333,42 @@ impl<'compute> Compute<'compute> {
     }
 }
 
-#[expect(clippy::unreadable_literal, reason = "It's just for the tests")]
 #[cfg(test)]
-mod test {
+pub mod test {
     use super::*;
 
-    fn make_dem() -> crate::dem::DEM {
-        crate::dem::DEM::new(9, 1.0, 3).unwrap()
+    pub fn make_dem() -> crate::dem::DEM {
+        crate::dem::DEM::new(
+            crate::projection::LatLonCoord((33.33, 33.33).into()),
+            9,
+            1.0,
+            3,
+        )
+        .unwrap()
     }
 
-    fn compute_tvs(dem: &mut crate::dem::DEM, elevations: &[i16]) -> (Vec<f32>, Vec<Vec<u32>>) {
+    pub fn compute<'dem>(dem: &'dem mut crate::dem::DEM, elevations: &[i16]) -> Compute<'dem> {
         dem.elevations = elevations.iter().map(|&x| f32::from(x)).collect();
-        let mut compute =
-            Compute::new(crate::config::ComputeType::CPU, None, None, dem, 5000.0).unwrap();
-        compute.run().unwrap()
-    }
-
-    fn create_tvs(elevations: &[i16]) -> (Vec<f32>, Vec<Vec<u32>>) {
-        let mut dem = make_dem();
-        compute_tvs(&mut dem, elevations)
+        let mut compute = Compute::new(
+            crate::config::Backend::CPU,
+            vec![
+                crate::config::Process::TotalSurfaces,
+                crate::config::Process::Viewsheds,
+            ],
+            None,
+            None,
+            dem,
+            5000.0,
+        )
+        .unwrap();
+        compute.run().unwrap();
+        compute
     }
 
     fn create_viewshed(elevations: &[i16], pov_id: u32) -> Vec<String> {
         let mut dem = make_dem();
-        let (_, ring_data) = compute_tvs(&mut dem, elevations);
+        let compute = compute(&mut dem, elevations);
+        let ring_data = compute.ring_data;
         crate::output::ascii::OutputASCII::convert(
             &dem,
             pov_id,
@@ -276,7 +379,7 @@ mod test {
     }
 
     #[rustfmt::skip]
-    fn single_peak_dem() -> Vec<i16> {
+    pub fn single_peak_dem() -> Vec<i16> {
         vec![
             0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 1, 1, 1, 1, 1, 1, 1, 0,
@@ -291,7 +394,7 @@ mod test {
     }
 
     #[rustfmt::skip]
-    fn double_peak_dem() -> Vec<i16> {
+    pub fn double_peak_dem() -> Vec<i16> {
         vec![
             0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 1, 1, 1, 1, 1, 1, 1, 0,
@@ -307,28 +410,30 @@ mod test {
 
     #[test]
     fn single_peak_totals() {
-        let (cumulative_surfaces, _) = create_tvs(&single_peak_dem());
+        let mut dem = make_dem();
+        let compute = compute(&mut dem, &single_peak_dem());
         #[rustfmt::skip]
         assert_eq!(
-            cumulative_surfaces,
+            compute.total_surfaces,
             [
-                28.95109,  18.207317, 28.951097,
-                18.207323, 35.32013,  18.207323,
-                28.951097, 18.207315, 28.95109
+                2543.4292, 1649.654, 2696.0396,
+                1641.8002, 3197.66, 1641.8002,
+                2696.0396, 1649.6539, 2543.4292
             ]
         );
     }
 
     #[test]
     fn double_peak_totals() {
-        let (cumulative_surfaces, _) = create_tvs(&double_peak_dem());
+        let mut dem = make_dem();
+        let compute = compute(&mut dem, &double_peak_dem());
         #[rustfmt::skip]
         assert_eq!(
-            cumulative_surfaces,
+            compute.total_surfaces,
             [
-                30.305561, 27.532038, 27.445093,
-                27.366535, 35.86692,  24.969402,
-                27.101337, 24.085308, 22.368181
+                2687.689, 2546.9956, 2622.3494,
+                2564.7678, 3231.647, 2239.714, 
+                2604.2551, 2186.5012, 1768.3433
             ]
         );
     }

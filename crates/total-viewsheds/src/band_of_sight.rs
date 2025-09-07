@@ -30,7 +30,7 @@
 //! of any previous precedent.
 //!
 //! To create a single `BoS` from which to define the master shape for a
-//! sector, we use the sorted DEM points from the `Axes` class. Using the
+//! sector, we use the sorted DEM points from the `Axes` struct. Using the
 //! `sector_ordered` points we can populate the `BoS` but we don't know the
 //! perpendicular distance each '+' point is from the `PoV` '(+)'. To then
 //! order this specific subset of the DEM we use the `sight_ordered`
@@ -96,14 +96,15 @@ impl crate::dem::DEM {
 
         // Find the very middle of the DEM. This is arbitrary as we ultimately only care about
         // deltas.
-        let pov_id = usize::try_from(self.size.div_euclid(2))?;
+        let middle_of_array = usize::try_from(self.size.div_euclid(2))?;
 
-        // We want the PoV to be in the middle of the band, both horizontally and
-        // vertically.
-        let band_edge = pov_id - band_samples.div_euclid(2);
-
-        // Fill the band with the points before the PoV. This stage just gives *which* points are
-        // in the band of sight, but not in the correct order.
+        // We can't just start from the point of view and work towards the end of a band. The
+        // sector ordered DEM IDs are ordered from their distance from the line-like _spine_ of
+        // the band of sight. There's no guaranteed way of finding the point-like _centre_ of a
+        // band of sight without also querying the sight-ordered array as well. So here we just
+        // populate a band with "random" DEM IDs from around the middle of the sector-ordered
+        // grid
+        let band_edge = middle_of_array - band_samples.div_euclid(2);
         #[expect(
             clippy::indexing_slicing,
             reason = "It's easier to read and panicking is appropriate as there's no way to recover"
@@ -146,16 +147,18 @@ impl crate::dem::DEM {
 
         // Fill the actual band of sight with the deltas that trace a path from the PoV
         // to the final point in the band.
-        let middle_of_whole_band = band_samples.div_euclid(2);
-        let end_of_band = usize::try_from(self.band_size * 2)?;
+        let pov_in_band = band_samples.div_euclid(2);
+        let end_of_band = pov_in_band + usize::try_from(self.band_deltas_size())?;
 
         #[expect(
             clippy::indexing_slicing,
             reason = "It's easier to read and panicking is appropriate as there's no way to recover"
         )]
         {
-            let pov_distance = self.axes.distances[pov_id];
-            for (i, band_id) in (middle_of_whole_band..end_of_band).enumerate() {
+            let pov_sector_id = distances_to_sector_ids_map[pov_in_band];
+            let pov_dem_id = usize::try_from(dem_ids_to_compute[pov_sector_id])?;
+            let pov_distance = self.axes.distances[pov_dem_id];
+            for (i, band_id) in (pov_in_band..end_of_band).enumerate() {
                 let current_sector_id = distances_to_sector_ids_map[band_id];
                 let current_dem_id = i32::try_from(dem_ids_to_compute[current_sector_id])?;
                 let next_dem_id =
@@ -194,9 +197,17 @@ impl crate::dem::DEM {
 )]
 #[cfg(test)]
 mod test {
+    use googletest::prelude::*;
+
     /// Reconstruct bands from deltas.
     fn reconstruct_bands(angle: u16) -> (Vec<Vec<u32>>, Vec<f32>) {
-        let mut dem = crate::dem::DEM::new(9, 1.0, 3).unwrap();
+        let mut dem = crate::dem::DEM::new(
+            crate::projection::LatLonCoord(geo::Coord::zero()),
+            9,
+            1.0,
+            3,
+        )
+        .unwrap();
         assert_eq!(dem.computable_points_count, 9);
         dem.calculate_axes(f32::from(angle)).unwrap();
 
@@ -312,5 +323,20 @@ mod test {
         );
 
         assert_eq!(distances, [1.4142135, 2.828427, 4.242641]);
+    }
+
+    #[gtest]
+    fn longer_bands_should_not_have_empty_regions() {
+        let mut dem = crate::dem::DEM::new(
+            crate::projection::LatLonCoord(geo::Coord::zero()),
+            100,
+            1.0,
+            33,
+        )
+        .unwrap();
+        dem.calculate_axes(0.0).unwrap();
+        dem.compile_band_data().unwrap();
+        expect_ne!(dem.band_deltas.last().unwrap(), &0i32);
+        expect_ne!(dem.band_distances.last().unwrap(), &0.0);
     }
 }
