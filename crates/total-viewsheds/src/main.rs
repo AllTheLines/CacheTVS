@@ -11,8 +11,8 @@ mod compute;
 mod config;
 mod dem;
 mod dump_usage;
-mod gpu;
 mod input;
+mod vulkan;
 /// Various ways to output data.
 mod output {
     pub mod ascii;

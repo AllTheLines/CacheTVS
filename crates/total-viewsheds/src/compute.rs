@@ -9,7 +9,7 @@ pub struct Compute<'compute> {
     /// What to compute.
     process: Vec<crate::config::Process>,
     /// The GPU manager
-    gpu: Option<super::gpu::GPU>,
+    gpu: Option<super::vulkan::Vulkan>,
     /// The OS's state directory for saving our cache into.
     state_directory: Option<std::path::PathBuf>,
     /// Output directory
@@ -79,7 +79,7 @@ impl<'compute> Compute<'compute> {
         let gpu = if matches!(backend, crate::config::Backend::Vulkan) {
             let elevations = dem.elevations.clone();
             dem.elevations = Vec::new(); // Free up some RAM.
-            Some(super::gpu::GPU::new(
+            Some(super::vulkan::Vulkan::new(
                 constants,
                 elevations,
                 usize::try_from(dem.size)?,

@@ -10,7 +10,7 @@ type Dimensions = (u32, u32, u32);
 const KERNEL_WORKGROUPS: Dimensions = (8, 8, 4);
 
 /// Manage the Vulkan-enabled GPU.
-pub struct GPU {
+pub struct Vulkan {
     /// The GPU device.
     device: wgpu::Device,
     /// The pipeline's command queue.
@@ -50,7 +50,7 @@ struct Buffers {
     download_rings: wgpu::Buffer,
 }
 
-impl GPU {
+impl Vulkan {
     /// Instantiate.
     pub fn new(
         mut constants: total_viewsheds_kernel::kernel::Constants,
@@ -523,7 +523,7 @@ mod test {
     #[test]
     fn find_dispatches() {
         let (dispatches, invocations) =
-            GPU::find_dispatch_dimensions(1_000_000, KERNEL_WORKGROUPS).unwrap();
+            Vulkan::find_dispatch_dimensions(1_000_000, KERNEL_WORKGROUPS).unwrap();
         assert_eq!(dispatches, (16, 16, 16));
         assert_eq!(invocations, (128, 128, 64));
     }
