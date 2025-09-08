@@ -40,6 +40,28 @@ jobs:
       - name: Run tests
         run: cargo test
 
+  e2e:
+    name: End to end tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install $RUST_VERSION --profile minimal
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install \
+            mesa-vulkan-drivers \
+            libvulkan1 \
+            vulkan-tools \
+            vulkan-validationlayers
+          vulkaninfo
+      - name: Run end to end tests
+        run: ./benchmarks/run.sh
+
   lints:
     name: "Lints 💅"
     runs-on: ubuntu-latest

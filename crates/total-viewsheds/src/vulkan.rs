@@ -98,8 +98,10 @@ impl Vulkan {
         // The `Queue` is a queue used to submit work for the GPU to process.
         let required_limits = wgpu::Limits {
             max_storage_buffers_per_shader_stage: 5,
-            max_storage_buffer_binding_size: 2_000_000_000,
-            max_buffer_size: 2_000_000_000,
+            max_storage_buffer_binding_size: limits
+                .max_storage_buffer_binding_size
+                .min(2_000_000_000),
+            max_buffer_size: limits.max_buffer_size.min(2_000_000_000),
             max_compute_workgroups_per_dimension: 1024,
             ..wgpu::Limits::default()
         };
