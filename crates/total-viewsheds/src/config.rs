@@ -136,14 +136,14 @@ pub enum Backend {
     Cuda,
 }
 
+/// Which calculations to process.
+#[cfg(not(target_arch = "spirv"))]
 #[derive(clap::ValueEnum, Clone, Debug, PartialEq, Eq)]
 pub enum Process {
     /// Calculate everything.
     All,
-    /// Compute the total visible surfaves for each computable DEM point and output as a heatmap.
+    /// Compute the total visible surfaces for each computable DEM point and output as a heatmap.
     TotalSurfaces,
-    /// Find the longest line of sight for each computable point and output as a `GeoTiff`.
-    LongestLineOfSight,
     /// Compute all the ring sectors saving them to disk so that they can be used to later
     /// reconstruct viewsheds.
     Viewsheds,

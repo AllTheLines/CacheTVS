@@ -1,6 +1,13 @@
 //! The most intensive code, aka the kernel. We keep it in a seperate crate so that it can be
-//! compiled to shader representations
+//! compiled to shader representations.
+//!
+//! This crate can be run both on the GPU and CPU.
 
+#![expect(
+    // TODO: use `get_unchecked()` for a potential speed up?
+    clippy::indexing_slicing,
+    reason = "This needs to be able to run on the GPU"
+)]
 #![cfg_attr(target_arch = "spirv", no_std)]
 #![expect(
     clippy::arithmetic_side_effects,
@@ -9,7 +16,9 @@
 
 use spirv_std::spirv;
 
+pub mod constants;
 pub mod kernel;
+mod ring_data;
 
 /// The main entrypoint to the shader.
 #[allow(
@@ -23,7 +32,7 @@ pub mod kernel;
 #[spirv(compute(threads(8, 8, 4)))]
 pub fn main(
     #[spirv(global_invocation_id)] id: glam::UVec3,
-    #[spirv(uniform, descriptor_set = 0, binding = 0)] constants: &kernel::Constants,
+    #[spirv(uniform, descriptor_set = 0, binding = 0)] constants: &constants::Constants,
     #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] elevations: &[f32],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] distances: &[f32],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] deltas: &[i32],

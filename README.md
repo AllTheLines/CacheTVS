@@ -106,10 +106,9 @@ Once you have run the above computations you will have access to what's called "
             [default: all]
 
             Possible values:
-            - all:                   Calculate everything
-            - total-surfaces:        Compute the total visible surfaves for each computable DEM point and output as a heatmap
-            - longest-line-of-sight: Find the longest line of sight for each computable point and output as a `GeoTiff`
-            - viewsheds:             Compute all the ring sectors saving them to disk so that they can be used to later reconstruct viewsheds
+            - all:             Calculate everything
+            - total-surfaces:  Compute the total visible surfaves for each computable DEM point and output as a heatmap
+            - viewsheds:       Compute all the ring sectors saving them to disk so that they can be used to later reconstruct viewsheds
 
     -h, --help
             Print help (see a summary with '-h')
@@ -135,7 +134,8 @@ Once you have run the above computations you will have access to what's called "
 
 ## Building Vulkan shader
 * Install `cargo-gpu`: `cargo install --git https://github.com/rust-gpu/cargo-gpu cargo-gpu`
-* Compile: `cargo gpu build --shader-crate crates/shader`
+* Compile:
+  * `cargo gpu build --watch --shader-crate crates/kernels/vulkan-and-cpu`
 
 Note that the pre-compiled shader already comes with the source code (at `crates/shader/total_viewsheds_kernel.spv`). So you only need to compile the shader if you're developing it.
 

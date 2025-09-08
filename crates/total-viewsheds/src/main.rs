@@ -112,6 +112,7 @@ fn compute(config: &config::Compute) -> Result<()> {
         Some(config.output_dir.clone()),
         &mut dem,
         config.rings_per_km,
+        config.observer_height,
     )?;
     compute.run()?;
     Ok(())

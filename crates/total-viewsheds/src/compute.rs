@@ -8,8 +8,8 @@ pub struct Compute<'compute> {
     backend: crate::config::Backend,
     /// What to compute.
     process: Vec<crate::config::Process>,
-    /// The GPU manager
-    gpu: Option<super::vulkan::Vulkan>,
+    /// Vulkan GPU manager
+    vulkan: Option<super::vulkan::Vulkan>,
     /// The OS's state directory for saving our cache into.
     state_directory: Option<std::path::PathBuf>,
     /// Output directory
@@ -19,7 +19,7 @@ pub struct Compute<'compute> {
     /// The Digital Elevation Model that we're computing.
     dem: &'compute mut crate::dem::DEM,
     /// The constants for each kernel computation.
-    pub constants: total_viewsheds_kernel::kernel::Constants,
+    pub constants: kernel::constants::Constants,
     /// The amount of reserved memory for ring data.
     total_reserved_rings: usize,
     /// Keeps track of the cumulative surfaces from every angle.
@@ -37,18 +37,19 @@ impl<'compute> Compute<'compute> {
         maybe_output_directory: Option<std::path::PathBuf>,
         dem: &'compute mut crate::dem::DEM,
         rings_per_km: f32,
+        observer_height: f32,
     ) -> Result<Self> {
         let total_bands = dem.computable_points_count * 2;
 
         let rings_per_band = if Self::is_process_viewsheds(&process) {
             Self::ring_count_per_band(rings_per_km, dem.max_line_of_sight)
         } else {
-            0
+            1
         };
         let total_reserved_rings = if Self::is_process_viewsheds(&process) {
             usize::try_from(total_bands)? * rings_per_band
         } else {
-            0
+            1
         };
 
         let storage = if Self::is_process_viewsheds(&process) {
@@ -62,13 +63,14 @@ impl<'compute> Compute<'compute> {
             None
         };
 
-        let constants = total_viewsheds_kernel::kernel::Constants {
+        let constants = kernel::constants::Constants {
             total_bands,
             max_los_as_points: dem.max_los_as_points,
             dem_width: dem.width,
             tvs_width: dem.tvs_width,
-            observer_height: 1.8,
+            observer_height,
             reserved_rings_per_band: u32::try_from(rings_per_band)?,
+            process: Self::bitmask_flags_for_kernel(&process),
             ..Default::default()
         };
 
@@ -76,7 +78,7 @@ impl<'compute> Compute<'compute> {
             clippy::if_then_some_else_none,
             reason = "The `?` is hard to use in the closure"
         )]
-        let gpu = if matches!(backend, crate::config::Backend::Vulkan) {
+        let vulkan = if matches!(backend, crate::config::Backend::Vulkan) {
             let elevations = dem.elevations.clone();
             dem.elevations = Vec::new(); // Free up some RAM.
             Some(super::vulkan::Vulkan::new(
@@ -93,7 +95,7 @@ impl<'compute> Compute<'compute> {
         Ok(Self {
             backend,
             process,
-            gpu,
+            vulkan,
             state_directory,
             output_directory: maybe_output_directory,
             storage,
@@ -133,6 +135,24 @@ impl<'compute> Compute<'compute> {
     /// Are we computing viewsheds?
     pub fn is_process_viewsheds(process: &[crate::config::Process]) -> bool {
         Self::is_process_everything(process) || process.contains(&crate::config::Process::Viewsheds)
+    }
+
+    /// Create a GPU-friendly bitmask of flags to use in the kernel.
+    pub fn bitmask_flags_for_kernel(processes: &[crate::config::Process]) -> u32 {
+        use kernel::constants as kernel;
+        let mut flags = 0u32;
+        for process in processes {
+            match process {
+                crate::config::Process::All => {
+                    flags |= kernel::Flag::TotalSurfaces.bit() | kernel::Flag::RingData.bit();
+                }
+                crate::config::Process::TotalSurfaces => {
+                    flags |= kernel::Flag::TotalSurfaces.bit();
+                }
+                crate::config::Process::Viewsheds => flags |= kernel::Flag::RingData.bit(),
+            }
+        }
+        flags
     }
 
     /// Do all computations.
@@ -307,7 +327,7 @@ impl<'compute> Compute<'compute> {
         cumulative_surfaces: &mut [f32],
         ring_data: &mut [u32],
     ) -> Result<()> {
-        let Some(gpu) = self.gpu.as_mut() else {
+        let Some(gpu) = self.vulkan.as_mut() else {
             color_eyre::eyre::bail!("`self.gpu` not instantiated yet.");
         };
 
@@ -320,7 +340,7 @@ impl<'compute> Compute<'compute> {
     /// Do a whole sector calculation on the CPU.
     fn compute_sector_cpu(&self, cumulative_surfaces: &mut [f32], ring_data: &mut [u32]) {
         for kernel_id in 0..self.constants.total_bands {
-            total_viewsheds_kernel::kernel::kernel(
+            kernel::kernel::kernel(
                 kernel_id,
                 &self.constants,
                 &self.dem.elevations,
@@ -359,6 +379,7 @@ pub mod test {
             None,
             dem,
             5000.0,
+            1.8,
         )
         .unwrap();
         compute.run().unwrap();

@@ -1,13 +1,8 @@
-#![expect(
-    // TODO: use `get_unchecked()` for a potential speed up?
-    clippy::indexing_slicing,
-    reason = "This needs to be able to run on the GPU"
-)]
 // You can use this for debugging when running with `--compute cpu`
 // #[cfg(not(target_arch = "spirv"))]
 // dbg!(distance);
 
-//! Viewshed kernel. The heart of the calculations.
+//! Total Viewsheds kernel. The heart of the calculations.
 
 /// Ensure that the first point from the point of view is always visible
 const MAX_ANGLE: f32 = -2000.0;
@@ -20,43 +15,6 @@ const TAN_ONE_RAD: f32 = 0.017_453_3;
 /// shape.
 const EARTH_RADIUS_SQUARED: f32 = 12_742_000.0;
 
-/// Constants that don't change for the entirety of the computation.
-#[repr(C)]
-#[cfg_attr(
-    not(target_arch = "spirv"),
-    derive(
-        Copy, Clone, Default,
-        // Bytemuck is what we use to cast data into raw bytes for CPU/GPU transfer.
-        bytemuck::Zeroable, bytemuck::Pod,
-    )
-)]
-#[expect(
-    clippy::exhaustive_structs,
-    clippy::pub_underscore_fields,
-    reason = "We're only sharing this in the workspace"
-)]
-pub struct Constants {
-    /// The number of invocations for each kernel dimensions. Needed to convert the dimensions into
-    /// a scalar kernetl ID.
-    pub dimensions: glam::UVec4,
-    /// The total number of both forward and backward bands.
-    pub total_bands: u32,
-    /// The maximum distance that is expected to be possible. Units are the number of DEM points.
-    pub max_los_as_points: u32,
-    /// The original width of the DEM. Units are DEM points.
-    pub dem_width: u32,
-    /// The width of the computable region of the DEM. Units are DEM points.
-    pub tvs_width: u32,
-    /// The height of the observer in meters.
-    pub observer_height: f32,
-    /// The amount of memory reserved for storing computed ring sectors.
-    pub reserved_rings_per_band: u32,
-    /// Padding.
-    pub _pad0: u32,
-    /// Padding.
-    pub _pad1: u32,
-}
-
 /// The direction of a band from the observer's point of view. Whether it points North or South is
 /// not relevant, they're just opposite to each other.
 enum BandDirection {
@@ -67,7 +25,6 @@ enum BandDirection {
 }
 
 /// The kernel
-#[expect(clippy::too_many_lines, reason = "Will refactor soon")]
 #[inline]
 pub fn kernel(
     // The identifier that decides which PoV and band direction to calculate.
@@ -76,7 +33,7 @@ pub fn kernel(
     // is: `(500,000 / 30)^2 = 400,000,000`. The max of `u32` is 4,294,967,295.
     kernel_id: u32,
     // Constants for the calculations.
-    constants: &Constants,
+    constants: &crate::constants::Constants,
     // Every single DEM point's elevation.
     elevations: &[f32],
     // All the required distances for the band. All bands share the same values.
@@ -109,12 +66,6 @@ pub fn kernel(
     // Keep track of the amount of the earth visible from this particular band
     let mut band_surface = 0.0;
 
-    // For each visible continuous region we find, we'll note it as a single ring
-    // sector. We need to know how many ring sectors we find in order to save that
-    // data to file later. Start at 1 to reserve later writing of the number of ring
-    // sectors found.
-    let mut ring_id = 1;
-
     // Translate a kernel ID to a TVS ID
     let band_direction = if kernel_id < half_total_bands {
         tvs_id = kernel_id;
@@ -139,18 +90,19 @@ pub fn kernel(
         clippy::as_conversions,
         reason = "This needs to run on the GPU where fallibility isn't possible"
     )]
-    // This thread needs its own unshared space in global memory.
-    let ring_data_start = (kernel_id * constants.reserved_rings_per_band) as usize;
+    let mut rings = crate::ring_data::RingData {
+        ring_data,
+        reserved_rings_per_band: constants.reserved_rings_per_band,
+        start: (kernel_id * constants.reserved_rings_per_band) as usize,
+        // Reserve 0 for the total count.
+        index: 1,
+    };
 
     // We already know that the first point from the PoV is always visible and
     // is therefore the opening of a visible region.
-    save_ring_data(
-        ring_data,
-        constants.reserved_rings_per_band,
-        ring_data_start,
-        ring_id,
-        pov_id,
-    );
+    if constants.is_ring_data() {
+        rings.save(pov_id);
+    }
 
     // The DEM ID will change as we loop, but the PoV won't. For now we need the PoV
     // ID to start the reconstruction of a unique band from the band delta template.
@@ -208,7 +160,7 @@ pub fn kernel(
         let opening = is_currently_visible && !is_previously_visible;
         closing = is_previously_visible && !is_currently_visible;
 
-        if is_currently_visible {
+        if constants.is_total_surfaces() && is_currently_visible {
             // This normalises surfaces due to repeated visibility over sectors.
             // For example points near the PoV may be counted 180 times giving
             // an unrealistic aggregation of total surfaces. This trig operation
@@ -231,27 +183,13 @@ pub fn kernel(
         }
 
         // Store the position on the DEM where the visible region starts.
-        if opening {
-            ring_id += 1;
-            save_ring_data(
-                ring_data,
-                constants.reserved_rings_per_band,
-                ring_data_start,
-                ring_id,
-                dem_id,
-            );
+        if constants.is_ring_data() && opening {
+            rings.save(dem_id);
         }
 
         // Store the position on the DEM where the visible region ends.
-        if closing {
-            ring_id += 1;
-            save_ring_data(
-                ring_data,
-                constants.reserved_rings_per_band,
-                ring_data_start,
-                ring_id,
-                dem_id,
-            );
+        if constants.is_ring_data() && closing {
+            rings.save(dem_id);
         }
 
         // Prepare for the next iteration.
@@ -260,25 +198,14 @@ pub fn kernel(
     }
 
     // Close any ring sectors prematurely cut off by a restricted line of sight.
-    if is_currently_visible && !closing {
-        ring_id += 1;
-        save_ring_data(
-            ring_data,
-            constants.reserved_rings_per_band,
-            ring_data_start,
-            ring_id,
-            dem_id,
-        );
+
+    if constants.is_ring_data() && is_currently_visible && !closing {
+        rings.save(dem_id);
     }
 
-    // Make a note at the start of the ring sector data of how many rings we found.
-    save_ring_data(
-        ring_data,
-        constants.reserved_rings_per_band,
-        ring_data_start,
-        0,
-        ring_id,
-    );
+    if constants.is_ring_data() {
+        rings.finish();
+    }
 
     // Accumulate surfaces for a given DEM ID. Note that this is thread safe, because
     // front/back bands are kept in separate array positions. And that actual
@@ -288,7 +215,7 @@ pub fn kernel(
         clippy::as_conversions,
         reason = "This needs to run on the GPU where fallibility isn't possible"
     )]
-    {
+    if constants.is_total_surfaces() {
         cumulative_surfaces[tvs_id as usize] += band_surface;
     }
 }
@@ -327,25 +254,4 @@ const fn delta_subtract(dem_id: usize, delta: i32) -> usize {
     } else {
         dem_id + absolute
     }
-}
-
-#[expect(
-    clippy::as_conversions,
-    clippy::cast_possible_truncation,
-    reason = "
-      `usize` values are only ever generated from `u32` values. So they can't truncate.
-    "
-)]
-/// Save ring data.
-fn save_ring_data(
-    ring_data: &mut [u32],
-    reserved_rings_per_band: u32,
-    start: usize,
-    index: usize,
-    value: usize,
-) {
-    if index >= reserved_rings_per_band as usize {
-        return;
-    }
-    ring_data[start + index] = value as u32;
 }

@@ -1,5 +1,5 @@
 [package]
-name = "total-viewsheds-kernel"
+name = "kernel"
 version = "0.1.0"
 edition = "2021"
 
@@ -24,10 +24,8 @@ bytemuck = "1.22.0"
 output-dir = "./"
 # Set shader crate's cargo default-features
 default_features = true
-# Set shader crate's cargo features.
-features = []
 # We don't want the manifest.json so hide it in an ignored path
-manifest-file = "../../target/shader-manifest.json"
+manifest-file = "../../../target/shader-manifest.json"
 
 [lints]
 workspace = true

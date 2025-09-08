@@ -53,7 +53,7 @@ struct Buffers {
 impl Vulkan {
     /// Instantiate.
     pub fn new(
-        mut constants: total_viewsheds_kernel::kernel::Constants,
+        mut constants: kernel::constants::Constants,
         elevations: Vec<f32>,
         distances_count: usize,
         band_deltas_count: usize,
@@ -62,7 +62,11 @@ impl Vulkan {
         // We first initialize an wgpu `Instance`, which contains any "global" state wgpu needs.
         //
         // This is what loads the vulkan/dx12/metal/opengl libraries.
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::VULKAN,
+            flags: wgpu::InstanceFlags::default(),
+            backend_options: wgpu::BackendOptions::default(),
+        });
 
         // We then create an `Adapter` which represents a physical gpu in the system. It allows
         // us to query information about it and create a `Device` from it.
@@ -102,7 +106,7 @@ impl Vulkan {
         let (device, queue) =
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                 label: None,
-                required_features: wgpu::Features::empty(),
+                required_features: wgpu::Features::SPIRV_SHADER_PASSTHROUGH,
                 required_limits,
                 memory_hints: wgpu::MemoryHints::MemoryUsage,
                 trace: wgpu::Trace::Off,
@@ -138,9 +142,14 @@ impl Vulkan {
         )?;
 
         // TODO: embed this if we ever make a proper binary release.
-        let module = device.create_shader_module(wgpu::include_spirv!(
-            "../../shader/total_viewsheds_kernel.spv"
-        ));
+        // Safety:
+        //   We're disabling Naga vailidation, so we must assume that if `cargo-gpu` can compile
+        //   the Rust shader then we have a valid SPIRV file.
+        let module = unsafe {
+            device.create_shader_module_passthrough(wgpu::include_spirv_raw!(
+                "../../kernels/vulkan-and-cpu//kernel.spv"
+            ))
+        };
 
         // The pipeline layout describes the bind groups that a pipeline expects
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -178,7 +187,7 @@ impl Vulkan {
     /// Setup the buffers.
     fn setup_buffers(
         device: &wgpu::Device,
-        constants: total_viewsheds_kernel::kernel::Constants,
+        constants: kernel::constants::Constants,
         elevations: Vec<f32>,
         distances_size: u64,
         band_deltas_size: u64,
@@ -302,8 +311,7 @@ impl Vulkan {
     /// of this like a C-style header declaration, ensuring both the pipeline and bind group agree
     /// on the types of resources.
     fn create_bind_group_layout(device: &wgpu::Device) -> Result<wgpu::BindGroupLayout> {
-        let constants_size =
-            u64::try_from(std::mem::size_of::<total_viewsheds_kernel::kernel::Constants>())?;
+        let constants_size = u64::try_from(std::mem::size_of::<kernel::constants::Constants>())?;
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: None,
             entries: &[
