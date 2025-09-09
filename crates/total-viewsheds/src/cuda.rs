@@ -50,10 +50,10 @@ impl CudaKernel {
                 CompileOptions {
                     options: vec![
                         // "-G".to_string(),
-                        // "--generate-line-info".to_owned(),
+                        "--generate-line-info".to_owned(),
                         "--include-path=/usr/local/cuda/include/".to_owned(),
                         "--include-path=/usr/local/cuda/include/cccl/".to_owned(),
-                        // "--extra-device-vectorization".to_owned(),
+                        "--extra-device-vectorization".to_owned(),
                     ],
                     ..CompileOptions::default()
                 },
@@ -80,7 +80,7 @@ impl CudaKernel {
     ) -> Result<()> {
         // TODO: this is extremely tuned for Everest, maybe make this a bit more general?
         let launch_cfg = LaunchConfig {
-            block_dim: (750, 1, 1),
+            block_dim: (1000, 1, 1),
             grid_dim: (6000, 1, 1),
             shared_mem_bytes: 0,
         };
@@ -97,7 +97,7 @@ impl CudaKernel {
     }
 
 
-
+    /// `line_of_sight` calculates all lines of sights for
     pub fn line_of_sight(
         &self,
         elevs: &[f32],
@@ -123,10 +123,10 @@ impl CudaKernel {
             total / MB
         );
 
-        let angles = axes::SECTOR_STEPS as u32;
-        // let angles = 1;
+        // let angles = axes::SECTOR_STEPS as u32;
+        let angles = 1;
 
-        let time = Instant::now();
+        let mut time = Instant::now();
 
         self.calculate_angles(
             &elevations,
@@ -135,7 +135,6 @@ impl CudaKernel {
 
         let res = self.stream.memcpy_dtov(&result)?;
         println!("Took {:?} to process angles: {}", time.elapsed(), angles);
-        // println!("{:?}", res);
 
         Ok(res)
     }
