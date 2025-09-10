@@ -111,6 +111,7 @@ impl<'compute> Compute<'compute> {
         let kernel: CudaKernel = CudaKernel::new()?;
 
         let heatmap = kernel.line_of_sight(
+            self.dem.max_los_as_points as usize,
             &self.dem.elevations,
             self.dem.computable_points_count as usize,
         )?;
