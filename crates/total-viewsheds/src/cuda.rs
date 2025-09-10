@@ -1,3 +1,4 @@
+use crate::axes::SECTOR_STEPS;
 use color_eyre::eyre::{ContextCompat as _, Result};
 use cudarc::driver::{CudaContext, CudaFunction, CudaSlice, CudaStream, HostSlice, LaunchConfig};
 use cudarc::driver::{DeviceRepr, PushKernelArg};
@@ -6,10 +7,10 @@ use cudarc::nvrtc::CompileOptions;
 use cudarc::runtime::result::get_mem_info;
 use itertools::Itertools;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::process::id;
 use std::sync::{Arc, mpsc};
 use std::time::Instant;
 use std::{f64, thread};
-use crate::axes::SECTOR_STEPS;
 
 pub struct CudaKernel {
     ctx: Arc<CudaContext>,
@@ -42,7 +43,7 @@ fn calculate_point(
 
 /// `generate_rotation` generates a rotation "map" for a given elevation list
 /// Adapted from [this stack overflow answer](https://stackoverflow.com/a/71901621)
-fn generate_rotation(elevation_count: usize, angle: f64, max_los: usize) -> Vec<u32> {
+fn generate_rotation(elevation_count: usize, angle: f64, max_los: usize) -> Vec<i32> {
     let width = (max_los * 3) as isize;
 
     assert_eq!(width % 2, 0);
@@ -63,10 +64,13 @@ fn generate_rotation(elevation_count: usize, angle: f64, max_los: usize) -> Vec<
             let y_rot = (y_cos + x_sin).round() as isize + x_center;
 
             let new_idx = x_rot * width + y_rot;
-            debug_assert!(new_idx < elevation_count as isize, "{new_idx}");
-            debug_assert!(new_idx >= 0, "{new_idx}");
+            let normalized = if new_idx >= 0 && new_idx < elevation_count as isize {
+                new_idx
+            } else {
+                -1
+            };
 
-            res.push(new_idx as u32);
+            res.push(normalized as i32);
         }
     }
 
@@ -77,11 +81,16 @@ fn generate_rotation(elevation_count: usize, angle: f64, max_los: usize) -> Vec<
 //       Good news is that this takes a total of 20s for all 180 angles, giving us
 //       An overhead of .1s/angle. Funnily enough, this does very well multithreaded,
 //       Single threaded it seems to take quite a bit longer??
-fn multithread_rotations(elevation_count: usize, max_los_points: usize) -> Result<Vec<Vec<u32>>> {
-    let threads = (0..crate::axes::SECTOR_STEPS)
-        .map(|angle| thread::spawn(move || {
-            generate_rotation(elevation_count, angle as f64, max_los_points)
-        }))
+fn multithread_rotations(
+    elevation_count: usize,
+    max_los_points: usize,
+    count: usize,
+    offset: usize,
+) -> Result<Vec<Vec<i32>>> {
+    let threads = (offset..offset + count)
+        .map(|angle| {
+            thread::spawn(move || generate_rotation(elevation_count, angle as f64, max_los_points))
+        })
         .collect::<Vec<_>>();
 
     let mut res = vec![];
@@ -127,11 +136,10 @@ impl CudaKernel {
         })
     }
 
-    fn calculate_angles(
-        &self,
-        elevations: &CudaSlice<i16>,
-        angle_buf: &CudaSlice<f32>,
-    ) -> Result<()> {
+    fn calculate_angles(&self, elevations: &[i16], idxs: &[i32], angle_buf: &CudaSlice<f32>) -> Result<()> {
+        let elevs = self.stream.memcpy_stod(elevations)?;
+        let idxs = self.stream.memcpy_stod(idxs)?;
+
         // TODO: this is extremely tuned for Everest, maybe make this a bit more general?
         let launch_cfg = LaunchConfig {
             block_dim: (1000, 1, 1),
@@ -140,7 +148,8 @@ impl CudaKernel {
         };
 
         let mut builder = self.stream.launch_builder(&self.angle_kernel);
-        builder.arg(elevations);
+        builder.arg(&elevs);
+        builder.arg(&idxs);
         builder.arg(angle_buf);
 
         unsafe {
@@ -159,34 +168,49 @@ impl CudaKernel {
     ) -> Result<Vec<f32>> {
         let half_elevs = elevs.iter().map(|&x| (x as i32) as i16).collect_vec();
 
-        let elevations = self.stream.memcpy_stod(&half_elevs)?;
         let result = self.stream.alloc_zeros::<f32>(cumulative_surfaces)?;
 
-        // Use the above "overhead" to calculate about how much space we have left
-        // on the GPU so that we can use the maximum
-        let overhead = elevations.num_bytes() + result.num_bytes();
-
-        tracing::info!("data overhead: {}MB", overhead / MB);
-
-        // we'll have |deltas| f32s, all future calculations are in bytes so we need size_of
-        let (free_bytes, total) = get_mem_info()?;
-        tracing::info!(
-            "{}MB free / {}MB total",
-            (free_bytes - overhead) / MB,
-            total / MB
-        );
-
-        let angles = crate::axes::SECTOR_STEPS as u32;
+        let angles = u32::from(SECTOR_STEPS);
         // let angles = 1;
 
-
         let rot_time = Instant::now();
-        multithread_rotations(half_elevs.len(), max_los_points)?;
-        println!("Took {:?} to process rotation", rot_time.elapsed());
+        let rotated: Vec<Vec<i32>> =
+            multithread_rotations(half_elevs.len(), max_los_points, 180, 0)?;
 
         let time = Instant::now();
 
-        self.calculate_angles(&elevations, &result)?;
+        for rotation in rotated {
+            let elevations = rotation
+                .iter()
+                .map(|&idx| {
+                    if idx < 0i32 {
+                        i16::max_value()
+                    } else {
+                        *unsafe { half_elevs.get_unchecked(idx as usize) }
+                    }
+                })
+                .collect::<Vec<i16>>();
+
+            let idxs = rotation
+                .iter()
+                .enumerate()
+                .filter(|(idx, _)| {
+                    let col = *idx % 18000;
+                    (6000..12000).contains(&col)
+                })
+                .map(|(_, val)| {
+                    let x = (val / 18000) - 6000;
+                    let y = (val % 18000) - 6000;
+                    if (0..6000).contains(&x) && (0..6000).contains(&y) {
+                        x*6000+y
+                    } else {
+                        -1i32
+                    }
+                })
+                .collect_vec();
+
+            self.calculate_angles(&elevations, &idxs, &result)?;
+        }
 
         let res = self.stream.memcpy_dtov(&result)?;
         println!("Took {:?} to process angles: {}", time.elapsed(), angles);

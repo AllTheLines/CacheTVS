@@ -25,18 +25,26 @@ typedef struct {
 #define TAN_ONE_RAD ((float)0.0174533)
 
 __shared__ short line[MAX_LOS_POINTS*2];
+__shared__ int line_idxs[MAX_LOS_POINTS];
 
 extern "C" __global__ void angle_kernel(
     // Every single DEM point's elevation.
     const short* __restrict__ elevations,
+    const int* __restrict__ idxs,
     float* __restrict__ result
 ) {
-    bool forward = blockIdx.y;
+    bool forward = blockIdx.y == 0;
     int base_global = (blockIdx.x * IMAGE_WIDTH) + (forward ? OFFSET : 0);
 
     for (int i = threadIdx.x; i < MAX_LOS_POINTS/2; i += (IMAGE_WIDTH/THREAD_COUNT/2)) {
         reinterpret_cast<int*>(&line)[i] = reinterpret_cast<const int*>(&elevations[base_global])[i];
     }
+
+    for (int i = threadIdx.x; i < MAX_LOS_POINTS; i += (MAX_LOS_POINTS/THREAD_COUNT)) {
+        line_idxs[i] = idxs[(blockIdx.x * MAX_LOS_POINTS)+i];
+    }
+
+    __syncthreads();
 
     const int TILE_SIZE = 2;
 
@@ -51,14 +59,17 @@ extern "C" __global__ void angle_kernel(
             for (int point = pov+1; point < pov+MAX_LOS_POINTS; point++) {
                 float elevation_delta = ((float)line[point]) - pov_height;
                 float distance = fabs((float)((point - pov)*100));
-                float angle = (elevation_delta / distance) - (distance / EARTH_RADIUS_SQUARED);
+                float angle = (elevation_delta / distance);
                 if (angle >= max_angle) {
                     max_angle = angle;
                     sum += distance * TAN_ONE_RAD;
                 }
             }
 
-            result[blockIdx.x*MAX_LOS_POINTS+pov] = sum;
+            int result_idx = line_idxs[pov];
+            if (result_idx > 0) {
+                atomicAdd(&result[result_idx], sum);
+            }
         }
     }
 
