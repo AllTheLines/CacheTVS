@@ -59,7 +59,7 @@ extern "C" __global__ void angle_kernel(
             for (int point = pov+1; point < pov+MAX_LOS_POINTS; point++) {
                 float elevation_delta = ((float)line[point]) - pov_height;
                 float distance = fabs((float)((point - pov)*100));
-                float angle = (elevation_delta / distance);
+                float angle = (elevation_delta / distance) - (distance / EARTH_RADIUS_SQUARED);
                 if (angle >= max_angle) {
                     max_angle = angle;
                     sum += distance * TAN_ONE_RAD;

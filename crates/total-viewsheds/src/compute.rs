@@ -1,9 +1,7 @@
 //! The main entrypoint for running computations.
 
 use color_eyre::Result;
-use crate::axes;
 use crate::cuda::{CudaKernel};
-use crate::gpu::GPU;
 
 /// Handles all the computations.
 pub struct Compute<'compute> {
@@ -25,11 +23,6 @@ pub struct Compute<'compute> {
     pub total_surfaces: Vec<f32>,
 }
 
-#[derive(Debug)]
-pub struct Angle {
-    pub forward_deltas: Vec<i32>,
-    pub band_distances: Vec<f32>,
-}
 
 impl<'compute> Compute<'compute> {
     /// Instantiate.

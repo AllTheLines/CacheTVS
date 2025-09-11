@@ -1,14 +1,11 @@
 use crate::axes::SECTOR_STEPS;
-use color_eyre::eyre::{ContextCompat as _, Result};
+use color_eyre::eyre::Result;
 use cudarc::driver::{CudaContext, CudaFunction, CudaSlice, CudaStream, HostSlice, LaunchConfig};
-use cudarc::driver::{DeviceRepr, PushKernelArg};
+use cudarc::driver::PushKernelArg;
 use cudarc::nvrtc;
 use cudarc::nvrtc::CompileOptions;
-use cudarc::runtime::result::get_mem_info;
 use itertools::Itertools;
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::process::id;
-use std::sync::{Arc, mpsc};
+use std::sync::Arc;
 use std::time::Instant;
 use std::{f64, thread};
 
@@ -21,25 +18,6 @@ pub struct CudaKernel {
 
 const MB: usize = 1_000_000;
 
-#[inline(always)]
-fn calculate_point(
-    y: isize,
-    x_center: isize,
-    y_center: isize,
-    x_sin: f64,
-    x_cos: f64,
-    sin: f64,
-    cos: f64,
-    width: isize,
-) -> isize {
-    let y_sin = (y - y_center) as f64 * sin;
-    let y_cos = (y - y_center) as f64 * cos;
-
-    let x_rot = (x_cos - y_sin).round() as isize + y_center;
-    let y_rot = (y_cos + x_sin).round() as isize + x_center;
-
-    x_rot * width + y_rot
-}
 
 /// `generate_rotation` generates a rotation "map" for a given elevation list
 /// Adapted from [this stack overflow answer](https://stackoverflow.com/a/71901621)
@@ -63,11 +41,11 @@ fn generate_rotation(elevation_count: usize, angle: f64, max_los: usize) -> Vec<
             let x_rot = (x_cos - y_sin).round() as isize + y_center;
             let y_rot = (y_cos + x_sin).round() as isize + x_center;
 
-            let new_idx = x_rot * width + y_rot;
+            let new_idx = x_rot.clamp(0, width-1) * width + y_rot.clamp(0, width-1);
             let normalized = if new_idx >= 0 && new_idx < elevation_count as isize {
                 new_idx
             } else {
-                -1
+                panic!("bad idx: {new_idx}")
             };
 
             res.push(normalized as i32);
@@ -173,48 +151,53 @@ impl CudaKernel {
         let angles = u32::from(SECTOR_STEPS);
         // let angles = 1;
 
-        let rot_time = Instant::now();
-        let rotated: Vec<Vec<i32>> =
-            multithread_rotations(half_elevs.len(), max_los_points, 180, 0)?;
+        let mut time = Instant::now();
 
-        let time = Instant::now();
+        for angle in (0..360).step_by(180) {
+            let rotated: Vec<Vec<i32>> =
+                multithread_rotations(half_elevs.len(), max_los_points, 180, angle)?;
 
-        for rotation in rotated {
-            let elevations = rotation
-                .iter()
-                .map(|&idx| {
-                    if idx < 0i32 {
-                        i16::max_value()
-                    } else {
-                        *unsafe { half_elevs.get_unchecked(idx as usize) }
-                    }
-                })
-                .collect::<Vec<i16>>();
+            println!("Took {:?} to process angles: 180", time.elapsed());
 
-            let idxs = rotation
-                .iter()
-                .enumerate()
-                .filter(|(idx, _)| {
-                    let col = *idx % 18000;
-                    (6000..12000).contains(&col)
-                })
-                .map(|(_, val)| {
-                    let x = (val / 18000) - 6000;
-                    let y = (val % 18000) - 6000;
-                    if (0..6000).contains(&x) && (0..6000).contains(&y) {
-                        x*6000+y
-                    } else {
-                        -1i32
-                    }
-                })
-                .collect_vec();
+            for rotation in rotated {
+                time = Instant::now();
+                let elevations = rotation
+                    .iter()
+                    .map(|&idx| {
+                        if idx < 0i32 {
+                            i16::MIN
+                        } else {
+                            *unsafe { half_elevs.get_unchecked(idx as usize) }
+                        }
+                    })
+                    .collect::<Vec<i16>>();
 
-            self.calculate_angles(&elevations, &idxs, &result)?;
+                let idxs = rotation
+                    .iter()
+                    .enumerate()
+                    .filter(|(idx, _)| {
+                        let col = *idx % 18000;
+                        (6000..12000).contains(&col)
+                    })
+                    .map(|(_, val)| {
+                        let x = (val / 18000) - 6000;
+                        let y = (val % 18000) - 6000;
+                        if (0..6000).contains(&x) && (0..6000).contains(&y) {
+                            x*6000+y
+                        } else {
+                            -1i32
+                        }
+                    })
+                    .collect_vec();
+
+                self.calculate_angles(&elevations, &idxs, &result)?;
+
+                println!("Took {:?} to process angle", time.elapsed());
+                time = Instant::now();
+            }
         }
 
         let res = self.stream.memcpy_dtov(&result)?;
-        println!("Took {:?} to process angles: {}", time.elapsed(), angles);
-
         Ok(res)
     }
 }
