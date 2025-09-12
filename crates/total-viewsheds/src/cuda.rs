@@ -209,7 +209,7 @@ impl CudaKernel {
             );
 
             time = Instant::now();
-            self.calculate_angles( &flattened_idxs, &flattened_elevs, 2, &result)?;
+            self.calculate_angles( &flattened_idxs, &flattened_elevs, STEP as u32, &result)?;
             println!("Took {:?} to process angle", time.elapsed());
         }
 
