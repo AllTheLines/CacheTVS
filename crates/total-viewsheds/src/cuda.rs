@@ -260,7 +260,7 @@ impl CudaKernel {
         let result = self.stream.alloc_zeros::<f32>(cumulative_surfaces)?;
         let elev_buffer = self.stream.memcpy_stod(&half_elevs)?;
 
-        const STEP: usize = 45;
+        const STEP: usize = 1;
 
         // TODO: fix uint32_t overflow in rotation kernel.
         //       The real limit is likely 59 but that is an uneven number.

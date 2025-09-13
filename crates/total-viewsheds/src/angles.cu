@@ -53,7 +53,7 @@ extern "C" __global__ void angle_kernel(
     for (int tiled_off = 0; tiled_off < MAX_LOS_POINTS; tiled_off += TILE_SIZE*THREAD_COUNT) {
         int thread_start = tiled_off + (threadIdx.x*TILE_SIZE);
 
-        for (int pov = thread_start+1; pov < thread_start+TILE_SIZE; pov++) {
+        for (int pov = thread_start; pov < thread_start+TILE_SIZE; pov++) {
             float pov_height = (float)line[pov];
             float max_angle = -2000.0;
             float sum = 0.0;
