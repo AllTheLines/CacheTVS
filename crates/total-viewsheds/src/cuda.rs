@@ -250,6 +250,8 @@ impl CudaKernel {
         elevs: &[f32],
         cumulative_surfaces: usize,
     ) -> Result<Vec<f32>> {
+        let timed = Instant::now();
+
         let half_elevs = elevs
             .iter()
             .map(|&x| (x as i32) as i16)
@@ -274,6 +276,9 @@ impl CudaKernel {
         }
 
         let res = self.stream.memcpy_dtov(&result)?;
+
+        println!("Total kernel took {:?}", timed.elapsed());
+
         Ok(res)
     }
 }
