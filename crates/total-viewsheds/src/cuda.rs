@@ -15,29 +15,30 @@ pub struct CudaKernel {
     stream: Arc<CudaStream>,
 
     angle_kernel: CudaFunction,
+    rotate_kernel: CudaFunction,
 }
 
 const MB: usize = 1_000_000;
 
 /// `generate_rotation` generates a rotation "map" for a given elevation list
 /// Adapted from [this stack overflow answer](https://stackoverflow.com/a/71901621)
-fn generate_rotation(elevs: &[i16], angle: f64, max_los: usize) -> (Vec<i32>, Vec<i16>) {
+fn generate_rotation(elevs: &[i16], angle: f32, max_los: usize) -> (Vec<i32>, Vec<i16>) {
     let width = (max_los * 3) as isize;
 
     assert_eq!(width % 2, 0);
     assert!(elevs.len() as isize % width == 0 && elevs.len() as isize / width == width);
 
-    let (sin, cos) = (f64::sin(angle.to_radians()), f64::cos(angle.to_radians()));
+    let (sin, cos) = (f32::sin(angle.to_radians()), f32::cos(angle.to_radians()));
     let (x_center, y_center) = (width / 2, width / 2);
 
-    let mut rotation = Vec::with_capacity(width as usize * 2*max_los);
+    let mut rotation = Vec::with_capacity(width as usize * 2 * max_los);
 
     for x in (max_los as isize)..(max_los as isize) * 2 {
-        let x_sin = (x - x_center) as f64 * sin;
-        let x_cos = (x - x_center) as f64 * cos;
+        let x_sin = (x - x_center) as f32 * sin;
+        let x_cos = (x - x_center) as f32 * cos;
         for y in (max_los as isize)..width {
-            let y_sin = (y - y_center) as f64 * sin;
-            let y_cos = (y - y_center) as f64 * cos;
+            let y_sin = (y - y_center) as f32 * sin;
+            let y_cos = (y - y_center) as f32 * cos;
 
             let x_rot = (x_cos - y_sin).round() as isize + y_center;
             let y_rot = (y_cos + x_sin).round() as isize + x_center;
@@ -53,7 +54,10 @@ fn generate_rotation(elevs: &[i16], angle: f64, max_los: usize) -> (Vec<i32>, Ve
         }
     }
 
-    assert_eq!(rotation.len() as isize, max_los as isize * (width-max_los as isize));
+    assert_eq!(
+        rotation.len() as isize,
+        max_los as isize * (width - max_los as isize)
+    );
 
     // map the indexes to their elevations
     let elevations = rotation
@@ -70,7 +74,7 @@ fn generate_rotation(elevs: &[i16], angle: f64, max_los: usize) -> (Vec<i32>, Ve
     let idxs = (0..max_los)
         .into_iter()
         .map(|idx| {
-            let start = idx*(2*max_los);
+            let start = idx * (2 * max_los);
             let end = start + max_los;
             &rotation[start..end]
         })
@@ -85,7 +89,6 @@ fn generate_rotation(elevs: &[i16], angle: f64, max_los: usize) -> (Vec<i32>, Ve
             }
         })
         .collect_vec();
-
 
     (idxs, elevations)
 }
@@ -106,7 +109,7 @@ fn multithread_rotations(
     thread::scope(|s| {
         let threads = (offset..offset + count)
             .map(|angle| {
-                s.spawn(move || generate_rotation(elevations, angle as f64, max_los_points))
+                s.spawn(move || generate_rotation(elevations, angle as f32, max_los_points))
             })
             .collect::<Vec<_>>();
 
@@ -144,6 +147,26 @@ impl CudaKernel {
             angle_kernel = module.load_function("angle_kernel")?;
         }
 
+        let rotate_kernel: CudaFunction;
+        {
+            let kernel = nvrtc::compile_ptx_with_opts(
+                include_str!("rotate.cu"),
+                CompileOptions {
+                    options: vec![
+                        // "-G".to_string(),
+                        "-use_fast_math".to_owned(),
+                        "--generate-line-info".to_owned(),
+                        "--include-path=/usr/local/cuda/include/".to_owned(),
+                        "--include-path=/usr/local/cuda/include/cccl/".to_owned(),
+                        // "--extra-device-vectorization".to_owned(),
+                    ],
+                    ..CompileOptions::default()
+                },
+            )?;
+            let module = ctx.load_module(kernel)?;
+            rotate_kernel = module.load_function("rotate_kernel")?;
+        }
+
         // JIT the kernel
 
         let stream = ctx.default_stream();
@@ -152,7 +175,33 @@ impl CudaKernel {
             ctx,
             stream,
             angle_kernel,
+            rotate_kernel,
         })
+    }
+
+    fn rotate(&self, elevs: &[i16], angle: u32) -> Result<()> {
+        println!("running angle: {angle}");
+
+        let launch_cfg = LaunchConfig {
+            block_dim: (32, 32, 1),
+            grid_dim: (188, 375, 90),
+            shared_mem_bytes: 0,
+        };
+
+        let elevations = self.stream.memcpy_stod(elevs)?;
+        let zeroed = self.stream.alloc_zeros::<i16>(6000 * 12000)?;
+
+        let mut builder = self.stream.launch_builder(&self.rotate_kernel);
+        builder.arg(&elevations);
+        builder.arg(&zeroed);
+        builder.arg(&angle);
+
+        unsafe {
+            builder.launch(launch_cfg)?;
+        }
+
+        let res = self.stream.memcpy_dtov(&zeroed)?;
+        Ok(())
     }
 
     fn calculate_angles(
@@ -193,6 +242,12 @@ impl CudaKernel {
     ) -> Result<Vec<f32>> {
         let half_elevs = elevs.iter().map(|&x| (x as i32) as i16).collect_vec();
 
+        for angle in (0..360).step_by(STEP) {
+            self.rotate(&half_elevs, angle)?;
+        }
+        todo!();
+
+
         let result = self.stream.alloc_zeros::<f32>(cumulative_surfaces)?;
 
         const STEP: usize = 90;
@@ -209,7 +264,7 @@ impl CudaKernel {
             );
 
             time = Instant::now();
-            self.calculate_angles( &flattened_idxs, &flattened_elevs, STEP as u32, &result)?;
+            self.calculate_angles(&flattened_idxs, &flattened_elevs, STEP as u32, &result)?;
             println!("Took {:?} to process angle", time.elapsed());
         }
 
