@@ -48,31 +48,28 @@ extern "C" __global__ void angle_kernel(
     __syncthreads();
 
 
-    const int TILE_SIZE = 2;
+    const int TILE_SIZE = 1;
 
-    for (int tiled_off = 0; tiled_off < MAX_LOS_POINTS; tiled_off += TILE_SIZE*THREAD_COUNT) {
-        int thread_start = tiled_off + (threadIdx.x*TILE_SIZE);
+    for (int tiled_off = 0; tiled_off < MAX_LOS_POINTS; tiled_off += THREAD_COUNT) {
+        int pov = tiled_off + (threadIdx.x*TILE_SIZE);
 
-        for (int pov = thread_start; pov < thread_start+TILE_SIZE; pov++) {
-            float pov_height = (float)line[pov];
-            float max_angle = -2000.0;
-            float sum = 0.0;
+        float pov_height = (float)line[pov];
+        float max_angle = -2000.0;
+        float sum = 0.0;
+        for (int point = pov+1; point < pov+MAX_LOS_POINTS; point++) {
+            float elevation_delta = ((float)line[point]) - pov_height;
+            float distance = fabs((float)((point - pov)*100));
+            float angle = (elevation_delta / distance) - (distance / EARTH_RADIUS_SQUARED);
 
-            for (int point = pov+1; point < pov+MAX_LOS_POINTS; point++) {
-                float elevation_delta = ((float)line[point]) - pov_height;
-                float distance = fabs((float)((point - pov)*100));
-                float angle = (elevation_delta / distance) - (distance / EARTH_RADIUS_SQUARED);
-
-                if (angle >= max_angle) {
-                    max_angle = angle;
-                    sum += distance * TAN_ONE_RAD;
-                }
+            if (angle >= max_angle) {
+                max_angle = angle;
+                sum += distance * TAN_ONE_RAD;
             }
+        }
 
-            int result_idx = line_idxs[pov];
-            if (result_idx > 0) {
-                atomicAdd(&result[result_idx], sum);
-            }
+        int result_idx = line_idxs[pov];
+        if (result_idx > 0) {
+            atomicAdd(&result[result_idx], sum);
         }
     }
 
