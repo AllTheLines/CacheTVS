@@ -16,7 +16,7 @@ extern "C" __global__ void rotate_kernel(
     // elevations has gridDim.z number of (MAX_LOS_POINTS * 3)^2 buffers
     const short* __restrict__ elevations,
     short* __restrict__ elevations_out,
-//     const int* __restrict__ index_out,
+    int* __restrict__ index_out,
     int angle_off
 ) {
     int max_los = (gridDim.y*blockDim.y) / 2;
@@ -28,10 +28,6 @@ extern "C" __global__ void rotate_kernel(
     if (relative_x >= max_los) {
         return;
     }
-
-//     if (threadIdx.x == 0 && threadIdx.y == 0) {
-//         printf("(%d, %d): (%d, %d)\n", gridDim.y, blockIdx.y, relative_x, relative_y);
-//     }
 
     ll x_center = width / 2;
     ll y_center = width / 2;
@@ -48,8 +44,24 @@ extern "C" __global__ void rotate_kernel(
     float y_sin = (float)(y - y_center) * angle_sin;
     float y_cos = (float)(y - y_center) * angle_cos;
 
-    ll x_rot = clamp_index((ll)round(x_cos - y_sin) + y_center, 0, width-1);
-    ll y_rot = clamp_index((ll)round(y_cos + x_sin) + x_center, 0, width-1);
+    ull x_rot = clamp_index((ll)round(x_cos - y_sin) + y_center, 0, width-1);
+    ull y_rot = clamp_index((ll)round(y_cos + x_sin) + x_center, 0, width-1);
 
-    elevations_out[relative_x*max_los*2+relative_y] = elevations[x_rot*width+y_rot];
+    ull elevations_off = blockIdx.z * (max_los * (2 * max_los));
+    ull elevation_index = (relative_x*(2*max_los)) + relative_y;
+    ll rot_index = x_rot*width+y_rot;
+
+    elevations_out[elevations_off+elevation_index] = elevations[rot_index];
+
+    if (relative_y < max_los) {
+        ull elevations_off = blockIdx.z * (max_los * max_los);
+        ull elevation_index = (relative_x*max_los) + relative_y;
+
+        bool in_bounds = (x_rot >= max_los && x_rot < max_los*2)
+            && (y_rot >= max_los && y_rot < max_los*2);
+
+        int tvs_idx = (x_rot-max_los)*max_los + (y_rot-max_los);
+
+        index_out[elevations_off+elevation_index] = in_bounds ? tvs_idx : -1;
+    }
 }

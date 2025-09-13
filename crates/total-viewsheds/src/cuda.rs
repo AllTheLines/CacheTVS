@@ -179,40 +179,50 @@ impl CudaKernel {
         })
     }
 
-    fn rotate(&self, elevs: &[i16], angle: u32) -> Result<()> {
+    fn rotate(
+        &self,
+        elevations: &CudaSlice<i16>,
+        rot_elevation_buf: &CudaSlice<i16>,
+        rot_index_buf: &CudaSlice<i32>,
+        angle: u32,
+        num_angles: u32,
+    ) -> Result<()> {
         println!("running angle: {angle}");
 
         let launch_cfg = LaunchConfig {
             block_dim: (32, 32, 1),
-            grid_dim: (188, 375, 90),
+            grid_dim: (188, 375, num_angles),
             shared_mem_bytes: 0,
         };
 
-        let elevations = self.stream.memcpy_stod(elevs)?;
-        let zeroed = self.stream.alloc_zeros::<i16>(6000 * 12000)?;
-
+        // rotate_kernel(
+        //     const short* __restrict__ elevations,
+        //     short* __restrict__ elevations_out,
+        //     const int* __restrict__ index_out,
+        //     int angle_off
+        // )
         let mut builder = self.stream.launch_builder(&self.rotate_kernel);
-        builder.arg(&elevations);
-        builder.arg(&zeroed);
+        builder.arg(elevations);
+        builder.arg(rot_elevation_buf);
+        builder.arg(rot_index_buf);
         builder.arg(&angle);
 
         unsafe {
             builder.launch(launch_cfg)?;
         }
 
-        let res = self.stream.memcpy_dtov(&zeroed)?;
         Ok(())
     }
 
     fn calculate_angles(
         &self,
-        elevations: &[i16],
-        idxs: &[i32],
+        elevations: &CudaSlice<i16>,
+        idxs: &CudaSlice<i32>,
         num_angles: u32,
         angle_buf: &CudaSlice<f32>,
     ) -> Result<()> {
-        let elevs = self.stream.memcpy_stod(elevations)?;
-        let idxs = self.stream.memcpy_stod(idxs)?;
+        // let elevs = self.stream.memcpy_stod(elevations)?;
+        // let idxs = self.stream.memcpy_stod(idxs)?;
 
         // TODO: this is extremely tuned for Everest, maybe make this a bit more general?
         let launch_cfg = LaunchConfig {
@@ -222,8 +232,8 @@ impl CudaKernel {
         };
 
         let mut builder = self.stream.launch_builder(&self.angle_kernel);
-        builder.arg(&elevs);
-        builder.arg(&idxs);
+        builder.arg(elevations);
+        builder.arg(idxs);
         builder.arg(angle_buf);
 
         unsafe {
@@ -240,32 +250,27 @@ impl CudaKernel {
         elevs: &[f32],
         cumulative_surfaces: usize,
     ) -> Result<Vec<f32>> {
-        let half_elevs = elevs.iter().map(|&x| (x as i32) as i16).collect_vec();
-
-        for angle in (0..360).step_by(STEP) {
-            self.rotate(&half_elevs, angle)?;
-        }
-        todo!();
-
+        let half_elevs = elevs
+            .iter()
+            .map(|&x| (x as i32) as i16)
+            .collect_vec();
 
         let result = self.stream.alloc_zeros::<f32>(cumulative_surfaces)?;
+        let elev_buffer = self.stream.memcpy_stod(&half_elevs)?;
 
-        const STEP: usize = 90;
+        const STEP: usize = 45;
+
+        // TODO: fix uint32_t overflow in rotation kernel.
+        //       The real limit is likely 59 but that is an uneven number.
+        //       It is likely because 2^32 < 60*12000*6000.
+        assert!(STEP <= 45);
+
+        let rotated_elevs = self.stream.alloc_zeros::<i16>(STEP * 6000 * 12000)?;
+        let rotated_indexes = self.stream.alloc_zeros::<i32>(STEP * 6000 * 6000)?;
 
         for angle in (0..360).step_by(STEP) {
-            let mut time = Instant::now();
-            let (flattened_elevs, flattened_idxs) =
-                multithread_rotations(&half_elevs, max_los_points, STEP, angle);
-
-            println!(
-                "Took {:?} to process angles: {angle}-{}",
-                time.elapsed(),
-                angle + STEP
-            );
-
-            time = Instant::now();
-            self.calculate_angles(&flattened_idxs, &flattened_elevs, STEP as u32, &result)?;
-            println!("Took {:?} to process angle", time.elapsed());
+            self.rotate(&elev_buffer, &rotated_elevs, &rotated_indexes, angle, STEP as u32)?;
+            self.calculate_angles(&rotated_elevs, &rotated_indexes, STEP as u32, &result)?;
         }
 
         let res = self.stream.memcpy_dtov(&result)?;
