@@ -174,7 +174,7 @@ To do all the viewshed calculations we assume the DEM data is projected to an AE
 
 ## Further Reading
 * https://en.wikipedia.org/wiki/Long_distance_observations
+* Norwegian Defense Research has perhaps the best introduction covering the maths of Viewshed analysis: https://www.ffi.no/no/Rapporter/15-01300.pdf
 
 ## TODO
-* [ ] Why is computing 0° so much faster than computing 1° and 45° so much faster than 46°??
 * [ ] `--rings-per-km` doesn't seem intuitive and doesn't give an informative error when it fails.

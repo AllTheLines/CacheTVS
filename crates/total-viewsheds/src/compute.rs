@@ -292,7 +292,13 @@ impl<'compute> Compute<'compute> {
             &self.total_surfaces,
             self.dem.tvs_width,
             self.dem.tvs_width,
-            output_dir.join("heatmap.png"),
+            output_dir.join("total_surfaces.png"),
+        )?;
+
+        crate::output::bt::save(
+            self.dem,
+            &self.total_surfaces,
+            &output_dir.join("total_surfaces.bt"),
         )?;
 
         Ok(())

@@ -1,21 +1,30 @@
 //! Total Viewshed Calculator
 
+#![expect(clippy::pub_use, reason = "I admit I don't understand the other way.")]
+
 use clap::Parser as _;
 use color_eyre::eyre::{ContextCompat as _, Result};
 use tracing_subscriber::{layer::SubscriberExt as _, util::SubscriberInitExt as _, Layer as _};
 
 mod axes;
 mod band_of_sight;
+/// The `.bt` file type for reading and writing the data we consume and output.
+mod bt {
+    pub mod header;
+    pub use header::BinaryTerrain;
+    pub mod read;
+    pub mod write;
+}
 mod cache;
 mod compute;
 mod config;
 mod dem;
 mod dump_usage;
-mod input;
 mod vulkan;
 /// Various ways to output data.
 mod output {
     pub mod ascii;
+    pub mod bt;
     pub mod png;
     pub mod ring_data;
     pub mod viewshed;
@@ -66,7 +75,7 @@ fn setup_logging() -> Result<()> {
 
 /// Run computations
 fn compute(config: &config::Compute) -> Result<()> {
-    let tile = input::BinaryTerrain::read(&config.input)?;
+    let tile = bt::BinaryTerrain::read(&config.input)?;
     let scale = config.scale.unwrap_or_else(|| tile.scale());
 
     #[expect(
@@ -93,10 +102,10 @@ fn compute(config: &config::Compute) -> Result<()> {
 
     tracing::info!("Converting DEM data to `f32`");
     match &tile.data {
-        input::DataType::Int16(points) => {
+        bt::header::Data::Int16(points) => {
             dem.elevations = points.iter().map(|point| f32::from(*point)).collect();
         }
-        input::DataType::Float32(points) => dem.elevations.clone_from(points),
+        bt::header::Data::Float32(points) => dem.elevations.clone_from(points),
     }
 
     // Free up RAM
