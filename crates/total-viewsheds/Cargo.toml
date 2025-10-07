@@ -19,8 +19,8 @@ proj4rs = { version = "0.1.8", features = ["aeqd"] }
 serde = "1.0.219"
 serde_json = "1.0.143"
 tracing = { version = "0.1.41" }
-tracing-subscriber = { version = "0.3.19", default-features = false, features = ["env-filter", "ansi"] }
-wgpu = { version = "25", default-features = false, features = ["spirv", "vulkan"] }
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+wgpu = { version = "27", default-features = false, features = ["spirv", "vulkan"] }
 radsort = "0.1.1"
 
 [dev-dependencies]

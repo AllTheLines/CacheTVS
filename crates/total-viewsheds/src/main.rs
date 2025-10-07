@@ -64,7 +64,7 @@ fn main() -> Result<()> {
 /// Setup logging.
 fn setup_logging() -> Result<()> {
     let filters = tracing_subscriber::EnvFilter::builder()
-        .with_default_directive("info".parse()?)
+        .with_default_directive("total_viewsheds=info".parse()?)
         .from_env_lossy();
     let filter_layer = tracing_subscriber::fmt::layer().with_filter(filters);
     let tracing_setup = tracing_subscriber::registry().with(filter_layer);

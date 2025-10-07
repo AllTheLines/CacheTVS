@@ -64,8 +64,9 @@ impl Vulkan {
         // This is what loads the vulkan/dx12/metal/opengl libraries.
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::VULKAN,
-            flags: wgpu::InstanceFlags::default(),
+            flags: wgpu::InstanceFlags::DEBUG | wgpu::InstanceFlags::VALIDATION,
             backend_options: wgpu::BackendOptions::default(),
+            memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
         });
 
         // We then create an `Adapter` which represents a physical gpu in the system. It allows
@@ -108,10 +109,13 @@ impl Vulkan {
         let (device, queue) =
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                 label: None,
-                required_features: wgpu::Features::SPIRV_SHADER_PASSTHROUGH,
+                required_features: wgpu::Features::EXPERIMENTAL_PASSTHROUGH_SHADERS,
                 required_limits,
                 memory_hints: wgpu::MemoryHints::MemoryUsage,
                 trace: wgpu::Trace::Off,
+                // Safety:
+                //   We're using `EXPERIMENTAL_PASSTHROUGH_SHADERS`.
+                experimental_features: unsafe { wgpu::ExperimentalFeatures::enabled() },
             }))?;
 
         let distances_size =
@@ -144,13 +148,19 @@ impl Vulkan {
         )?;
 
         // TODO: embed this if we ever make a proper binary release.
+        //
         // Safety:
-        //   We're disabling Naga vailidation, so we must assume that if `cargo-gpu` can compile
-        //   the Rust shader then we have a valid SPIRV file.
+        //   We create our SPIRV with `cargo-gpu` that uses features that `wgpu`'s `naga` validator
+        //   can't compile to `.wgsl`.
         let module = unsafe {
-            device.create_shader_module_passthrough(wgpu::include_spirv_raw!(
-                "../../kernels/vulkan-and-cpu//kernel.spv"
-            ))
+            device.create_shader_module_passthrough(wgpu::ShaderModuleDescriptorPassthrough {
+                entry_point: "main".into(),
+                label: None,
+                spirv: Some(wgpu::util::make_spirv_raw(include_bytes!(
+                    "../../kernels/vulkan-and-cpu/kernel.spv"
+                ))),
+                ..Default::default()
+            })
         };
 
         // The pipeline layout describes the bind groups that a pipeline expects
@@ -467,7 +477,11 @@ impl Vulkan {
 
         // Wait for the GPU to finish working on the submitted work. This doesn't work on WebGPU, so we would need
         // to rely on the callback to know when the buffer is mapped.
-        self.device.poll(wgpu::PollType::Wait)?;
+        let result = self.device.poll(wgpu::PollType::wait_indefinitely());
+
+        if let Err(error) = result {
+            color_eyre::eyre::bail!("{error:?}");
+        }
 
         // We can now read the data from the buffer.
         let surfaces_data = buffer_slice_surfaces.get_mapped_range();
