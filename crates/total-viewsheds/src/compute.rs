@@ -1,7 +1,7 @@
 //! The main entrypoint for running computations.
 
 use color_eyre::Result;
-use crate::cuda::{CudaKernel};
+use cudashed::{CudaKernel};
 
 /// Handles all the computations.
 pub struct Compute<'compute> {

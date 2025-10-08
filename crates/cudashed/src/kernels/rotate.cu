@@ -1,10 +1,10 @@
-#define M_PI 3.14159265358979323846
+#define M_PI ((float) 3.14159265358979323846)
 #define ull unsigned long long
 #define ll long long int
 
 
-__device__ double to_radians(double degrees) {
-    return (degrees/180.0) * M_PI;
+__device__ float to_radians(float degrees) {
+    return (degrees/(float)180.0) * M_PI;
 }
 
 __device__ ll clamp_index(ll value, ll start, ll end) {
@@ -13,18 +13,21 @@ __device__ ll clamp_index(ll value, ll start, ll end) {
 }
 
 extern "C" __global__ void rotate_kernel(
-    // elevations has gridDim.z number of (MAX_LOS_POINTS * 3)^2 buffers
     const short* __restrict__ elevations,
     short* __restrict__ elevations_out,
     int* __restrict__ index_out,
     int angle_off
 ) {
+    // This kernel is 1 x 2, so we can make use of max_los to
     int max_los = (gridDim.y*blockDim.y) / 2;
     int width = max_los * 3;
 
     int relative_x = (blockDim.x*blockIdx.x)+threadIdx.x;
     int relative_y = (blockDim.y*blockIdx.y)+threadIdx.y;
 
+    // if our relative_x is higher than max_los we bail. This happens
+    // when max_los is not divisible by 32
+    // TODO: what happens when
     if (relative_x >= max_los) {
         return;
     }
@@ -44,6 +47,9 @@ extern "C" __global__ void rotate_kernel(
     float y_sin = (float)(y - y_center) * angle_sin;
     float y_cos = (float)(y - y_center) * angle_cos;
 
+    // TODO: figure out a good interpolation
+    // This clamps both indexes between (0, width-1) to make sure that rotated
+    // index is in bounds
     ull x_rot = clamp_index((ll)round(x_cos - y_sin) + y_center, 0, width-1);
     ull y_rot = clamp_index((ll)round(y_cos + x_sin) + x_center, 0, width-1);
 

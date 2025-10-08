@@ -16,10 +16,8 @@ tracing = { version = "0.1.41" }
 tracing-subscriber = { version = "0.3.19", default-features = false, features = ["env-filter", "ansi"] }
 wgpu = { version = "25", features = ["spirv"] }
 radsort = "0.1.1"
-cudarc = { version = "0.17.3", features = ["cuda-version-from-build-system"] }
-half = { version = "2.6.0" }
-itertools = "0.11.0"
-arrayfire = "3.8.0"
+
+cudashed = {path = "../cudashed" }
 
 [dev-dependencies]
 tempfile = "3.20.0"
