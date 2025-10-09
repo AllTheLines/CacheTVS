@@ -168,7 +168,7 @@ impl crate::dem::DEM {
                 self.band_deltas[i] = delta;
 
                 let next_distance = self.axes.distances[usize::try_from(next_dem_id)?];
-                self.band_distances[i] = (pov_distance - next_distance).abs();
+                self.band_distances[i] = (pov_distance - next_distance).abs() * self.scale;
             }
         }
 
