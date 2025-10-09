@@ -171,6 +171,7 @@ To do all the viewshed calculations we assume the DEM data is projected to an AE
 
 ### Misc
 * https://crates.io/crates/srtm_reader
+* https://www.heywhatsthat.com
 
 ## Further Reading
 * https://en.wikipedia.org/wiki/Long_distance_observations

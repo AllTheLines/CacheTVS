@@ -30,6 +30,8 @@ pub struct Vulkan {
     output_surfaces_size: u64,
     /// Memory size of the ring data (raw viewshed data).
     output_rings_size: u64,
+    /// Memory size of the longest lines of sight data.
+    output_longest_lines_size: u64,
 }
 
 /// All the buffers used in the pipeline.
@@ -48,6 +50,10 @@ struct Buffers {
     output_rings: wgpu::Buffer,
     /// CPU-side buffer for the above.
     download_rings: wgpu::Buffer,
+    /// GPU-side buffer to save the longest line of sight for a given point.
+    output_longest_lines: wgpu::Buffer,
+    /// CPU-side buffer for the above.
+    download_longest_lines: wgpu::Buffer,
 }
 
 impl Vulkan {
@@ -98,7 +104,7 @@ impl Vulkan {
         // The `Device` is used to create and manage GPU resources.
         // The `Queue` is a queue used to submit work for the GPU to process.
         let required_limits = wgpu::Limits {
-            max_storage_buffers_per_shader_stage: 5,
+            max_storage_buffers_per_shader_stage: 6,
             max_storage_buffer_binding_size: limits
                 .max_storage_buffer_binding_size
                 .min(2_000_000_000),
@@ -118,14 +124,15 @@ impl Vulkan {
                 experimental_features: unsafe { wgpu::ExperimentalFeatures::enabled() },
             }))?;
 
+        let total_bands = u64::from(constants.total_bands.div_euclid(2));
         let distances_size =
             u64::try_from(distances_count)? * u64::try_from(std::mem::size_of::<f32>())?;
         let band_deltas_size =
             u64::try_from(band_deltas_count)? * u64::try_from(std::mem::size_of::<i32>())?;
-        let output_surfaces_size = u64::from(constants.total_bands.div_euclid(2))
-            * u64::try_from(std::mem::size_of::<f32>())?;
+        let output_surfaces_size = total_bands * u64::try_from(std::mem::size_of::<f32>())?;
         let output_rings_size =
             u64::try_from(total_reserved_rings)? * u64::try_from(std::mem::size_of::<u32>())?;
+        let output_longest_lines_size = total_bands * u64::try_from(std::mem::size_of::<f32>())?;
 
         let required_invocations = constants.total_bands * 2;
         let (dispatches, invocations) =
@@ -145,6 +152,7 @@ impl Vulkan {
             distances_size,
             band_deltas_size,
             output_rings_size,
+            output_longest_lines_size,
         )?;
 
         // TODO: embed this if we ever make a proper binary release.
@@ -190,6 +198,7 @@ impl Vulkan {
             pipeline,
             output_surfaces_size,
             output_rings_size,
+            output_longest_lines_size,
         };
 
         tracing::trace!("GPU pipline ready.");
@@ -197,6 +206,7 @@ impl Vulkan {
     }
 
     /// Setup the buffers.
+    #[expect(clippy::too_many_lines, reason = "It's all just boilerplate.")]
     fn setup_buffers(
         device: &wgpu::Device,
         constants: kernel::constants::Constants,
@@ -204,6 +214,7 @@ impl Vulkan {
         distances_size: u64,
         band_deltas_size: u64,
         output_rings_size: u64,
+        longest_lines_size: u64,
     ) -> Result<(Buffers, wgpu::BindGroup)> {
         tracing::trace!("Creating GPU buffers....");
         let input_constants_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -268,6 +279,19 @@ impl Vulkan {
             mapped_at_creation: false,
         });
 
+        let output_longest_lines_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Longest lines data"),
+            size: longest_lines_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let download_longest_linest_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Download longest lines data"),
+            size: longest_lines_size,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
         let bind_group_layout = Self::create_bind_group_layout(device)?;
         // The bind group contains the actual resources to bind to the pipeline.
         //
@@ -301,6 +325,10 @@ impl Vulkan {
                     binding: 5,
                     resource: output_rings_buffer.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: output_longest_lines_buffer.as_entire_binding(),
+                },
             ],
         });
 
@@ -311,6 +339,8 @@ impl Vulkan {
             download_surfaces: download_surfaces_buffer,
             output_rings: output_rings_buffer,
             download_rings: download_rings_buffer,
+            output_longest_lines: output_longest_lines_buffer,
+            download_longest_lines: download_longest_linest_buffer,
         };
 
         drop(elevations); // Free up RAM. Although it gets dropped anyway right??
@@ -399,6 +429,18 @@ impl Vulkan {
                     },
                     count: None,
                 },
+                // Output: longest lines of sight
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        // This is the size of a single element in the buffer.
+                        min_binding_size: std::num::NonZeroU64::new(4),
+                        has_dynamic_offset: false,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -406,7 +448,11 @@ impl Vulkan {
     }
 
     /// Compute a single sector.
-    pub fn run(&self, distances: &[f32], band_deltas: &[i32]) -> Result<(Vec<f32>, Vec<u32>)> {
+    pub fn run(
+        &self,
+        distances: &[f32],
+        band_deltas: &[i32],
+    ) -> Result<(Vec<f32>, Vec<u32>, Vec<f32>)> {
         self.queue
             .write_buffer(&self.buffers.distances, 0, bytemuck::cast_slice(distances));
         self.queue.write_buffer(
@@ -452,6 +498,14 @@ impl Vulkan {
             self.output_rings_size,
         );
 
+        encoder.copy_buffer_to_buffer(
+            &self.buffers.output_longest_lines,
+            0,
+            &self.buffers.download_longest_lines,
+            0,
+            self.output_longest_lines_size,
+        );
+
         // We finish the encoder, giving us a fully recorded command buffer.
         let command_buffer = encoder.finish();
 
@@ -474,6 +528,8 @@ impl Vulkan {
         });
         let buffer_slice_rings = self.buffers.download_rings.slice(..);
         buffer_slice_rings.map_async(wgpu::MapMode::Read, |_| {});
+        let buffer_slice_longest_lines = self.buffers.download_longest_lines.slice(..);
+        buffer_slice_longest_lines.map_async(wgpu::MapMode::Read, |_| {});
 
         // Wait for the GPU to finish working on the submitted work. This doesn't work on WebGPU, so we would need
         // to rely on the callback to know when the buffer is mapped.
@@ -486,17 +542,21 @@ impl Vulkan {
         // We can now read the data from the buffer.
         let surfaces_data = buffer_slice_surfaces.get_mapped_range();
         let ring_data = buffer_slice_rings.get_mapped_range();
+        let longest_lines = buffer_slice_longest_lines.get_mapped_range();
         // Convert the data back to a slice of f32.
         let surfaces_result = bytemuck::cast_slice(&surfaces_data).to_vec();
         let ring_result = bytemuck::cast_slice(&ring_data).to_vec();
+        let longest_lines_result = bytemuck::cast_slice(&longest_lines).to_vec();
 
         drop(surfaces_data);
         drop(ring_data);
+        drop(longest_lines);
 
         self.buffers.download_surfaces.unmap();
         self.buffers.download_rings.unmap();
+        self.buffers.download_longest_lines.unmap();
 
-        Ok((surfaces_result, ring_result))
+        Ok((surfaces_result, ring_result, longest_lines_result))
     }
 
     /// Find a 3D kernel dispatch that balances all dimensions.

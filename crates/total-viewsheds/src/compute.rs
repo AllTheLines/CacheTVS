@@ -26,6 +26,8 @@ pub struct Compute<'compute> {
     pub total_surfaces: Vec<f32>,
     /// Keeps track of the ring (viewshed) data.
     pub ring_data: Vec<Vec<u32>>,
+    /// Keeps track of the longest lines of sight.
+    pub longest_lines: Vec<f32>,
 }
 
 impl<'compute> Compute<'compute> {
@@ -104,6 +106,7 @@ impl<'compute> Compute<'compute> {
             total_reserved_rings,
             total_surfaces: Vec::default(),
             ring_data: Vec::default(),
+            longest_lines: Vec::default(),
         })
     }
 
@@ -137,6 +140,12 @@ impl<'compute> Compute<'compute> {
         Self::is_process_everything(process) || process.contains(&crate::config::Process::Viewsheds)
     }
 
+    /// Are we computing total surface areas?
+    pub fn is_process_longest_lines(process: &[crate::config::Process]) -> bool {
+        Self::is_process_everything(process)
+            || process.contains(&crate::config::Process::LongestLines)
+    }
+
     /// Create a GPU-friendly bitmask of flags to use in the kernel.
     pub fn bitmask_flags_for_kernel(processes: &[crate::config::Process]) -> u32 {
         use kernel::constants as kernel;
@@ -150,6 +159,9 @@ impl<'compute> Compute<'compute> {
                     flags |= kernel::Flag::TotalSurfaces.bit();
                 }
                 crate::config::Process::Viewsheds => flags |= kernel::Flag::RingData.bit(),
+                crate::config::Process::LongestLines => {
+                    flags |= kernel::Flag::LongestLines.bit();
+                }
             }
         }
         flags
@@ -169,10 +181,23 @@ impl<'compute> Compute<'compute> {
             self.save_ring_metadata()?;
         }
 
+        let mut longest_lines = if Self::is_process_longest_lines(&self.process) {
+            let blank = vec![0.0; usize::try_from(self.dem.computable_points_count)?];
+            self.longest_lines.clone_from(&blank);
+            blank
+        } else {
+            Vec::new()
+        };
+
         for angle in 0..crate::axes::SECTOR_STEPS {
             self.load_or_compute_cache(angle)?;
             let mut sector_ring_data = vec![0; self.total_reserved_rings];
-            self.compute_sector(angle, &mut sector_surfaces, &mut sector_ring_data)?;
+            self.compute_sector(
+                angle,
+                &mut sector_surfaces,
+                &mut sector_ring_data,
+                &mut longest_lines,
+            )?;
 
             if Self::is_process_viewsheds(&self.process) {
                 match &self.output_directory {
@@ -186,6 +211,11 @@ impl<'compute> Compute<'compute> {
             if Self::is_process_surfaces(&self.process) {
                 self.add_sector_surfaces_to_running_total(&sector_surfaces);
                 self.render_total_surfaces()?;
+            }
+
+            if Self::is_process_longest_lines(&self.process) {
+                self.increment_longest_lines(&longest_lines);
+                self.render_longest_lines()?;
             }
         }
 
@@ -249,6 +279,15 @@ impl<'compute> Compute<'compute> {
         }
     }
 
+    /// Check to see if this angle increases the current longest line of sight for the point.
+    fn increment_longest_lines(&mut self, longest_lines: &[f32]) {
+        for (left, right) in self.longest_lines.iter_mut().zip(longest_lines.iter()) {
+            if right > left {
+                *left = *right;
+            }
+        }
+    }
+
     /// The metadata needed to reconstruct viewsheds based on the DEM and reserved rings.
     pub fn metadata(&self) -> Result<crate::output::ring_data::MetaData> {
         Ok(crate::output::ring_data::MetaData {
@@ -281,7 +320,7 @@ impl<'compute> Compute<'compute> {
         Ok(())
     }
 
-    /// Render a heatmap of the total surface areas of each point within the computable area of the
+    /// Render a heatmap and `.bt` file of the total surface areas for each point within the computable area of the
     /// DEM.
     fn render_total_surfaces(&self) -> Result<()> {
         let Some(output_dir) = &self.output_directory else {
@@ -304,20 +343,44 @@ impl<'compute> Compute<'compute> {
         Ok(())
     }
 
+    /// Render a heatmap and `.bt` of the longest lines of sight for each point within the computable area of the
+    /// DEM.
+    fn render_longest_lines(&self) -> Result<()> {
+        let Some(output_dir) = &self.output_directory else {
+            return Ok(());
+        };
+
+        crate::output::png::save(
+            &self.longest_lines,
+            self.dem.tvs_width,
+            self.dem.tvs_width,
+            output_dir.join("longest_lines.png"),
+        )?;
+
+        crate::output::bt::save(
+            self.dem,
+            &self.longest_lines,
+            &output_dir.join("longest_lines.bt"),
+        )?;
+
+        Ok(())
+    }
+
     /// Compute a single sector.
     fn compute_sector(
         &mut self,
         angle: u16,
         cumulative_surfaces: &mut [f32],
         ring_data: &mut [u32],
+        longest_lines: &mut [f32],
     ) -> Result<()> {
         tracing::info!("Running kernel for {angle}°");
         match self.backend {
             crate::config::Backend::CPU => {
-                self.compute_sector_cpu(cumulative_surfaces, ring_data);
+                self.compute_sector_cpu(cumulative_surfaces, ring_data, longest_lines);
             }
             crate::config::Backend::Vulkan => {
-                self.compute_sector_vulkan(cumulative_surfaces, ring_data)?;
+                self.compute_sector_vulkan(cumulative_surfaces, ring_data, longest_lines)?;
             }
 
             #[expect(clippy::unimplemented, reason = "Coming Soon!")]
@@ -331,20 +394,34 @@ impl<'compute> Compute<'compute> {
     fn compute_sector_vulkan(
         &mut self,
         cumulative_surfaces: &mut [f32],
-        ring_data: &mut [u32],
+        rings: &mut [u32],
+        longest_lines: &mut [f32],
     ) -> Result<()> {
         let Some(gpu) = self.vulkan.as_mut() else {
             color_eyre::eyre::bail!("`self.gpu` not instantiated yet.");
         };
 
-        let (surfaces, rings) = gpu.run(&self.dem.band_distances, &self.dem.band_deltas)?;
-        cumulative_surfaces.copy_from_slice(surfaces.as_slice());
-        ring_data.copy_from_slice(rings.as_slice());
+        let (surfaces_data, rings_data, longest_lines_data) =
+            gpu.run(&self.dem.band_distances, &self.dem.band_deltas)?;
+        if Self::is_process_surfaces(&self.process) {
+            cumulative_surfaces.copy_from_slice(surfaces_data.as_slice());
+        }
+        if Self::is_process_viewsheds(&self.process) {
+            rings.copy_from_slice(rings_data.as_slice());
+        }
+        if Self::is_process_longest_lines(&self.process) {
+            longest_lines.copy_from_slice(longest_lines_data.as_slice());
+        }
         Ok(())
     }
 
     /// Do a whole sector calculation on the CPU.
-    fn compute_sector_cpu(&self, cumulative_surfaces: &mut [f32], ring_data: &mut [u32]) {
+    fn compute_sector_cpu(
+        &self,
+        cumulative_surfaces: &mut [f32],
+        ring_data: &mut [u32],
+        longest_lines: &mut [f32],
+    ) {
         for kernel_id in 0..self.constants.total_bands {
             kernel::kernel::kernel(
                 kernel_id,
@@ -354,6 +431,7 @@ impl<'compute> Compute<'compute> {
                 &self.dem.band_deltas,
                 cumulative_surfaces,
                 ring_data,
+                longest_lines,
             );
         }
     }

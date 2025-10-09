@@ -13,7 +13,7 @@ const TAN_ONE_RAD: f32 = 0.017_453_3;
 
 /// So that some points are not visible simply by virtue of the earth's spherical
 /// shape.
-const EARTH_RADIUS_SQUARED: f32 = 12_742_000.0;
+const EARTH_RADIUS_DOUBLED: f32 = 12_742_000.0;
 
 /// The direction of a band from the observer's point of view. Whether it points North or South is
 /// not relevant, they're just opposite to each other.
@@ -25,6 +25,7 @@ enum BandDirection {
 }
 
 /// The kernel
+#[expect(clippy::too_many_arguments, reason = "This is the entrypoint.")]
 #[inline]
 pub fn kernel(
     // The identifier that decides which PoV and band direction to calculate.
@@ -55,6 +56,8 @@ pub fn kernel(
     cumulative_surfaces: &mut [f32],
     // Array for keeping track of visible chunks called Ring Sectors.
     ring_data: &mut [u32],
+    // Array for recording longest lines of sight.
+    longest_lines: &mut [f32],
 ) {
     let tvs_id: u32;
     let mut max_angle = MAX_ANGLE;
@@ -104,6 +107,9 @@ pub fn kernel(
         rings.save(pov_id);
     }
 
+    // Keep track of the longest line.
+    let mut longest_line = 0.0;
+
     // The DEM ID will change as we loop, but the PoV won't. For now we need the PoV
     // ID to start the reconstruction of a unique band from the band delta template.
     let mut dem_id = pov_id;
@@ -134,11 +140,12 @@ pub fn kernel(
         // Note the adjustment for curvature of the earth. It is merely a crude
         // approximation using the spherical earth model.
         // TODO:
+        //   * Currently it's an approximation by not using arctan.
         //   * Account for refraction.
         //   * Is there a performance gain to be had from only checking for an
         //     increase in elevation as a trigger for the full angle calculation?
         //   * Is this safe for `f32`? At what point does it break down?
-        let angle = (elevation_delta / distance) - (distance / EARTH_RADIUS_SQUARED);
+        let angle = (elevation_delta / distance) - (distance / EARTH_RADIUS_DOUBLED);
 
         //                            5              |-
         //                        4 .-`-. 6          |-
@@ -182,6 +189,10 @@ pub fn kernel(
             band_surface += distance * TAN_ONE_RAD;
         }
 
+        if constants.is_longest_lines() && is_currently_visible {
+            longest_line = distance;
+        }
+
         // Store the position on the DEM where the visible region starts.
         if constants.is_ring_data() && opening {
             rings.save(dem_id);
@@ -198,7 +209,6 @@ pub fn kernel(
     }
 
     // Close any ring sectors prematurely cut off by a restricted line of sight.
-
     if constants.is_ring_data() && is_currently_visible && !closing {
         rings.save(dem_id);
     }
@@ -207,16 +217,24 @@ pub fn kernel(
         rings.finish();
     }
 
-    // Accumulate surfaces for a given DEM ID. Note that this is thread safe, because
-    // front/back bands are kept in separate array positions. And that actual
-    // cumulation additions are made on data from a *previous* run where a completely
-    // different sector angle was calculated.
+    // TODO: Not thread safe.
     #[expect(
         clippy::as_conversions,
         reason = "This needs to run on the GPU where fallibility isn't possible"
     )]
-    if constants.is_total_surfaces() {
-        cumulative_surfaces[tvs_id as usize] += band_surface;
+    {
+        // Accumulate surfaces for a given TVS ID.
+        if constants.is_total_surfaces() {
+            cumulative_surfaces[tvs_id as usize] += band_surface;
+        }
+
+        // Save the longest line of sight for the given TVS ID.
+        if constants.is_longest_lines() {
+            let current_longest = longest_lines[tvs_id as usize];
+            if longest_line > current_longest {
+                longest_lines[tvs_id as usize] = longest_line;
+            }
+        }
     }
 }
 

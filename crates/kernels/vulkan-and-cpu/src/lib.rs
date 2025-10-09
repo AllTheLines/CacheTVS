@@ -27,6 +27,7 @@ mod ring_data;
 )]
 #[allow(
     clippy::missing_inline_in_public_items,
+    clippy::too_many_arguments,
     reason = "SPIR-V requires an entrypoint"
 )]
 #[spirv(compute(threads(8, 8, 4)))]
@@ -38,6 +39,7 @@ pub fn main(
     #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] deltas: &[i32],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] cumulative_surfaces: &mut [f32],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] ring_data: &mut [u32],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] longest_lines: &mut [f32],
 ) {
     let linear_id = id.x
         + id.y * constants.dimensions.x
@@ -54,5 +56,6 @@ pub fn main(
         deltas,
         cumulative_surfaces,
         ring_data,
+        longest_lines,
     );
 }

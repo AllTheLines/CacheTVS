@@ -147,4 +147,6 @@ pub enum Process {
     /// Compute all the ring sectors saving them to disk so that they can be used to later
     /// reconstruct viewsheds.
     Viewsheds,
+    /// Compute the longest line of sight for each DEM point.
+    LongestLines,
 }

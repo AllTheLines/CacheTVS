@@ -116,7 +116,7 @@ impl DEM {
         let max_line_of_sight = f64::from(self.max_line_of_sight);
         let coord = self.convert_dem_id_to_coord(dem_id).0 * scale;
         let lower = max_line_of_sight;
-        let upper = (f64::from(self.width - 1) * scale) - max_line_of_sight;
+        let upper = f64::from(self.width - 1).mul_add(scale, -max_line_of_sight);
         coord.x >= lower && coord.x <= upper && coord.y >= lower && coord.y <= upper
     }
 

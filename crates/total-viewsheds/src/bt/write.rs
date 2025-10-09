@@ -13,7 +13,7 @@ use color_eyre::Result;
 impl super::BinaryTerrain {
     /// Write a `.bt` file.
     pub fn write(&self, path: &std::path::PathBuf) -> Result<()> {
-        tracing::info!("Writing DEM data to: {}", path.display());
+        tracing::info!("Writing geo data to: {}", path.display());
         let mut file = std::fs::File::create(path)?;
 
         let mut header = vec![0u8; crate::bt::header::HEADER_SIZE.try_into()?];

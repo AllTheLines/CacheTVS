@@ -50,6 +50,13 @@ impl Constants {
     pub const fn is_total_surfaces(&self) -> bool {
         (self.process & (Flag::TotalSurfaces.bit())) != 0
     }
+
+    #[inline]
+    #[must_use]
+    /// Should we be recording longest lines of sight?
+    pub const fn is_longest_lines(&self) -> bool {
+        (self.process & (Flag::LongestLines.bit())) != 0
+    }
 }
 
 #[repr(u32)]
@@ -63,6 +70,8 @@ pub enum Flag {
     TotalSurfaces = 1 << 0,
     /// Compute ring data.
     RingData = 1 << 1,
+    /// Record longest lines of sight.
+    LongestLines = 1 << 2,
 }
 
 impl Flag {
