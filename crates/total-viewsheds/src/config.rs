@@ -94,6 +94,15 @@ pub struct Compute {
     /// The input DEM file. Currently only `.hgt` files are supported.
     #[arg(value_name = "Path to the DEM file")]
     pub input: std::path::PathBuf,
+
+    /// How to normalise heatmap data
+    #[arg(
+        long,
+        value_enum,
+        value_name = "Heatmap normalisation method",
+        default_value_t = HeatmapNormalisation::UnitScale
+    )]
+    pub heatmap: HeatmapNormalisation,
 }
 
 #[derive(clap::Parser, Debug)]
@@ -149,4 +158,17 @@ pub enum Process {
     Viewsheds,
     /// Compute the longest line of sight for each DEM point.
     LongestLines,
+}
+
+/// Where to run the computations.
+#[derive(clap::ValueEnum, Clone, Debug, Copy)]
+pub enum HeatmapNormalisation {
+    /// Just scale between 0 and 1
+    UnitScale,
+    #[expect(clippy::doc_markdown, reason = "This is displayed on the CLI")]
+    /// Use Z-score normalisation based on Welford's algorithm. This basically means that the
+    /// data is redistributed such that the mean is 0.5. Useful for overly dark or bright
+    /// heatmaps.
+    /// https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Welford's_online_algorithm
+    Welford,
 }
