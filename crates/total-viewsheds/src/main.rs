@@ -114,15 +114,16 @@ fn compute(config: &config::Compute) -> Result<()> {
     tracing::debug!("Created DEM: {dem:?}");
 
     tracing::info!("Starting computations");
-    let mut compute = crate::compute::Compute::new(
-        config.backend.clone(),
-        config.process.clone(),
-        Some(dirs::state_dir().context("Couldn't get the OS's state directory")?),
-        Some(config.output_dir.clone()),
-        &mut dem,
-        config.rings_per_km,
-        config.observer_height,
-    )?;
+    let compute_config = compute::ComputeConfig {
+        observer_height: config.observer_height,
+        backend: config.backend.clone(),
+        process: config.process.clone(),
+        state_directory: Some(dirs::state_dir().context("Couldn't get the OS's state directory")?),
+        output_directory: Some(config.output_dir.clone()),
+        rings_per_km: config.rings_per_km,
+        heatmap: config.heatmap,
+    };
+    let mut compute = crate::compute::Compute::new(compute_config, &mut dem)?;
     compute.run()?;
     Ok(())
 }
