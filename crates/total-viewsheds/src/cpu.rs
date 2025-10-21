@@ -132,11 +132,11 @@ fn prefix_max_simd(angles: &[__m256], prefix_max: &mut [__m256]) {
         *prefix = v_prefix_max;
     }
 
-    // safety: sizeof(__m256) ==  sizeof(__m128) * 2, meaning it is well-aligned
     #[expect(
         clippy::transmute_ptr_to_ptr,
         reason = "transmute handles the slice size conversion, pointers don't"
     )]
+    // safety: sizeof(__m256) ==  sizeof(__m128) * 2, meaning it is well-aligned
     let single_wide_angles = unsafe { transmute::<&mut [__m256], &mut [__m128]>(prefix_max) };
 
     let mut acc = _mm_set1_ps(-2000.0f32);
