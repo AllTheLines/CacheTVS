@@ -68,7 +68,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - run: rustup toolchain install $RUST_VERSION --profile minimal
+      - run: | 
+          rustup toolchain install $RUST_VERSION --profile minimal
+          rustup component add clippy
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-shear, cargo-msrv
