@@ -31,6 +31,7 @@ mod output {
     pub mod viewshed;
 }
 mod projection;
+mod cpu;
 
 fn main() -> Result<()> {
     color_eyre::install()?;
