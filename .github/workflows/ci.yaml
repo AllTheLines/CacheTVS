@@ -19,7 +19,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_VERSION: 1.90.0
+  RUST_VERSION: nightly
   RUST_BACKTRACE: 1
 
 jobs:
@@ -31,7 +31,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - run: rustup toolchain install nightly --profile minimal
+      - run: rustup toolchain install $RUST_VERSION --profile minimal
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
