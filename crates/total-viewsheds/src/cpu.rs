@@ -5,8 +5,8 @@ use std::arch::x86_64::{
     __m128, __m256, _mm256_blend_ps, _mm256_castps_si256, _mm256_castsi256_ps, _mm256_max_ps,
     _mm256_set1_ps, _mm256_slli_si256, _mm_broadcast_ss, _mm_max_ps, _mm_set1_ps,
 };
-use std::mem::transmute;
 use std::iter::zip;
+use std::mem::transmute;
 use std::simd::Simd;
 use std::thread;
 use std::time::Instant;
@@ -110,10 +110,7 @@ const TAN_ONE_RAD: f32 = 0.017_453_3;
 /// ```visible(index) = angle[index] >= prefix_max[index]```
 #[target_feature(enable = "avx2")]
 #[inline]
-fn prefix_max_simd(
-    angles: &[__m256],
-    prefix_max: &mut [__m256],
-) {
+fn prefix_max_simd(angles: &[__m256], prefix_max: &mut [__m256]) {
     // constant lowest value spatted across all 8 lanes
     let max_angles = _mm256_set1_ps(-2000.0f32);
 
@@ -136,9 +133,11 @@ fn prefix_max_simd(
     }
 
     // safety: sizeof(__m256) ==  sizeof(__m128) * 2, meaning it is well-aligned
-    #[expect(clippy::transmute_ptr_to_ptr, reason="transmute handles the slice size conversion, pointers don't")]
-    let single_wide_angles =
-        unsafe { transmute::<&mut [__m256], &mut [__m128]>(prefix_max) };
+    #[expect(
+        clippy::transmute_ptr_to_ptr,
+        reason = "transmute handles the slice size conversion, pointers don't"
+    )]
+    let single_wide_angles = unsafe { transmute::<&mut [__m256], &mut [__m128]>(prefix_max) };
 
     let mut acc = _mm_set1_ps(-2000.0f32);
 
@@ -195,18 +194,16 @@ fn total_viewshed_vector(
 
     // allocate angles and their prefix maxes as mm256s so that the underlying buffer
     // is correctly aligned to 256 bits
-    #[expect(clippy::integer_division, reason="max_los % 8 == 0")]
+    #[expect(clippy::integer_division, reason = "max_los % 8 == 0")]
     let mut angles: Vec<__m256> = vec![_mm256_set1_ps(0.0); max_los / 8];
 
-    #[expect(clippy::integer_division, reason="max_los % 8 == 0")]
+    #[expect(clippy::integer_division, reason = "max_los % 8 == 0")]
     let mut prefix_max: Vec<__m256> = vec![_mm256_set1_ps(0.0); max_los / 8];
 
     for line_idx in 0..max_los {
         let elevation_offset = line_idx * width;
 
-        {
-
-        }
+        {}
         let line = &elevation_map[elevation_offset..(elevation_offset + width)];
 
         let indexes_offset = line_idx * max_los;
@@ -232,7 +229,10 @@ fn total_viewshed_vector(
                 .iter()
                 .map(|&x| f32::from(x) - pov_height);
 
-            #[expect(clippy::transmute_ptr_to_ptr, reason="transmute handles the slice size conversion, pointers don't")]
+            #[expect(
+                clippy::transmute_ptr_to_ptr,
+                reason = "transmute handles the slice size conversion, pointers don't"
+            )]
             // safety: sizeof(__m256) ==  sizeof(f32) * 8, meaning it is well-aligned
             let flat_angles = unsafe { transmute::<&mut [__m256], &mut [f32]>(angles.as_mut()) };
 
@@ -247,7 +247,10 @@ fn total_viewshed_vector(
 
             prefix_max_simd(&angles, &mut prefix_max);
 
-            #[expect(clippy::transmute_ptr_to_ptr, reason="transmute handles the slice size conversion, pointers don't")]
+            #[expect(
+                clippy::transmute_ptr_to_ptr,
+                reason = "transmute handles the slice size conversion, pointers don't"
+            )]
             // safety: sizeof(__m256) ==  sizeof(f32) * 8, meaning it is well-aligned
             let flat_prefixes = unsafe { transmute::<&[__m256], &[f32]>(&prefix_max) };
 
@@ -255,15 +258,16 @@ fn total_viewshed_vector(
                 .map(|(&mut angle, &prefix)| angle >= prefix)
                 .collect();
 
-            let sum =
-                zip(&distances, &surface_bitmap).fold(0.0f32, |surface_area, (distance, &visible)| {
+            let sum = zip(&distances, &surface_bitmap).fold(
+                0.0f32,
+                |surface_area, (distance, &visible)| {
                     if visible {
                         distance.mul_add(TAN_ONE_RAD, surface_area)
                     } else {
                         surface_area
                     }
-                });
-
+                },
+            );
 
             #[expect(
                 clippy::as_conversions,
@@ -300,16 +304,19 @@ fn total_viewshed(elevation_map: &[i16], indexes: &[i32], max_los: usize, result
 fn generate_rotation(elevs: &[i16], angle: f64, max_los: usize) -> (Vec<i32>, Vec<i16>) {
     let width = (max_los * 3) as isize;
 
-    #[expect(clippy::integer_division, reason="we don't need precision here")]
+    #[expect(clippy::integer_division, reason = "we don't need precision here")]
     {
         assert_eq!(elevs.len() as isize % width, 0, "elevs should be square");
-        assert_eq!(elevs.len() as isize / width, width, "elevs should be square");
+        assert_eq!(
+            elevs.len() as isize / width,
+            width,
+            "elevs should be square"
+        );
     };
-
 
     let (sin, cos) = (f64::sin(angle.to_radians()), f64::cos(angle.to_radians()));
 
-    #[expect(clippy::integer_division, reason="we don't need precision here")]
+    #[expect(clippy::integer_division, reason = "we don't need precision here")]
     let (x_center, y_center) = (width / 2, width / 2);
 
     let mut rotation: Vec<i32> = Vec::with_capacity(2 * max_los * max_los);
@@ -347,10 +354,7 @@ fn generate_rotation(elevs: &[i16], angle: f64, max_los: usize) -> (Vec<i32>, Ve
                     clippy::as_conversions,
                     reason = "elevations start out as i16s, and i16 -> f32 -> i16 is lossless"
                 )]
-                #[expect(
-                    clippy::cast_sign_loss,
-                    reason = "idx < 2^31, idx >= 0"
-                )]
+                #[expect(clippy::cast_sign_loss, reason = "idx < 2^31, idx >= 0")]
                 // safety: idx is clamped so a get will always be in-bounds
                 *unsafe { elevs.get_unchecked(idx as usize) }
             }
@@ -361,10 +365,7 @@ fn generate_rotation(elevs: &[i16], angle: f64, max_los: usize) -> (Vec<i32>, Ve
         .flat_map(|idx| {
             let start = idx * (2 * max_los);
             let end = start + max_los;
-            #[expect(
-                clippy::indexing_slicing,
-                reason = "start < rotation-(2*max_los)"
-            )]
+            #[expect(clippy::indexing_slicing, reason = "start < rotation-(2*max_los)")]
             &rotation[start..end]
         })
         .map(|&val| {
@@ -402,8 +403,7 @@ fn kernel(elevations: &[i16], max_los_points: usize, angle: usize, res: &mut [f3
         clippy::cast_precision_loss,
         reason = "angle is [0,360), not more than 2^54"
     )]
-    let (indexes, rotated_elevations) =
-        generate_rotation(elevations, angle as f64, max_los_points);
+    let (indexes, rotated_elevations) = generate_rotation(elevations, angle as f64, max_los_points);
 
     tracing::info!(
         "rotated {:?} in {:?}, calculating kernel",

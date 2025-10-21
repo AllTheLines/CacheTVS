@@ -1,7 +1,7 @@
 //! The main entrypoint for running computations.
 
-use color_eyre::{eyre::Ok, Result};
 use crate::cpu;
+use color_eyre::{eyre::Ok, Result};
 
 /// Handles all the computations.
 pub struct Compute<'compute> {
@@ -30,10 +30,6 @@ pub struct Compute<'compute> {
     /// Keeps track of the longest lines of sight.
     pub longest_lines: Vec<f32>,
 }
-
-
-
-
 
 /// `NUM_CORES` is the physical number of cores on a machine. Currently hardcoded to 8
 /// as that is what an i9900k has, and is a common configuration.
@@ -208,10 +204,7 @@ impl<'compute> Compute<'compute> {
                 .map(|&x| x as i16)
                 .collect::<Vec<i16>>();
 
-            #[expect(
-                clippy::as_conversions,
-                reason = "u32 -> usize is valid"
-            )]
+            #[expect(clippy::as_conversions, reason = "u32 -> usize is valid")]
             let surfaces = cpu::multithreaded_kernel(
                 &elevations,
                 self.dem.max_los_as_points as usize,

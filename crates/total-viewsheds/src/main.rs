@@ -30,8 +30,8 @@ mod output {
     pub mod ring_data;
     pub mod viewshed;
 }
-mod projection;
 mod cpu;
+mod projection;
 
 fn main() -> Result<()> {
     color_eyre::install()?;
