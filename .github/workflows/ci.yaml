@@ -31,7 +31,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - run: rustup toolchain install $RUST_VERSION --profile minimal
+      - run: |
+          rustup toolchain add nightly-2025-10-20 --profile minimal
+          rustup toolchain install $RUST_VERSION --profile minimal
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
@@ -46,7 +48,9 @@ jobs:
     
     steps:
       - uses: actions/checkout@v4
-      - run: rustup toolchain install $RUST_VERSION --profile minimal
+      - run: |
+          rustup toolchain add nightly-2025-10-20 --profile minimal
+          rustup toolchain install $RUST_VERSION --profile minimal
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
@@ -68,7 +72,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - run: rustup toolchain install $RUST_VERSION --profile minimal
+      - run: |
+          rustup toolchain add nightly-2025-10-20 --profile minimal
+          rustup toolchain install $RUST_VERSION --profile minimal
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-shear, cargo-msrv
