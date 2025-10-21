@@ -70,7 +70,7 @@ jobs:
       - uses: actions/checkout@v4
       - run: | 
           rustup toolchain install $RUST_VERSION --profile minimal
-          rustup component add clippy
+          rustup component add clippy cargo-fmt
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-shear, cargo-msrv
