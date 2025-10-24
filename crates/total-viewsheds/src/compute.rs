@@ -208,7 +208,7 @@ impl<'compute> Compute<'compute> {
             let surfaces = cpu::multithreaded_kernel(
                 &elevations,
                 self.dem.max_los_as_points as usize,
-                8,
+                360,
                 NUM_CORES,
             );
 

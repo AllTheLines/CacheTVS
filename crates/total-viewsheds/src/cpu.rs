@@ -1,11 +1,13 @@
 //! `cpu` is a CPU version of the total viewshed calculation
 
 use itertools::izip;
-use std::arch::x86_64::{__m128, __m256, _mm256_blend_ps, _mm256_castps_si256, _mm256_castsi256_ps, _mm256_max_ps, _mm256_set1_ps, _mm256_slli_si256, _mm_add_ps, _mm_and_ps, _mm_broadcast_ss, _mm_castps_si128, _mm_cmpge_ps, _mm_cmpgt_ps, _mm_max_ps, _mm_mul_ps, _mm_set1_ps};
+use std::arch::x86_64::{
+    __m128, __m256, _mm256_blend_ps, _mm256_castps_si256, _mm256_castsi256_ps, _mm256_max_ps,
+    _mm256_set1_ps, _mm256_slli_si256, _mm_broadcast_ss, _mm_max_ps, _mm_set1_ps,
+};
 use std::iter::zip;
 use std::mem::transmute;
-use std::simd::num::SimdFloat;
-use std::simd::{f32x4, i32x4, Simd};
+use std::simd::Simd;
 use std::thread;
 use std::time::Instant;
 
@@ -108,27 +110,22 @@ const TAN_ONE_RAD: f32 = 0.017_453_3;
 /// ```visible(index) = angle[index] >= prefix_max[index]```
 #[target_feature(enable = "avx2")]
 #[inline]
-fn prefix_max_simd(
-    angles: &[__m256],
-    prefix_max: &mut [__m256],
-    distances: &[__m256],
-    acc: __m128,
-) -> (__m128, __m128) {
+fn prefix_max_simd(angles: &[__m256], prefix_max: &mut [__m256]) {
+    // constant lowest value spatted across all 8 lanes
+    let max_angles = _mm256_set1_ps(-2000.0f32);
+
     // Calculate the 4-wide block prefix max two at a time
     for (prefix, &angle) in zip(prefix_max.iter_mut(), angles.iter()) {
-        // constant lowest value spatted across all 8 lanes
-        let min_angle = _mm256_set1_ps(-2000.0f32);
-
         let mut v_prefix_max: __m256 = {
             let shifted = _mm256_slli_si256::<4>(_mm256_castps_si256(angle));
-            let blended = _mm256_blend_ps::<0b1000_1000>(_mm256_castsi256_ps(shifted), min_angle);
+            let blended = _mm256_blend_ps::<0b1000_1000>(_mm256_castsi256_ps(shifted), max_angles);
 
             _mm256_max_ps(angle, blended)
         };
 
         v_prefix_max = {
             let shifted = _mm256_slli_si256::<8>(_mm256_castps_si256(v_prefix_max));
-            let blended = _mm256_blend_ps::<0b1100_1100>(_mm256_castsi256_ps(shifted), min_angle);
+            let blended = _mm256_blend_ps::<0b1100_1100>(_mm256_castsi256_ps(shifted), max_angles);
             _mm256_max_ps(v_prefix_max, blended)
         };
 
@@ -140,78 +137,20 @@ fn prefix_max_simd(
         reason = "transmute handles the slice size conversion, pointers don't"
     )]
     // safety: sizeof(__m256) ==  sizeof(__m128) * 2, meaning it is well-aligned
-    let single_angles = unsafe { transmute::<&[__m256], &[__m128]>(angles) };
-    let single_prefixes = unsafe { transmute::<&mut [__m256], &mut [__m128]>(prefix_max) };
-    let single_distances = unsafe { transmute::<&[__m256], &[__m128]>(distances) };
+    let single_wide_angles = unsafe { transmute::<&mut [__m256], &mut [__m128]>(prefix_max) };
 
-    let mut local_acc = acc;
-
-    let mut sum = _mm_set1_ps(0.0);
+    let mut acc = _mm_set1_ps(-2000.0f32);
 
     // accumulate the prefix maxes for blocks, re-computing all prefix maxes
     // to include the accumulated value
-    for (prefix, &angle, distances) in izip!(single_prefixes, single_angles, single_distances) {
+    for prefix in single_wide_angles {
         let cur_prefix = Simd::from(*prefix);
         let cur_max = _mm_broadcast_ss(&cur_prefix[3]);
 
-        let new_prefix = _mm_max_ps(acc, *prefix);
-
-        let bitmap = _mm_cmpge_ps(angle, new_prefix);
-        let surfaces = _mm_mul_ps(
-            _mm_and_ps(bitmap, *distances),
-            _mm_and_ps(bitmap, _mm_set1_ps(TAN_ONE_RAD)),
-        );
-
-        sum = _mm_add_ps(sum, surfaces);
-
-        local_acc = _mm_max_ps(local_acc, cur_max);
+        *prefix = _mm_max_ps(acc, *prefix);
+        acc = _mm_max_ps(acc, cur_max);
     }
-
-    (local_acc, sum)
 }
-
-#[target_feature(enable = "avx2")]
-fn chunked_prefix_max(angles: &[__m256], distances: &[__m256]) -> f32 {
-    let (chunks, rest) = angles.as_chunks::<8>();
-    let (distance_chunks, distance_rest) = distances.as_chunks::<8>();
-
-    let prefix_max = &mut [_mm256_set1_ps(0.0); 8];
-
-    let mut acc = _mm_set1_ps(-2000.0);
-    let mut sum = _mm_set1_ps(0.0);
-
-    for (angle_chunk, distance_chunk) in zip(chunks, distance_chunks) {
-        let (next_acc, next_sum) = prefix_max_simd(angle_chunk, prefix_max, distance_chunk, acc);
-        acc = next_acc;
-        sum = _mm_add_ps(sum, next_sum);
-    }
-
-    let (_, next_sum) = prefix_max_simd(rest, prefix_max, distance_rest, acc);
-    sum = _mm_add_ps(sum, next_sum);
-
-    Simd::from(sum).reduce_sum()
-}
-
-const HIGHEST_LOS: usize = 8000;
-const DISTANCES: [f32; HIGHEST_LOS] = const {
-    let mut buf = [0.0f32; HIGHEST_LOS];
-    let mut i = 0;
-    while i < HIGHEST_LOS {
-        buf[i] = (i * 100) as f32;
-        i += 1;
-    }
-    buf
-};
-
-const ADJUSTMENTS: [f32; HIGHEST_LOS] = const {
-    let mut buf = [0.0f32; HIGHEST_LOS];
-    let mut i = 0;
-    while i < HIGHEST_LOS {
-        buf[i] = DISTANCES[i] / EARTH_RADIUS_SQUARED;
-        i += 1;
-    }
-    buf
-};
 
 /// `total_viewshed` calculates a straight-lined total viewshed using AVX2 instructions
 #[target_feature(enable = "avx2")]
@@ -237,21 +176,34 @@ fn total_viewshed_vector(
         "to help the vectorizer, max_los must be a multiple of 8"
     );
 
-    assert!(max_los < HIGHEST_LOS && max_los > 0);
-
     let width = 2 * max_los;
 
     // precalculate all distances and their spherical earth "adjustments".
     // This saves ~33% of effort inside our hot loop
+    let (distances, adjustments): (Vec<f32>, Vec<f32>) = (0..max_los)
+        .map(|x| {
+            #[expect(
+                clippy::as_conversions,
+                clippy::cast_precision_loss,
+                reason = "x is in [1..max_los), max_los < 2^23"
+            )]
+            let distance = (x * 100) as f32;
+            (distance, distance / EARTH_RADIUS_SQUARED)
+        })
+        .unzip();
 
     // allocate angles and their prefix maxes as mm256s so that the underlying buffer
     // is correctly aligned to 256 bits
     #[expect(clippy::integer_division, reason = "max_los % 8 == 0")]
     let mut angles: Vec<__m256> = vec![_mm256_set1_ps(0.0); max_los / 8];
 
+    #[expect(clippy::integer_division, reason = "max_los % 8 == 0")]
+    let mut prefix_max: Vec<__m256> = vec![_mm256_set1_ps(0.0); max_los / 8];
+
     for line_idx in 0..max_los {
         let elevation_offset = line_idx * width;
 
+        {}
         let line = &elevation_map[elevation_offset..(elevation_offset + width)];
 
         let indexes_offset = line_idx * max_los;
@@ -284,22 +236,38 @@ fn total_viewshed_vector(
             // safety: sizeof(__m256) ==  sizeof(f32) * 8, meaning it is well-aligned
             let flat_angles = unsafe { transmute::<&mut [__m256], &mut [f32]>(angles.as_mut()) };
 
-            izip!(
-                flat_angles.iter_mut(),
-                &DISTANCES[..max_los],
-                &ADJUSTMENTS[..max_los],
-                elevations
-            )
-            .for_each(|(angle, distance, adjustment, elevation)| {
-                *angle = (elevation / distance) - adjustment;
-            });
+            izip!(flat_angles.iter_mut(), &distances, &adjustments, elevations).for_each(
+                |(angle, distance, adjustment, elevation)| {
+                    *angle = (elevation / distance) - adjustment;
+                },
+            );
 
             // get rid of NaN in the first angle calculation since there is a division by zero
             flat_angles[0] = -2001.0;
 
-            let vector_distances = unsafe { transmute::<&[f32], &[__m256]>(&DISTANCES) };
+            prefix_max_simd(&angles, &mut prefix_max);
 
-            let sum = chunked_prefix_max(&angles, vector_distances);
+            #[expect(
+                clippy::transmute_ptr_to_ptr,
+                reason = "transmute handles the slice size conversion, pointers don't"
+            )]
+            // safety: sizeof(__m256) ==  sizeof(f32) * 8, meaning it is well-aligned
+            let flat_prefixes = unsafe { transmute::<&[__m256], &[f32]>(&prefix_max) };
+
+            let surface_bitmap: Vec<bool> = zip(flat_angles, flat_prefixes)
+                .map(|(&mut angle, &prefix)| angle >= prefix)
+                .collect();
+
+            let sum = zip(&distances, &surface_bitmap).fold(
+                0.0f32,
+                |surface_area, (distance, &visible)| {
+                    if visible {
+                        distance.mul_add(TAN_ONE_RAD, surface_area)
+                    } else {
+                        surface_area
+                    }
+                },
+            );
 
             #[expect(
                 clippy::as_conversions,
