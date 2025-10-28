@@ -2,6 +2,8 @@
 
 #![expect(clippy::pub_use, reason = "I admit I don't understand the other way.")]
 #![feature(portable_simd)]
+#![feature(min_specialization)]
+extern crate core;
 
 use clap::Parser as _;
 use color_eyre::eyre::{ContextCompat as _, Result};
