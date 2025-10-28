@@ -23,6 +23,10 @@ const TAN_ONE_RAD: f32 = 0.017_453_3;
 
 struct Vectorized;
 
+trait MyTest {
+    type Output;
+}
+
 trait Viewshed<const WIDTH: usize>
 where
     LaneCount<WIDTH>: SupportedLaneCount,
@@ -60,9 +64,9 @@ where
     }
 }
 
-#[cfg(all(target_feature = "sse", target_feature = "sse2"))]
 impl Viewshed<4> for Vectorized {
     #[inline]
+    #[cfg(all(target_feature = "sse", target_feature = "sse2"))]
     fn gte(&self, l: f32x4, r: f32x4) -> Mask<i32, 4> {
         unsafe {
             let mask = _mm_castps_si128(_mm_cmpge_ps(l.into(), r.into()));
@@ -71,11 +75,13 @@ impl Viewshed<4> for Vectorized {
     }
 
     #[inline]
+    #[cfg(all(target_feature = "sse", target_feature = "sse2"))]
     fn max(&self, l: f32x4, r: f32x4) -> Simd<f32, 4> {
         unsafe { _mm_max_ps(l.into(), r.into()).into() }
     }
 
     #[inline]
+    // TODO: make this the default implementation, only override max/gte
     fn prefix_max(&self, angles: &[f32x4], prefix_max: &mut [f32x4], acc: f32x4) -> f32x4 {
         for (prefix, &angle) in zip(prefix_max.iter_mut(), angles.iter()) {
             let mut v_prefix_max = {
@@ -494,7 +500,7 @@ fn kernel(elevations: &[i16], max_los_points: usize, angle: usize, result: &mut 
 
     let vectorized = Vectorized {};
 
-    let local_result = total_viewshed::<8, 8, Vectorized>(
+    let local_result = total_viewshed::<4, 16, Vectorized>(
         vectorized,
         &rotated_elevations,
         &indexes,
