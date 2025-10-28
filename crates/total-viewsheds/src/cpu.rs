@@ -1,6 +1,7 @@
 //! `cpu` is a CPU version of the total viewshed calculation
 
 use itertools::izip;
+#[cfg(all(target_feature = "avx2", target_feature = "avx",))]
 use std::arch::x86_64::{
     _mm256_blend_ps, _mm256_castps_si256, _mm256_castsi256_ps, _mm256_cmp_ps, _mm256_max_ps,
     _mm256_slli_si256, _mm512_cmp_ps_mask, _mm_castps_si128, _mm_cmpge_ps, _mm_max_ps, _CMP_LE_OS,
@@ -332,9 +333,8 @@ where
                             // prefix_in: Simd<f32, N>,
                             prefix,
                             // pov_height: f32,
-                            pov_height
+                            pov_height,
                         );
-
 
                         (next_sum, acc)
                     },
@@ -391,11 +391,18 @@ fn generate_rotation(elevs: &[i16], angle: f64, max_los: usize) -> (Vec<i32>, Ve
 
     #[expect(clippy::integer_division, reason = "we don't need precision here")]
     {
-        assert_eq!(elevs.len() as isize % width, 0, "elevs should be square");
         assert_eq!(
-            elevs.len() as isize / width,
+            elevs.len() as isize % width,
+            0,
+            "Elevations array must be square {}%{width} != 0",
+            elevs.len(),
+        );
+        let elevations_div_width = elevs.len() as isize / width;
+        assert_eq!(
+            elevations_div_width,
             width,
-            "elevs should be square"
+            "Elevations array must be square {}/{width} (={elevations_div_width}) != {width}",
+            elevs.len() as isize
         );
     };
 
@@ -515,11 +522,28 @@ fn kernel(elevations: &[i16], max_los_points: usize, angle: usize, result: &mut 
 /// `multithreaded_kernel` parallelizes CPU kernel calculations for a `core_count` and calculates
 /// `num_angles` different angles
 pub fn multithreaded_kernel(
-    elevations: &[i16],
-    max_los_points: usize,
+    elevations_original: &[i16],
+    max_los_points_original: usize,
     num_angles: usize,
     core_count: usize,
 ) -> Vec<f32> {
+    let max_los_points = max_los_points_original.div_ceil(4) * 4;
+    let dem_width = max_los_points * 3;
+    let mut elevations_vec = elevations_original.to_vec();
+    elevations_vec.resize(dem_width.pow(2), 0);
+    let elevations = &elevations_vec;
+
+    if max_los_points != max_los_points_original {
+        tracing::warn!("LoS: {max_los_points_original} to {max_los_points}");
+    }
+    if elevations.len() != elevations_original.len() {
+        tracing::warn!(
+            "Elevations array length resized: {} to {}",
+            elevations_original.len(),
+            elevations_vec.len()
+        );
+    }
+
     thread::scope(|scope| {
         let threads = (0..core_count)
             .map(|start_angle: usize| {
