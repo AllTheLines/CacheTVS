@@ -142,7 +142,6 @@ impl Viewshed<8> for Vectorized {
     fn prefix_max(&self, angles: &[f32x8], prefix_max: &mut [f32x8], acc: f32x8) -> f32x8 {
         // Calculate the 4-wide block prefix max two at a time
         for (prefix, &angle) in zip(prefix_max.iter_mut(), angles.iter()) {
-
             // safety: all mm256 operations are avx2, and Viewshed<8> has feature guards for both
             let mut v_prefix_max = unsafe {
                 let shifted = _mm256_slli_si256::<4>(_mm256_castps_si256(angle.into()));
