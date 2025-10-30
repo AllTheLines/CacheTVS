@@ -1,16 +1,16 @@
 //! `cpu` is a CPU version of the total viewshed calculation
 
-use itertools::izip;
+use itertools::{izip, Itertools};
+
+#[cfg(all(target_feature = "avx2", target_feature = "avx", target_feature = "sse", target_feature = "sse2"))]
 use std::arch::x86_64::{
     _mm256_blend_ps, _mm256_castps_si256, _mm256_castsi256_ps, _mm256_cmp_ps, _mm256_max_ps,
-    _mm256_slli_si256, _mm512_cmp_ps_mask, _mm_castps_si128, _mm_cmpge_ps, _mm_max_ps, _CMP_LE_OS,
+    _mm256_slli_si256, _mm_castps_si128, _mm_cmpge_ps, _mm_max_ps, _CMP_LE_OS,
 };
 use std::iter::zip;
 use std::mem::transmute;
-use std::simd::cmp::SimdPartialOrd;
-use std::simd::num::SimdFloat;
-use std::simd::prelude::SimdInt;
-use std::simd::{f32x16, f32x4, f32x8, LaneCount, Mask, Simd, SupportedLaneCount};
+use std::simd::prelude::*;
+use std::simd::{LaneCount, Mask, SupportedLaneCount};
 use std::time::Instant;
 use std::{array, f32, slice, thread};
 
@@ -22,10 +22,6 @@ const EARTH_RADIUS_SQUARED: f32 = 12_742_000.0;
 const TAN_ONE_RAD: f32 = 0.017_453_3;
 
 struct Vectorized;
-
-trait MyTest {
-    type Output;
-}
 
 trait Viewshed<const WIDTH: usize>
 where
@@ -42,28 +38,6 @@ where
     ) -> Simd<f32, WIDTH>;
 }
 
-impl<const N: usize> Viewshed<N> for Vectorized
-where
-    LaneCount<N>: SupportedLaneCount,
-{
-    default fn gte(&self, l: Simd<f32, N>, r: Simd<f32, N>) -> Mask<i32, N> {
-        l.simd_ge(r)
-    }
-
-    default fn max(&self, l: Simd<f32, N>, r: Simd<f32, N>) -> Simd<f32, N> {
-        l.simd_max(r)
-    }
-
-    default fn prefix_max(
-        &self,
-        angles: &[Simd<f32, N>],
-        prefix_max: &mut [Simd<f32, N>],
-        acc: Simd<f32, N>,
-    ) -> Simd<f32, N> {
-        todo!()
-    }
-}
-
 impl Viewshed<4> for Vectorized {
     #[inline]
     #[cfg(all(target_feature = "sse", target_feature = "sse2"))]
@@ -75,13 +49,24 @@ impl Viewshed<4> for Vectorized {
     }
 
     #[inline]
+    #[cfg(not(all(target_feature = "sse", target_feature = "sse2")))]
+    fn gte(&self, l: f32x4, r: f32x4) -> Mask<i32, 4> {
+        l.simd_ge(r)
+    }
+
+    #[inline]
     #[cfg(all(target_feature = "sse", target_feature = "sse2"))]
     fn max(&self, l: f32x4, r: f32x4) -> Simd<f32, 4> {
         unsafe { _mm_max_ps(l.into(), r.into()).into() }
     }
 
     #[inline]
-    // TODO: make this the default implementation, only override max/gte
+    #[cfg(not(all(target_feature = "sse", target_feature = "sse2")))]
+    fn max(&self, l: f32x4, r: f32x4) -> Simd<f32, 4> {
+        l.simd_max(r)
+    }
+
+    #[inline]
     fn prefix_max(&self, angles: &[f32x4], prefix_max: &mut [f32x4], acc: f32x4) -> f32x4 {
         for (prefix, &angle) in zip(prefix_max.iter_mut(), angles.iter()) {
             let mut v_prefix_max = {
@@ -93,6 +78,7 @@ impl Viewshed<4> for Vectorized {
                 let shifted = v_prefix_max.shift_elements_right::<2>(-2000.0f32);
                 self.max(v_prefix_max, shifted)
             };
+
 
             *prefix = v_prefix_max;
         }
@@ -113,7 +99,7 @@ impl Viewshed<4> for Vectorized {
     }
 }
 
-#[cfg(all(target_feature = "avx2", target_feature = "avx",))]
+#[cfg(all(target_feature = "avx2", target_feature = "avx"))]
 impl Viewshed<8> for Vectorized {
     #[inline]
     fn gte(&self, l: f32x8, r: f32x8) -> Mask<i32, 8> {
@@ -185,22 +171,24 @@ where
     float_elevs - Simd::splat(pov_height)
 }
 
+
 #[inline]
-fn line_of_sight<const N: usize, VS>(
+fn line_of_sight<const N: usize, const UNROLL: usize, VS>(
     vs: &VS,
-    sum_buf: &mut [Simd<f32, N>],
-    angle_buf: &mut [Simd<f32, N>],
-    prefix_buf: &mut [Simd<f32, N>],
     elevs: &[[i16; N]],
     distances: &[Simd<f32, N>],
     adjustments: &[Simd<f32, N>],
     prefix_in: Simd<f32, N>,
     pov_height: f32,
-) -> Simd<f32, N>
+) -> ([Simd<f32, N>; UNROLL], Simd<f32, N>)
 where
     LaneCount<N>: SupportedLaneCount,
     VS: Viewshed<N>,
 {
+    let mut sum_buf: [Simd<f32, N>; UNROLL] = [Simd::splat(0.0); UNROLL];
+    let mut angle_buf: [Simd<f32, N>; UNROLL] = [Simd::splat(0.0); UNROLL];
+    let mut prefix_buf: [Simd<f32, N>; UNROLL] = [Simd::splat(0.0); UNROLL];
+
     izip!(
         angle_buf.iter_mut(),
         elevs.iter().map(|e| load_elevations(*e, pov_height)),
@@ -210,23 +198,26 @@ where
     .for_each(|(angle, elev, dist, adjust)| {
         *angle = elev / dist - adjust;
     });
-    let prefix_out = vs.prefix_max(angle_buf, prefix_buf, prefix_in);
+    angle_buf[0][0] = -2000.1f32;
+
+    let prefix_out = vs.prefix_max(&angle_buf, &mut prefix_buf, prefix_in);
 
     izip!(
-        sum_buf,
+        &mut sum_buf,
         angle_buf.iter(),
         prefix_buf.iter(),
         distances.iter()
     )
     .for_each(|(next_sum, &angle, &pref, &dists)| {
         let mask = vs.gte(angle, pref);
+
         let selected_distances = mask.select(dists, Simd::splat(0.0));
         let selected_tans = mask.select(Simd::splat(TAN_ONE_RAD), Simd::splat(0.0));
 
         *next_sum += selected_distances * selected_tans;
     });
 
-    prefix_out
+    (sum_buf, prefix_out)
 }
 
 fn total_viewshed<const WIDTH: usize, const UNROLL: usize, V: Viewshed<WIDTH>>(
@@ -305,24 +296,13 @@ where
 
             let (chunked_elevs, rest_elevs) = elevations.as_chunks::<UNROLL>();
 
-            let angle_buf: &mut [Simd<f32, WIDTH>; UNROLL] = &mut [Simd::splat(0.0); UNROLL];
-            let prefix_buf: &mut [Simd<f32, WIDTH>; UNROLL] = &mut [Simd::splat(0.0); UNROLL];
-
             let (local_sums, prefix) = izip!(chunked_elevs, chunked_distances, chunked_adjustments)
                 .fold(
                     ([Simd::splat(0.0); UNROLL], Simd::splat(-2000.0)),
                     |(sum, prefix), (elevs, dists, adjusts)| {
-                        let mut next_sum = sum;
-
-                        let acc = line_of_sight(
+                        let (next_sum, acc) = line_of_sight::<WIDTH, UNROLL, V>(
                             // vs: &VS,
                             &vs,
-                            // sum_buf: &mut [Simd<f32, N>],
-                            &mut next_sum,
-                            // angle_buf: &mut [Simd<f32, N>],
-                            angle_buf,
-                            // prefix_buf: &mut [Simd<f32, N>],
-                            prefix_buf,
                             // elevs: &[[i16; N]],
                             elevs,
                             // distances: &[Simd<f32, N>],
@@ -332,11 +312,17 @@ where
                             // prefix_in: Simd<f32, N>,
                             prefix,
                             // pov_height: f32,
-                            pov_height
+                            pov_height,
                         );
 
 
-                        (next_sum, acc)
+                        let mut copied = sum;
+                        zip(copied.iter_mut(), next_sum)
+                            .for_each(|(a, b)| {
+                                *a = *a + b;
+                            });
+
+                        (copied, acc)
                     },
                 );
 
@@ -344,12 +330,8 @@ where
                 .iter()
                 .fold(0.0f32, |acc, partial| acc + partial.reduce_sum());
 
-            let sum_buf: &mut [Simd<f32, WIDTH>; UNROLL] = &mut [Simd::splat(0.0); UNROLL];
-            line_of_sight(
+            let (sum_buf, _) = line_of_sight::<WIDTH, UNROLL, V>(
                 &vs,
-                sum_buf,
-                angle_buf,
-                prefix_buf,
                 rest_elevs,
                 rest_distances,
                 rest_adjustments,
@@ -500,7 +482,7 @@ fn kernel(elevations: &[i16], max_los_points: usize, angle: usize, result: &mut 
 
     let vectorized = Vectorized {};
 
-    let local_result = total_viewshed::<4, 16, Vectorized>(
+    let local_result = total_viewshed::<8, 8, Vectorized>(
         vectorized,
         &rotated_elevations,
         &indexes,
