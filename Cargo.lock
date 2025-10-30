@@ -1687,6 +1687,7 @@ dependencies = [
  "pollster",
  "proj4rs",
  "radsort",
+ "rayon",
  "seq-macro",
  "serde",
  "serde_json",

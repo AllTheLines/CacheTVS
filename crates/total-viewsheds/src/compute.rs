@@ -85,10 +85,6 @@ impl<'compute> Compute<'compute> {
             ..Default::default()
         };
 
-        #[expect(
-            clippy::if_then_some_else_none,
-            reason = "The `?` is hard to use in the closure"
-        )]
         let vulkan = if matches!(config.backend, crate::config::Backend::Vulkan) {
             let elevations = dem.elevations.clone();
             dem.elevations = Vec::new(); // Free up some RAM.
@@ -197,7 +193,7 @@ impl<'compute> Compute<'compute> {
             Vec::new()
         };
 
-        if matches!(self.backend, crate::config::Backend::CPU) {
+        if matches!(self.config.backend, crate::config::Backend::CPU) {
             #[expect(
                 clippy::as_conversions,
                 clippy::cast_possible_truncation,

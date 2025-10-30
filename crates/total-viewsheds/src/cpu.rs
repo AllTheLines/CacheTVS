@@ -1,17 +1,20 @@
 //! `cpu` is a CPU version of the total viewshed calculation
 
+use itertools::izip;
 
-use itertools::{izip, Itertools};
-
-#[cfg(all(target_feature = "avx2", target_feature = "avx", target_feature = "sse", target_feature = "sse2"))]
+#[cfg(all(
+    target_feature = "avx2",
+    target_feature = "avx",
+    target_feature = "sse",
+    target_feature = "sse2"
+))]
 use std::arch::x86_64::{
     _mm256_blend_ps, _mm256_castps_si256, _mm256_castsi256_ps, _mm256_cmp_ps, _mm256_max_ps,
     _mm256_slli_si256, _mm_castps_si128, _mm_cmpge_ps, _mm_max_ps, _CMP_LE_OS,
 };
 use std::iter::zip;
-use std::mem::transmute;
 use std::simd::prelude::*;
-use std::simd::{LaneCount, Mask, SupportedLaneCount};
+use std::simd::{LaneCount, Mask, StdFloat as _, SupportedLaneCount};
 use std::time::Instant;
 use std::{array, f32, slice, thread};
 
@@ -22,15 +25,27 @@ const EARTH_RADIUS_SQUARED: f32 = 12_742_000.0;
 /// see the TVS paper for reasoning.
 const TAN_ONE_RAD: f32 = 0.017_453_3;
 
+/// `Vectorized` is an empty struct to allow for specializations of the total viewhshed algorithm
+/// TODO: maybe we can just use a generic struct?
 struct Vectorized;
 
+/// `Viewshed` holds all the platform and vector-width specific methods the CPU kernel
+/// needs to operate.
 trait Viewshed<const WIDTH: usize>
 where
     LaneCount<WIDTH>: SupportedLaneCount,
 {
-    fn gte(&self, l: Simd<f32, WIDTH>, r: Simd<f32, WIDTH>) -> Mask<i32, WIDTH>;
-    fn max(&self, l: Simd<f32, WIDTH>, r: Simd<f32, WIDTH>) -> Simd<f32, WIDTH>;
+    /// `gte` takes in a vector of angles and its prefix maximum returns a mask of
+    /// i32s which are either -1 or 0 in each lane. This way it can be used to "select"
+    /// which lanes of the target vector to use for further calculations
+    fn gte(&self, angle: Simd<f32, WIDTH>, prefix: Simd<f32, WIDTH>) -> Mask<i32, WIDTH>;
 
+    /// `max` returns the lane-wise maximum of both vectors. It exists to help platform-specific
+    /// and potentially "unsafe" (in floating point terms) and speedier implementations
+    fn max(&self, lhs: Simd<f32, WIDTH>, rhs: Simd<f32, WIDTH>) -> Simd<f32, WIDTH>;
+
+    /// `prefix_max` calculates a prefix maximum given all of the `angles` and stores
+    /// it in `prefix_max`
     fn prefix_max(
         &self,
         angles: &[Simd<f32, WIDTH>],
@@ -42,29 +57,33 @@ where
 impl Viewshed<4> for Vectorized {
     #[inline]
     #[cfg(all(target_feature = "sse", target_feature = "sse2"))]
-    fn gte(&self, l: f32x4, r: f32x4) -> Mask<i32, 4> {
+    fn gte(&self, angle: f32x4, prefix: f32x4) -> Mask<i32, 4> {
+        // safety: the caller of Viewshed<4> guarantees that -0.0 or NaN are not in the input
+        // thus allowing this to be non IEEE754 compliant
         unsafe {
-            let mask = _mm_castps_si128(_mm_cmpge_ps(l.into(), r.into()));
+            let mask = _mm_castps_si128(_mm_cmpge_ps(angle.into(), prefix.into()));
             Mask::<i32, 4>::from_int_unchecked(mask.into())
         }
     }
 
     #[inline]
     #[cfg(not(all(target_feature = "sse", target_feature = "sse2")))]
-    fn gte(&self, l: f32x4, r: f32x4) -> Mask<i32, 4> {
-        l.simd_ge(r)
+    fn gte(&self, lhs: f32x4, rhs: f32x4) -> Mask<i32, 4> {
+        lhs.simd_ge(rhs)
     }
 
     #[inline]
     #[cfg(all(target_feature = "sse", target_feature = "sse2"))]
-    fn max(&self, l: f32x4, r: f32x4) -> Simd<f32, 4> {
-        unsafe { _mm_max_ps(l.into(), r.into()).into() }
+    fn max(&self, lhs: f32x4, rhs: f32x4) -> Simd<f32, 4> {
+        // safety: the caller of Viewshed<4> guarantees that -0.0 or NaN are not in the input
+        // thus allowing this to be non IEEE754 compliant
+        unsafe { _mm_max_ps(lhs.into(), rhs.into()).into() }
     }
 
     #[inline]
     #[cfg(not(all(target_feature = "sse", target_feature = "sse2")))]
-    fn max(&self, l: f32x4, r: f32x4) -> Simd<f32, 4> {
-        l.simd_max(r)
+    fn max(&self, lhs: f32x4, rhs: f32x4) -> Simd<f32, 4> {
+        lhs.simd_max(r)
     }
 
     #[inline]
@@ -79,7 +98,6 @@ impl Viewshed<4> for Vectorized {
                 let shifted = v_prefix_max.shift_elements_right::<2>(-2000.0f32);
                 self.max(v_prefix_max, shifted)
             };
-
 
             *prefix = v_prefix_max;
         }
@@ -103,22 +121,29 @@ impl Viewshed<4> for Vectorized {
 #[cfg(all(target_feature = "avx2", target_feature = "avx"))]
 impl Viewshed<8> for Vectorized {
     #[inline]
-    fn gte(&self, l: f32x8, r: f32x8) -> Mask<i32, 8> {
+    fn gte(&self, angle: f32x8, prefix: f32x8) -> Mask<i32, 8> {
+        // safety: the caller of Viewshed<8> guarantees that -0.0 or NaN are not in the input
+        // thus allowing this to be non IEEE754 compliant
         unsafe {
-            let mask = _mm256_castps_si256(_mm256_cmp_ps::<_CMP_LE_OS>(r.into(), l.into()));
+            let mask =
+                _mm256_castps_si256(_mm256_cmp_ps::<_CMP_LE_OS>(prefix.into(), angle.into()));
             Mask::<i32, 8>::from_int_unchecked(mask.into())
         }
     }
 
     #[inline]
-    fn max(&self, l: f32x8, r: f32x8) -> Simd<f32, 8> {
-        unsafe { _mm256_max_ps(l.into(), r.into()).into() }
+    fn max(&self, lhs: f32x8, rhs: f32x8) -> Simd<f32, 8> {
+        // safety: the caller of Viewshed<8> guarantees that -0.0 or NaN are not in the input
+        // thus allowing this to be non IEEE754 compliant
+        unsafe { _mm256_max_ps(lhs.into(), rhs.into()).into() }
     }
 
     #[inline]
     fn prefix_max(&self, angles: &[f32x8], prefix_max: &mut [f32x8], acc: f32x8) -> f32x8 {
         // Calculate the 4-wide block prefix max two at a time
         for (prefix, &angle) in zip(prefix_max.iter_mut(), angles.iter()) {
+
+            // safety: all mm256 operations are avx2, and Viewshed<8> has feature guards for both
             let mut v_prefix_max = unsafe {
                 let shifted = _mm256_slli_si256::<4>(_mm256_castps_si256(angle.into()));
                 let blended = _mm256_blend_ps::<0b1000_1000>(
@@ -128,6 +153,7 @@ impl Viewshed<8> for Vectorized {
                 self.max(angle, blended.into())
             };
 
+            // safety: all mm256 operations are avx2, and Viewshed<8> has feature guards for both
             v_prefix_max = unsafe {
                 let shifted = _mm256_slli_si256::<8>(_mm256_castps_si256(v_prefix_max.into()));
                 let blended = _mm256_blend_ps::<0b1100_1100>(
@@ -142,11 +168,15 @@ impl Viewshed<8> for Vectorized {
         }
 
         let mut local_acc = f32x4::splat(acc[0]);
+
+        // safety: because f32x8s are aligned to exactly sizeof(f32x4) * 2
+        // this is well aligned, so the cast is valid
+        //
+        // This is SUPER MEGA UBER VERY sketchy, and shouldn't be copied
+        // unless you _really_, _truly_ understand what the compiler will do
         let single_wide_prefx: &mut [f32x4] = unsafe {
-            slice::from_raw_parts_mut(
-                transmute::<&mut [f32x8], &mut [f32x4]>(prefix_max.as_mut()).as_mut_ptr(),
-                prefix_max.len() * 2,
-            )
+            let ptr = prefix_max.as_mut_ptr();
+            slice::from_raw_parts_mut(ptr.cast::<f32x4>(), prefix_max.len() * 2)
         };
 
         // accumulate the prefix maxes for blocks, re-computing all prefix maxes
@@ -163,6 +193,8 @@ impl Viewshed<8> for Vectorized {
     }
 }
 
+#[inline]
+/// `load_elevations` converts an array of i16 elevations into a height adjusted
 fn load_elevations<const N: usize>(elev_arr: [i16; N], pov_height: f32) -> Simd<f32, N>
 where
     LaneCount<N>: SupportedLaneCount,
@@ -172,11 +204,11 @@ where
     float_elevs - Simd::splat(pov_height)
 }
 
-
 #[inline]
+/// `line_of_sight` calculates a single line of sight for a given pov, which is passed in via `pov_height`
 fn line_of_sight<const N: usize, const UNROLL: usize, VS>(
     vs: &VS,
-    elevs: &[[i16; N]],
+    elevations: &[[i16; N]],
     distances: &[Simd<f32, N>],
     adjustments: &[Simd<f32, N>],
     prefix_in: Simd<f32, N>,
@@ -192,14 +224,23 @@ where
 
     izip!(
         angle_buf.iter_mut(),
-        elevs.iter().map(|e| load_elevations(*e, pov_height)),
+        elevations
+            .iter()
+            .map(|elev| load_elevations(*elev, pov_height)),
         distances,
         adjustments
     )
     .for_each(|(angle, elev, dist, adjust)| {
         *angle = elev / dist - adjust;
     });
-    angle_buf[0][0] = -2000.1f32;
+
+    #[expect(
+        clippy::float_cmp,
+        reason = "-2000.0f32 is a sentinel value for the first time this accumlative function is run"
+    )]
+    if prefix_in[0] == -2000.0f32 {
+        angle_buf[0][0] = -2000.1f32;
+    }
 
     let prefix_out = vs.prefix_max(&angle_buf, &mut prefix_buf, prefix_in);
 
@@ -215,19 +256,21 @@ where
         let selected_distances = mask.select(dists, Simd::splat(0.0));
         let selected_tans = mask.select(Simd::splat(TAN_ONE_RAD), Simd::splat(0.0));
 
-        *next_sum += selected_distances * selected_tans;
+        *next_sum = selected_distances.mul_add(selected_tans, *next_sum);
     });
 
     (sum_buf, prefix_out)
 }
 
+/// `total_viewshed` computes a total viewshed heatmap for a given elevation map,
+/// and corresponding indexes to store the rotated data
 fn total_viewshed<const WIDTH: usize, const UNROLL: usize, V: Viewshed<WIDTH>>(
-    vs: V,
+    vs: &V,
     elevation_map: &[i16],
     indexes: &[i32],
     max_los: usize,
-) -> Vec<f32>
-where
+    result: &mut [f32],
+) where
     LaneCount<WIDTH>: SupportedLaneCount,
 {
     assert_eq!(
@@ -244,18 +287,27 @@ where
 
     let width = 2 * max_los;
 
-    let mut result = vec![0.0f32; max_los * max_los];
-
     // precalculate all distances and their spherical earth "adjustments".
     // This saves ~33% of effort inside our hot loop
     let (distances, adjustments): (Vec<Simd<f32, WIDTH>>, Vec<Simd<f32, WIDTH>>) = (0..max_los)
         .step_by(WIDTH)
         .map(|offset| {
+            #[expect(
+                clippy::as_conversions,
+                clippy::cast_possible_wrap,
+                clippy::cast_possible_truncation,
+                reason = "WIDTH < 2^31"
+            )]
             let distance_arr: [i32; WIDTH] = array::from_fn(|i| i as i32);
             let distances = Simd::from_array(distance_arr);
 
-            // x * 100
-            let normalized = (distances + Simd::splat(offset as i32)) * Simd::splat(100);
+            #[expect(
+                clippy::as_conversions,
+                clippy::cast_possible_wrap,
+                clippy::cast_possible_truncation,
+                reason = "WIDTH < 2^31"
+            )]
+            let normalized = (distances + Simd::splat(offset as i32)) * Simd::splat(100i32);
 
             let floats: Simd<f32, WIDTH> = normalized.cast();
 
@@ -263,23 +315,27 @@ where
         })
         .unzip();
 
-    let (chunked_distances, rest_distances) = (&distances).as_chunks::<UNROLL>();
-    let (chunked_adjustments, rest_adjustments) = (&adjustments).as_chunks::<UNROLL>();
+    let (chunked_distances, rest_distances) = distances.as_chunks::<UNROLL>();
+    let (chunked_adjustments, rest_adjustments) = adjustments.as_chunks::<UNROLL>();
 
     for line_idx in 0..max_los {
         let elevation_offset = line_idx * width;
 
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "elevation_offset < elevations.len() - width"
+        )]
         let line: &[i16] = &elevation_map[elevation_offset..(elevation_offset + width)];
 
         let indexes_offset = line_idx * max_los;
 
-        let line_indexes: &[i32] = &indexes[indexes_offset..(indexes_offset + max_los)];
-
         // The hottest of the hot loops.
         // Any change inside this loop needs careful benchmarking before committing
-        for pov in 0..max_los {
-            let result_idx = line_indexes[pov];
-
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "indexes_offset < elevations.len() - width"
+        )]
+        for (pov, &result_idx) in indexes[indexes_offset..].iter().enumerate().take(max_los) {
             // if the line of sight is not within our computable points, do not consider it
             if result_idx < 0i32 {
                 continue;
@@ -288,12 +344,9 @@ where
             // safety: pov is guaranteed to be in bounds since the slice is max_los in size
             let pov_height = f32::from(unsafe { *line.get_unchecked(pov) });
 
-            // convert the max_los-1 elevations ahead of the POV into floats, and adjust
-            // for the observer's height
-            let elevations: &[[i16; WIDTH]] = unsafe {
-                line.get_unchecked(pov..pov + max_los)
-                    .as_chunks_unchecked::<WIDTH>()
-            };
+            // safety: max_los % WIDTH == 0, so [pov..pov+max_los) will also be WIDTH wide
+            let (elevations, _): (&[[i16; WIDTH]], _) =
+                unsafe { line.get_unchecked(pov..pov + max_los) }.as_chunks::<WIDTH>();
 
             let (chunked_elevs, rest_elevs) = elevations.as_chunks::<UNROLL>();
 
@@ -303,24 +356,18 @@ where
                     |(sum, prefix), (elevs, dists, adjusts)| {
                         let (next_sum, acc) = line_of_sight::<WIDTH, UNROLL, V>(
                             // vs: &VS,
-                            &vs,
-                            // elevs: &[[i16; N]],
-                            elevs,
-                            // distances: &[Simd<f32, N>],
-                            dists,
-                            // adjustments: &[Simd<f32, N>],
-                            adjusts,
-                            // prefix_in: Simd<f32, N>,
-                            prefix,
-                            // pov_height: f32,
+                            vs,      // elevs: &[[i16; N]],
+                            elevs,   // distances: &[Simd<f32, N>],
+                            dists,   // adjustments: &[Simd<f32, N>],
+                            adjusts, // prefix_in: Simd<f32, N>,
+                            prefix,  // pov_height: f32,
                             pov_height,
                         );
 
                         let mut copied = sum;
-                        zip(copied.iter_mut(), next_sum)
-                            .for_each(|(a, b)| {
-                                *a = *a + b;
-                            });
+                        zip(copied.iter_mut(), next_sum).for_each(|(old, new)| {
+                            *old += new;
+                        });
 
                         (copied, acc)
                     },
@@ -331,7 +378,7 @@ where
                 .fold(0.0f32, |acc, partial| acc + partial.reduce_sum());
 
             let (sum_buf, _) = line_of_sight::<WIDTH, UNROLL, V>(
-                &vs,
+                vs,
                 rest_elevs,
                 rest_distances,
                 rest_adjustments,
@@ -355,8 +402,6 @@ where
             }
         }
     }
-
-    result
 }
 
 /// `generate_rotation` generates a rotation "map" for a given elevation list
@@ -466,7 +511,7 @@ fn generate_rotation(elevs: &[i16], angle: f64, max_los: usize) -> (Vec<i32>, Ve
     (idxs, elevations)
 }
 
-/// `kernel` is a CPU-based total viewshed kernel. It makes use of image rotation to
+/// `kernel` is a CPU-based total viewshed kernel. It makes use of image rotation tof
 /// optimize the cache locality of all lookups for a total viewshed calculation
 fn kernel(elevations: &[i16], max_los_points: usize, angle: usize, result: &mut [f32]) {
     assert!(angle < 360, "angle must be [0, 360)");
@@ -489,15 +534,13 @@ fn kernel(elevations: &[i16], max_los_points: usize, angle: usize, result: &mut 
 
     let vectorized = Vectorized {};
 
-    let local_result = total_viewshed::<8, 8, Vectorized>(
-        vectorized,
+    total_viewshed::<8, 8, Vectorized>(
+        &vectorized,
         &rotated_elevations,
         &indexes,
         max_los_points,
+        result,
     );
-    for (total, r) in zip(result, local_result) {
-        *total += r
-    }
     tracing::info!("kernel for {} run in: {:?}", angle, start.elapsed());
 }
 

@@ -82,3 +82,5 @@ integer_division_remainder_used = "allow"
 
 # We're not concerned about modulo not computing negative numbers
 modulo_arithmetic = "allow"
+
+multiple_unsafe_ops_per_block = "allow"
