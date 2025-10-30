@@ -5,16 +5,10 @@ use color_eyre::{eyre::Ok, Result};
 
 /// Handles all the computations.
 pub struct Compute<'compute> {
-    /// Where to run the kernel computations
-    backend: crate::config::Backend,
-    /// What to compute.
-    process: Vec<crate::config::Process>,
+    /// User configuration.
+    config: ComputeConfig,
     /// Vulkan GPU manager
     vulkan: Option<super::vulkan::Vulkan>,
-    /// The OS's state directory for saving our cache into.
-    state_directory: Option<std::path::PathBuf>,
-    /// Output directory
-    output_directory: Option<std::path::PathBuf>,
     /// Storage interface for conputed ring (viewshed) data.
     storage: Option<crate::output::ring_data::Storage>,
     /// The Digital Elevation Model that we're computing.
@@ -35,33 +29,42 @@ pub struct Compute<'compute> {
 /// as that is what an i9900k has, and is a common configuration.
 /// TODO find a good syscall for this
 const NUM_CORES: usize = 8;
+/// Configuration for computing.
+pub struct ComputeConfig {
+    /// The height of the observer that views viewsheds.
+    pub observer_height: f32,
+    /// Where to run the kernel computations
+    pub backend: crate::config::Backend,
+    /// What to compute.
+    pub process: Vec<crate::config::Process>,
+    /// The OS's state directory for saving our cache into.
+    pub state_directory: Option<std::path::PathBuf>,
+    /// Output directory
+    pub output_directory: Option<std::path::PathBuf>,
+    /// The number of reserved rings per km.
+    pub rings_per_km: f32,
+    /// How to normalise the heatmap data.
+    pub heatmap: crate::config::HeatmapNormalisation,
+}
 
 impl<'compute> Compute<'compute> {
     /// Instantiate.
-    pub fn new(
-        backend: crate::config::Backend,
-        process: Vec<crate::config::Process>,
-        state_directory: Option<std::path::PathBuf>,
-        maybe_output_directory: Option<std::path::PathBuf>,
-        dem: &'compute mut crate::dem::DEM,
-        rings_per_km: f32,
-        observer_height: f32,
-    ) -> Result<Self> {
+    pub fn new(config: ComputeConfig, dem: &'compute mut crate::dem::DEM) -> Result<Self> {
         let total_bands = dem.computable_points_count * 2;
 
-        let rings_per_band = if Self::is_process_viewsheds(&process) {
-            Self::ring_count_per_band(rings_per_km, dem.max_line_of_sight)
+        let rings_per_band = if Self::is_process_viewsheds(&config.process) {
+            Self::ring_count_per_band(config.rings_per_km, dem.max_line_of_sight)
         } else {
             1
         };
-        let total_reserved_rings = if Self::is_process_viewsheds(&process) {
+        let total_reserved_rings = if Self::is_process_viewsheds(&config.process) {
             usize::try_from(total_bands)? * rings_per_band
         } else {
             1
         };
 
-        let storage = if Self::is_process_viewsheds(&process) {
-            match &maybe_output_directory {
+        let storage = if Self::is_process_viewsheds(&config.process) {
+            match &config.output_directory {
                 Some(output_directory) => {
                     Some(crate::output::ring_data::Storage::new(output_directory)?)
                 }
@@ -76,13 +79,17 @@ impl<'compute> Compute<'compute> {
             max_los_as_points: dem.max_los_as_points,
             dem_width: dem.width,
             tvs_width: dem.tvs_width,
-            observer_height,
+            observer_height: config.observer_height,
             reserved_rings_per_band: u32::try_from(rings_per_band)?,
-            process: Self::bitmask_flags_for_kernel(&process),
+            process: Self::bitmask_flags_for_kernel(&config.process),
             ..Default::default()
         };
 
-        let vulkan = if matches!(backend, crate::config::Backend::Vulkan) {
+        #[expect(
+            clippy::if_then_some_else_none,
+            reason = "The `?` is hard to use in the closure"
+        )]
+        let vulkan = if matches!(config.backend, crate::config::Backend::Vulkan) {
             let elevations = dem.elevations.clone();
             dem.elevations = Vec::new(); // Free up some RAM.
             Some(super::vulkan::Vulkan::new(
@@ -97,11 +104,8 @@ impl<'compute> Compute<'compute> {
         };
 
         Ok(Self {
-            backend,
-            process,
+            config,
             vulkan,
-            state_directory,
-            output_directory: maybe_output_directory,
             storage,
             dem,
             constants,
@@ -171,7 +175,7 @@ impl<'compute> Compute<'compute> {
 
     /// Do all computations.
     pub fn run(&mut self) -> Result<()> {
-        let mut sector_surfaces = if Self::is_process_surfaces(&self.process) {
+        let mut sector_surfaces = if Self::is_process_surfaces(&self.config.process) {
             let blank = vec![0.0; usize::try_from(self.dem.computable_points_count)?];
             self.total_surfaces.clone_from(&blank);
             blank
@@ -179,11 +183,13 @@ impl<'compute> Compute<'compute> {
             Vec::new()
         };
 
-        if Self::is_process_viewsheds(&self.process) && self.output_directory.is_some() {
+        if Self::is_process_viewsheds(&self.config.process)
+            && self.config.output_directory.is_some()
+        {
             self.save_ring_metadata()?;
         }
 
-        let mut longest_lines = if Self::is_process_longest_lines(&self.process) {
+        let mut longest_lines = if Self::is_process_longest_lines(&self.config.process) {
             let blank = vec![0.0; usize::try_from(self.dem.computable_points_count)?];
             self.longest_lines.clone_from(&blank);
             blank
@@ -227,8 +233,8 @@ impl<'compute> Compute<'compute> {
                 &mut longest_lines,
             )?;
 
-            if Self::is_process_viewsheds(&self.process) {
-                match &self.output_directory {
+            if Self::is_process_viewsheds(&self.config.process) {
+                match &self.config.output_directory {
                     Some(_) => {
                         self.save_sector_ring_data(angle, &sector_ring_data)?;
                     }
@@ -236,12 +242,12 @@ impl<'compute> Compute<'compute> {
                 }
             }
 
-            if Self::is_process_surfaces(&self.process) {
+            if Self::is_process_surfaces(&self.config.process) {
                 self.add_sector_surfaces_to_running_total(&sector_surfaces);
                 self.render_total_surfaces()?;
             }
 
-            if Self::is_process_longest_lines(&self.process) {
+            if Self::is_process_longest_lines(&self.config.process) {
                 self.increment_longest_lines(&longest_lines);
                 self.render_longest_lines()?;
             }
@@ -252,7 +258,7 @@ impl<'compute> Compute<'compute> {
 
     /// Either load cache from the filesystem or create and save it.
     fn load_or_compute_cache(&mut self, angle: u16) -> Result<()> {
-        let maybe_cache = if let Some(state_directory) = self.state_directory.clone() {
+        let maybe_cache = if let Some(state_directory) = self.config.state_directory.clone() {
             Some(crate::cache::Cache::new(
                 &state_directory,
                 self.dem.width,
@@ -351,7 +357,7 @@ impl<'compute> Compute<'compute> {
     /// Render a heatmap and `.bt` file of the total surface areas for each point within the computable area of the
     /// DEM.
     fn render_total_surfaces(&self) -> Result<()> {
-        let Some(output_dir) = &self.output_directory else {
+        let Some(output_dir) = &self.config.output_directory else {
             return Ok(());
         };
 
@@ -360,6 +366,7 @@ impl<'compute> Compute<'compute> {
             self.dem.tvs_width,
             self.dem.tvs_width,
             output_dir.join("total_surfaces.png"),
+            self.config.heatmap,
         )?;
 
         crate::output::bt::save(
@@ -374,7 +381,7 @@ impl<'compute> Compute<'compute> {
     /// Render a heatmap and `.bt` of the longest lines of sight for each point within the computable area of the
     /// DEM.
     fn render_longest_lines(&self) -> Result<()> {
-        let Some(output_dir) = &self.output_directory else {
+        let Some(output_dir) = &self.config.output_directory else {
             return Ok(());
         };
 
@@ -383,6 +390,7 @@ impl<'compute> Compute<'compute> {
             self.dem.tvs_width,
             self.dem.tvs_width,
             output_dir.join("longest_lines.png"),
+            self.config.heatmap,
         )?;
 
         crate::output::bt::save(
@@ -403,7 +411,7 @@ impl<'compute> Compute<'compute> {
         longest_lines: &mut [f32],
     ) -> Result<()> {
         tracing::info!("Running kernel for {angle}°");
-        match self.backend {
+        match self.config.backend {
             crate::config::Backend::CPU => {
                 self.compute_sector_cpu(cumulative_surfaces, ring_data, longest_lines);
             }
@@ -431,13 +439,13 @@ impl<'compute> Compute<'compute> {
 
         let (surfaces_data, rings_data, longest_lines_data) =
             gpu.run(&self.dem.band_distances, &self.dem.band_deltas)?;
-        if Self::is_process_surfaces(&self.process) {
+        if Self::is_process_surfaces(&self.config.process) {
             cumulative_surfaces.copy_from_slice(surfaces_data.as_slice());
         }
-        if Self::is_process_viewsheds(&self.process) {
+        if Self::is_process_viewsheds(&self.config.process) {
             rings.copy_from_slice(rings_data.as_slice());
         }
-        if Self::is_process_longest_lines(&self.process) {
+        if Self::is_process_longest_lines(&self.config.process) {
             longest_lines.copy_from_slice(longest_lines_data.as_slice());
         }
         Ok(())
@@ -480,20 +488,21 @@ pub mod test {
     }
 
     pub fn compute<'dem>(dem: &'dem mut crate::dem::DEM, elevations: &[i16]) -> Compute<'dem> {
-        dem.elevations = elevations.iter().map(|&x| f32::from(x)).collect();
-        let mut compute = Compute::new(
-            crate::config::Backend::CPU,
-            vec![
+        let config = ComputeConfig {
+            observer_height: 1.8,
+            backend: crate::config::Backend::CPU,
+            process: vec![
                 crate::config::Process::TotalSurfaces,
                 crate::config::Process::Viewsheds,
             ],
-            None,
-            None,
-            dem,
-            5000.0,
-            1.8,
-        )
-        .unwrap();
+            state_directory: None,
+            output_directory: None,
+            rings_per_km: 5000.0,
+            heatmap: crate::config::HeatmapNormalisation::UnitScale,
+        };
+        dem.elevations = elevations.iter().map(|&x| f32::from(x)).collect();
+
+        let mut compute = Compute::new(config, dem).unwrap();
         compute.run().unwrap();
         compute
     }
