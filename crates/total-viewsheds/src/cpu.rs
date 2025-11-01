@@ -2,6 +2,7 @@
 
 use itertools::izip;
 
+use std::arch::x86_64::{__m512, _mm256_alignr_epi32, _mm256_mask_alignr_epi32, _mm512_alignr_epi32, _mm512_castps_si512, _mm512_castsi512_ps, _mm512_cmple_ps_mask, _mm512_max_ps};
 #[cfg(all(
     target_feature = "avx2",
     target_feature = "avx",
@@ -17,6 +18,7 @@ use std::simd::prelude::*;
 use std::simd::{LaneCount, Mask, StdFloat as _, SupportedLaneCount};
 use std::time::Instant;
 use std::{array, f32, slice, thread};
+use wgpu::naga::Expression::Splat;
 
 /// `EARTH_RADIUS_SQUARED` is the earth's radius squared in meters
 const EARTH_RADIUS_SQUARED: f32 = 12_742_000.0;
@@ -166,7 +168,7 @@ impl Viewshed<8> for Vectorized {
             *prefix = v_prefix_max;
         }
 
-        let mut local_acc = f32x4::splat(acc[0]);
+        let mut local_acc = f32x4::splat(acc[3]);
 
         // safety: because f32x8s are aligned to exactly sizeof(f32x4) * 2
         // this is well aligned, so the cast is valid
@@ -188,7 +190,69 @@ impl Viewshed<8> for Vectorized {
             local_acc = self.max(local_acc, cur_max);
         }
 
-        f32x8::splat(local_acc[0])
+        f32x8::splat(local_acc[3])
+    }
+}
+
+#[cfg(all(target_feature = "avx512f"))]
+fn _mm512_slli_si512<const K: usize>(elem: __m512) -> __m512
+where
+    [(); { (16 - K) as i32 } as usize]:,
+{
+    unsafe {
+        let zero = f32x16::splat(-2000.0f32);
+        _mm512_castsi512_ps(_mm512_alignr_epi32::<{ (16 - K) as i32 }>(
+            _mm512_castps_si512(elem),
+            _mm512_castps_si512(zero.into()),
+        ))
+    }
+}
+
+#[cfg(all(target_feature = "avx512f"))]
+impl Viewshed<16> for Vectorized {
+    #[inline]
+    fn gte(&self, angle: f32x16, prefix: f32x16) -> Mask<i32, 16> {
+        // safety: the caller of Viewshed<8> guarantees that -0.0 or NaN are not in the input
+        // thus allowing this to be non IEEE754 compliant
+        unsafe {
+            let mask = _mm512_cmple_ps_mask(prefix.into(), angle.into());
+            Mask::<i32, 16>::from_bitmask(mask.into())
+        }
+    }
+
+    #[inline]
+    fn max(&self, lhs: f32x16, rhs: f32x16) -> f32x16 {
+        // safety: the caller of Viewshed<8> guarantees that -0.0 or NaN are not in the input
+        // thus allowing this to be non IEEE754 compliant
+        unsafe { _mm512_max_ps(lhs.into(), rhs.into()).into() }
+    }
+
+    #[inline]
+    fn prefix_max(&self, angles: &[f32x16], prefix_max: &mut [f32x16], acc: f32x16) -> f32x16 {
+        // Calculate the 4-wide block prefix max two at a time
+        for (prefix, &angle) in zip(prefix_max.iter_mut(), angles.iter()) {
+            unsafe {
+                let mut v_prefix_max = _mm512_max_ps(angle.into(), _mm512_slli_si512::<1>(angle.into()).into());
+                v_prefix_max = _mm512_max_ps(v_prefix_max.into(), _mm512_slli_si512::<2>(v_prefix_max).into());
+                v_prefix_max = _mm512_max_ps(v_prefix_max.into(), _mm512_slli_si512::<4>(v_prefix_max).into());
+                v_prefix_max = _mm512_max_ps(v_prefix_max.into(), _mm512_slli_si512::<8>(v_prefix_max).into());
+                *prefix = v_prefix_max.into();
+            }
+        }
+
+        let mut local_acc = f32x16::splat(acc[0]);
+
+        // accumulate the prefix maxes for blocks, re-computing all prefix maxes
+        // to include the accumulated value
+        for prefix in prefix_max {
+            let cur_prefix: f32x16 = *prefix;
+            let cur_max: f32x16 = Simd::splat(cur_prefix[15]);
+
+            *prefix = self.max(local_acc, cur_prefix);
+            local_acc = self.max(local_acc, cur_max);
+        }
+
+        f32x16::splat(local_acc[0])
     }
 }
 

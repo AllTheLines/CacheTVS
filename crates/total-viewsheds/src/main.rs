@@ -1,5 +1,7 @@
 //! Total Viewshed Calculator
 #![feature(portable_simd)]
+#![feature(generic_const_exprs)]
+
 #![expect(clippy::pub_use, reason = "I admit I don't understand the other way.")]
 extern crate core;
 
