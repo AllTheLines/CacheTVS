@@ -207,7 +207,7 @@ impl<'compute> Compute<'compute> {
                 .collect::<Vec<i16>>();
 
             #[expect(clippy::as_conversions, reason = "u32 -> usize is valid")]
-            let surfaces = cpu::multithreaded_kernel(
+            let (surfaces, longest, sector) = cpu::multithreaded_kernel(
                 &elevations,
                 self.dem.max_los_as_points as usize,
                 360,
@@ -215,7 +215,15 @@ impl<'compute> Compute<'compute> {
             );
 
             self.add_sector_surfaces_to_running_total(&surfaces);
+            self.increment_longest_lines(&longest);
+
+            let longest_line_distance: f32 = longest
+                .iter()
+                .fold(0.0f32, |acc, &long| { acc.max(long) } );
+            println!("the longest line of sight is {}km", longest_line_distance/1000.0);
+
             self.render_total_surfaces()?;
+            self.render_longest_lines()?;
             return Ok(());
         }
 
