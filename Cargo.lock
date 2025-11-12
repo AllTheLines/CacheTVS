@@ -1690,6 +1690,7 @@ dependencies = [
  "pollster",
  "proj4rs",
  "radsort",
+ "rayon",
  "serde",
  "serde_json",
  "tempfile",
