@@ -17,12 +17,6 @@ pub struct Coordinate(pub geo::Coord);
 
 /// `DEM`
 pub struct DEM {
-    /// Trigonomic data about the points when you rotate the DEM through certain angles.
-    pub axes: crate::axes::Axes,
-    /// The band deltas for every sector.
-    pub band_deltas: Vec<i32>,
-    /// All the distances for the band.
-    pub band_distances: Vec<f32>,
     /// All the elevation data.
     pub elevations: Vec<f32>,
     /// The width of the DEM.
@@ -43,10 +37,6 @@ pub struct DEM {
     pub max_los_as_points: u32,
     /// The total number of points that can have full viewsheds calculated for them.
     pub computable_points_count: u32,
-    /// The size of a "band of sight". This is generally the number of points that fit into the max
-    /// line of sight. But it could be more, not to increase the distance, but to improve
-    /// interpolation.
-    pub band_size: u32,
 }
 
 impl DEM {
@@ -77,9 +67,6 @@ impl DEM {
         }
 
         let mut dem = Self {
-            axes: crate::axes::Axes::default(),
-            band_deltas: Vec::default(),
-            band_distances: Vec::default(),
             elevations: Vec::default(),
             width,
             tvs_width: 0,
@@ -89,9 +76,6 @@ impl DEM {
             max_line_of_sight,
             max_los_as_points,
             computable_points_count: 0,
-            // Add 1 just to be sure that we always compute points within the line of sight, and no
-            // less.
-            band_size: max_los_as_points + 1,
         };
         dem.count_computable_points();
         dem.tvs_width = dem.computable_points_count.isqrt();
@@ -121,7 +105,6 @@ impl DEM {
     }
 
     /// Convert an original DEM ID to the coordinate system of the computable points sub-DEM.
-    #[expect(dead_code, reason = "We'll use it in the next commit")]
     pub fn pov_id_to_tvs_id(&self, pov_id: u64) -> u64 {
         let max_los_as_points_u64 = u64::from(self.max_los_as_points);
         let width_u64 = u64::from(self.width);
@@ -171,21 +154,6 @@ impl DEM {
         );
         Ok(dem_coord)
     }
-
-    /// Convert a computable sub-DEM ID to its original DEM ID.
-    #[cfg(test)]
-    pub const fn tvs_id_to_pov_id(&self, tvs_id: u32) -> u32 {
-        let x = tvs_id.rem_euclid(self.tvs_width) + self.max_los_as_points;
-        let y = tvs_id.div_euclid(self.tvs_width) + self.max_los_as_points;
-        (y * self.width) + x
-    }
-
-    /// Do the calculations needed to create bands for a new angle.
-    pub fn calculate_axes(&mut self, angle: f32) -> Result<()> {
-        self.axes = crate::axes::Axes::new(self.width, angle)?;
-        self.axes.compute();
-        Ok(())
-    }
 }
 
 /// Serialise for Debugging.
@@ -205,7 +173,6 @@ impl std::fmt::Debug for DEM {
             .field("max_line_of_sight", &self.max_line_of_sight)
             .field("max_los_as_points", &self.max_los_as_points)
             .field("computable_points_count", &self.computable_points_count)
-            .field("band_size", &self.band_size)
             .finish()
     }
 }

@@ -2,19 +2,18 @@
 Calculates the total visible surface from every point of a given terrain. For example, the viewshed for the summit of a mountain will be large and for a valley it will be small. There are other viewshed calculators, most notably for [Arcgis](http://pro.arcgis.com/en/pro-app/tool-reference/3d-analyst/viewshed.htm), but they only calculate single viewsheds for a specific point. The algorithm used here however takes advantage of the computational efficiency gained by calculating *all*, therefore the total, viewsheds for a given region.
 
 This is an example of a single viewshed in Cardiff Bay, Wales, created by this application:
-![Viewshed Example](cardiff_viewshed.png)
+![Viewshed Example](cardiff_viewshed.webp)
 
 This is an example of a heatmap of a total viewshed surface (TVS) area (the darker square in the middle). The background is a simple heatmap visualisation of elevation (the higher the whiter). It is from the same Cardiff Bay area as above. Notice how the TVS features are similar but different to the underlying elevation data. It still represents peaks and valleys, but for example its southern side is brighter because it can see further into the lower regions of the river channel. The TVS heatmap is smaller because it doesn't calculate values at the edges of the elevation data, it can't calculate the visibility of regions it is not given data for.
 
-![A total viewshed placed over the DEM file from which it was created](tvs_on_hgt.jpg)
+![A total viewshed placed over the DEM file from which it was created](cardiff_tvs.webp)
 
 ## Algorithm
-This project is based on the work of Siham Tabik, Antonio R. Cervilla, Emilio Zapata, Luis F. Romero in their
+This project has taken a lot of inspiration from the work of Siham Tabik, Antonio R. Cervilla, Emilio Zapata, Luis F. Romero in their
 paper _Efficient Data Structure and Highly Scalable Algorithm for Total-Viewshed Computation_: https://ieeexplore.ieee.org/document/6837455
 
-However it notably improves on it by using Band of Sight 'shapes' rather than calculating the coordinates of every single Band. This has massive space improvement and therefore speed improvement. It also reduces the need for a linked list, further improving the simplicity of the algorithm.
-
-There's also a new paper by the same author from 2021 that seems to focus more on parallelism https://arxiv.org/pdf/2003.02200.
+However it notably deviates by using traditional rotation instead of Tabik et al's "band of sight". This both improves memory access patterns
+and simplifies the code. As such it resembles some of the ideas in the same authors' 2021 paper, https://arxiv.org/pdf/2003.02200, that uses skewing.
 
 ## DEM file format
 Currently only the [`.bt` file format](http://vterrain.org/Implementation/Formats/BT.html) is supported.
@@ -172,6 +171,7 @@ To do all the viewshed calculations we assume the DEM data is projected to an AE
 ### Misc
 * https://crates.io/crates/srtm_reader
 * https://www.heywhatsthat.com
+* https://www.uptowhere.com 
 
 ## Further Reading
 * https://en.wikipedia.org/wiki/Long_distance_observations

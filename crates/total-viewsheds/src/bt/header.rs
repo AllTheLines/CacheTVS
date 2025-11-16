@@ -94,7 +94,6 @@ pub struct BinaryTerrain {
 #[expect(
     clippy::default_numeric_fallback,
     clippy::float_cmp,
-    clippy::unreadable_literal,
     reason = "These are just tests"
 )]
 #[cfg(test)]
@@ -118,10 +117,10 @@ mod test {
         crate::output::bt::save(&dem, &total_surfaces, &temporary_file).unwrap();
         let bt = crate::bt::BinaryTerrain::read(&temporary_file).unwrap();
         assert_eq!(bt.header.width, 3);
-        assert_eq!(bt.header.left, -33.330057749635486);
-        assert_eq!(bt.header.right, -33.32994225028124);
-        assert_eq!(bt.header.top, 45.669959512286916);
-        assert_eq!(bt.header.bottom, 45.6700404876836);
+        assert_eq!(bt.header.left, -33.33);
+        assert_eq!(bt.header.right, -33.33);
+        assert_eq!(bt.header.top, 45.67);
+        assert_eq!(bt.header.bottom, 45.67);
         assert_eq!(bt.header.data_type, crate::bt::header::DataType::Float32);
         let crate::bt::header::Data::Float32(data) = bt.data else {
             panic!("`.bt` file's data type is not `f32`");

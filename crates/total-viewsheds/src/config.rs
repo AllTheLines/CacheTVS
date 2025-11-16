@@ -79,7 +79,7 @@ pub struct Compute {
 
     /// Override the calculated DEM points scale from the DEM file. Units in meters.
     #[arg(long, value_name = "DEM scale (meters)")]
-    pub scale: Option<f64>,
+    pub scale: Option<f32>,
 
     /// What to compute.
     #[arg(
@@ -137,10 +137,10 @@ fn parse_coords(string: &str) -> Result<(f32, f32)> {
 /// Where to run the computations.
 #[derive(clap::ValueEnum, Clone, Debug)]
 pub enum Backend {
-    /// Conventional CPU computations. The slowest method.
-    CPU,
     /// A SPIRV shader run on the GPU via Vulkan.
     Vulkan,
+    /// Vulkan shader but run on the CPU.
+    VulkanCPU,
     /// TBC
     Cuda,
 }

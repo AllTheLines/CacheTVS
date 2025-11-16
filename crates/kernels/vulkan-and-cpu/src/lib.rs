@@ -19,8 +19,15 @@ use spirv_std::spirv;
 pub mod constants;
 pub mod kernel;
 mod ring_data;
+pub mod rotation;
 
-/// The main entrypoint to the shader.
+#[cfg(not(target_arch = "spirv"))]
+/// Code used for tests and debugging.
+pub mod tests {
+    pub mod dems;
+    pub mod matchers;
+}
+
 #[allow(
     clippy::allow_attributes,
     reason = "For some reason `expect` doesn't detect the veracity of the 'inline' lint"
@@ -31,15 +38,14 @@ mod ring_data;
     reason = "SPIR-V requires an entrypoint"
 )]
 #[spirv(compute(threads(8, 8, 4)))]
-pub fn main(
+/// The main entrypoint to the shader.
+pub fn visibility(
     #[spirv(global_invocation_id)] id: glam::UVec3,
     #[spirv(uniform, descriptor_set = 0, binding = 0)] constants: &constants::Constants,
     #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] elevations: &[f32],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] distances: &[f32],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] deltas: &[i32],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] cumulative_surfaces: &mut [f32],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 5)] ring_data: &mut [u32],
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 6)] longest_lines: &mut [f32],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] cumulative_surfaces: &mut [f32],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 3)] ring_data: &mut [u32],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 4)] longest_lines: &mut [f32],
 ) {
     let linear_id = id.x
         + id.y * constants.dimensions.x
@@ -48,14 +54,45 @@ pub fn main(
         return;
     }
 
-    kernel::kernel(
+    kernel::Kernel::run(
         linear_id,
         constants,
         elevations,
-        distances,
-        deltas,
-        cumulative_surfaces,
         ring_data,
+        cumulative_surfaces,
         longest_lines,
     );
+}
+
+#[allow(
+    clippy::allow_attributes,
+    reason = "For some reason `expect` doesn't detect the veracity of the 'inline' lint"
+)]
+#[allow(
+    clippy::missing_inline_in_public_items,
+    clippy::too_many_arguments,
+    reason = "SPIR-V requires an entrypoint"
+)]
+#[spirv(compute(threads(8, 8, 4)))]
+/// Entrypoint for rotating elevation data.
+pub fn rotate(
+    #[spirv(global_invocation_id)] id: glam::UVec3,
+    #[spirv(uniform, descriptor_set = 0, binding = 0)] constants: &constants::Constants,
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] elevations_in: &[f32],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] elevations_out: &mut [f32],
+) {
+    let linear_id = id.x
+        + id.y * constants.dimensions.x
+        + id.z * constants.dimensions.x * constants.dimensions.y;
+    if linear_id >= constants.dimensions.w {
+        return;
+    }
+
+    let rotator = rotation::Rotator::new_from_cached_trig(
+        linear_id,
+        constants.dem_width,
+        constants.sine,
+        constants.cosine,
+    );
+    rotator.rotate_value_bilinear(elevations_in, elevations_out);
 }

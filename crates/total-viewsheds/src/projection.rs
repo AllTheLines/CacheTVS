@@ -54,6 +54,7 @@ impl Converter {
         ))
     }
 
+    #[cfg(test)]
     /// Chante the anchor of the AEQD projection. This just gives slightly more accuracy when
     /// reconstructing larger viewsheds on larger DEMs.
     pub fn change_metric_origin(

@@ -31,7 +31,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - run: rustup toolchain install $RUST_VERSION --profile minimal
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
@@ -46,7 +48,9 @@ jobs:
     
     steps:
       - uses: actions/checkout@v4
-      - run: rustup toolchain install $RUST_VERSION --profile minimal
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
@@ -68,13 +72,18 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - run: rustup toolchain install $RUST_VERSION --profile minimal
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: clippy,rustfmt
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-shear, cargo-msrv
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
+      - name: Clippy version
+        run: cargo clippy --version
       - name: Lint
         run: cargo clippy -- --deny warnings
       - name: Formatting

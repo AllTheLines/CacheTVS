@@ -1,13 +1,23 @@
 //! Total Viewshed Calculator
 
 #![expect(clippy::pub_use, reason = "I admit I don't understand the other way.")]
+#![cfg_attr(
+    test,
+    expect(
+        clippy::as_conversions,
+        clippy::cast_possible_truncation,
+        clippy::unreadable_literal,
+        clippy::default_numeric_fallback,
+        clippy::integer_division,
+        clippy::integer_division_remainder_used,
+        reason = "It's just for the tests"
+    )
+)]
 
 use clap::Parser as _;
-use color_eyre::eyre::{ContextCompat as _, Result};
+use color_eyre::eyre::Result;
 use tracing_subscriber::{layer::SubscriberExt as _, util::SubscriberInitExt as _, Layer as _};
 
-mod axes;
-mod band_of_sight;
 /// The `.bt` file type for reading and writing the data we consume and output.
 mod bt {
     pub mod header;
@@ -15,7 +25,6 @@ mod bt {
     pub mod read;
     pub mod write;
 }
-mod cache;
 mod compute;
 mod config;
 mod dem;
@@ -24,6 +33,7 @@ mod vulkan;
 /// Various ways to output data.
 mod output {
     pub mod ascii;
+    pub mod bresenham;
     pub mod bt;
     pub mod png;
     pub mod ring_data;
@@ -82,23 +92,14 @@ fn compute(config: &config::Compute) -> Result<()> {
         clippy::as_conversions,
         clippy::cast_sign_loss,
         clippy::cast_possible_truncation,
+        clippy::cast_precision_loss,
         reason = "Sign loss and truncation aren't relevant"
     )]
     let max_line_of_sight = config
         .max_line_of_sight
-        .unwrap_or_else(|| (f64::from(tile.header.width.div_euclid(3)) * scale) as u32);
+        .unwrap_or_else(|| ((tile.header.width.div_euclid(3) as f32) * scale) as u32);
 
-    #[expect(
-        clippy::as_conversions,
-        clippy::cast_possible_truncation,
-        reason = "I don't think there's any other way"
-    )]
-    let mut dem = crate::dem::DEM::new(
-        tile.centre(),
-        tile.header.width,
-        scale as f32,
-        max_line_of_sight,
-    )?;
+    let mut dem = crate::dem::DEM::new(tile.centre(), tile.header.width, scale, max_line_of_sight)?;
 
     tracing::info!("Converting DEM data to `f32`");
     match &tile.data {
@@ -116,9 +117,9 @@ fn compute(config: &config::Compute) -> Result<()> {
     tracing::info!("Starting computations");
     let compute_config = compute::ComputeConfig {
         observer_height: config.observer_height,
+        scale: config.scale.unwrap_or(1.0),
         backend: config.backend.clone(),
         process: config.process.clone(),
-        state_directory: Some(dirs::state_dir().context("Couldn't get the OS's state directory")?),
         output_directory: Some(config.output_dir.clone()),
         rings_per_km: config.rings_per_km,
         heatmap: config.heatmap,

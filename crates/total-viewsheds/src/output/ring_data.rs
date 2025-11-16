@@ -74,8 +74,6 @@ pub struct MetaData {
     pub max_line_of_sight: u32,
     /// The number of items reserved to place ring DEM IDs in.
     pub reserved_ring_size: usize,
-    /// The small angular offset applied to each sector. See [`crate::dem::DEM`] for more details.
-    pub sector_shift: f32,
     /// The lat/lon coordinates for the centre of the 2D DEM grid. Used for accurately converting
     /// between degree and metric coordinate systems.
     pub centre: crate::projection::LatLonCoord,

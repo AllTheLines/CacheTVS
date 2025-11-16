@@ -1,6 +1,9 @@
 //! The main entrypoint for running computations.
 
-use color_eyre::{eyre::Ok, Result};
+use color_eyre::Result;
+
+/// The number of angles we rotate through. The other half are done via "backwards" lines of sight.
+pub const SECTOR_STEPS: u16 = 180;
 
 /// Handles all the computations.
 pub struct Compute<'compute> {
@@ -28,12 +31,12 @@ pub struct Compute<'compute> {
 pub struct ComputeConfig {
     /// The height of the observer that views viewsheds.
     pub observer_height: f32,
+    /// The size of each elevation point in meters.
+    pub scale: f32,
     /// Where to run the kernel computations
     pub backend: crate::config::Backend,
     /// What to compute.
     pub process: Vec<crate::config::Process>,
-    /// The OS's state directory for saving our cache into.
-    pub state_directory: Option<std::path::PathBuf>,
     /// Output directory
     pub output_directory: Option<std::path::PathBuf>,
     /// The number of reserved rings per km.
@@ -77,6 +80,7 @@ impl<'compute> Compute<'compute> {
             observer_height: config.observer_height,
             reserved_rings_per_band: u32::try_from(rings_per_band)?,
             process: Self::bitmask_flags_for_kernel(&config.process),
+            scale: config.scale,
             ..Default::default()
         };
 
@@ -91,7 +95,6 @@ impl<'compute> Compute<'compute> {
                 constants,
                 elevations,
                 usize::try_from(dem.size)?,
-                usize::try_from(dem.band_deltas_size())?,
                 total_reserved_rings,
             )?)
         } else {
@@ -192,9 +195,11 @@ impl<'compute> Compute<'compute> {
             Vec::new()
         };
 
-        for angle in 0..crate::axes::SECTOR_STEPS {
-            self.load_or_compute_cache(angle)?;
+        for angle in 0..SECTOR_STEPS {
             let mut sector_ring_data = vec![0; self.total_reserved_rings];
+            let trig = kernel::rotation::Rotator::calculate_trig(f32::from(angle));
+            self.constants.sine = trig.0;
+            self.constants.cosine = trig.1;
             self.compute_sector(
                 angle,
                 &mut sector_surfaces,
@@ -220,52 +225,6 @@ impl<'compute> Compute<'compute> {
                 self.increment_longest_lines(&longest_lines);
                 self.render_longest_lines()?;
             }
-        }
-
-        Ok(())
-    }
-
-    /// Either load cache from the filesystem or create and save it.
-    fn load_or_compute_cache(&mut self, angle: u16) -> Result<()> {
-        let maybe_cache = if let Some(state_directory) = self.config.state_directory.clone() {
-            Some(crate::cache::Cache::new(
-                &state_directory,
-                self.dem.width,
-                angle,
-            ))
-        } else {
-            None
-        };
-
-        if let Some(cache) = &maybe_cache {
-            cache.ensure_directories_exists()?;
-
-            if cache.is_cache_exists {
-                tracing::debug!(
-                    "Loading cache from: {}/*/{}",
-                    cache.base_directory.display(),
-                    angle
-                );
-                self.dem.band_deltas = cache.load_band_deltas()?;
-                self.dem.band_distances = cache.load_distances()?;
-                return Ok(());
-            }
-
-            tracing::warn!(
-                "Cached data not found at: {}/*/{}. So computing now...",
-                cache.base_directory.display(),
-                angle
-            );
-        } else {
-            tracing::warn!("Forcing computation of cache for angle {angle}°...");
-        }
-
-        self.dem.calculate_axes(f32::from(angle))?;
-        self.dem.compile_band_data()?;
-
-        if let Some(cache) = &maybe_cache {
-            cache.save_band_deltas(&self.dem.band_deltas)?;
-            cache.save_distances(&self.dem.band_distances)?;
         }
 
         Ok(())
@@ -298,7 +257,6 @@ impl<'compute> Compute<'compute> {
             scale: self.dem.scale,
             max_line_of_sight: self.dem.max_line_of_sight,
             reserved_ring_size: usize::try_from(self.constants.reserved_rings_per_band)?,
-            sector_shift: crate::axes::SECTOR_SHIFT,
             centre: self.dem.centre,
         })
     }
@@ -381,8 +339,8 @@ impl<'compute> Compute<'compute> {
     ) -> Result<()> {
         tracing::info!("Running kernel for {angle}°");
         match self.config.backend {
-            crate::config::Backend::CPU => {
-                self.compute_sector_cpu(cumulative_surfaces, ring_data, longest_lines);
+            crate::config::Backend::VulkanCPU => {
+                self.compute_sector_cpu(cumulative_surfaces, ring_data, longest_lines)?;
             }
             crate::config::Backend::Vulkan => {
                 self.compute_sector_vulkan(cumulative_surfaces, ring_data, longest_lines)?;
@@ -406,8 +364,7 @@ impl<'compute> Compute<'compute> {
             color_eyre::eyre::bail!("`self.gpu` not instantiated yet.");
         };
 
-        let (surfaces_data, rings_data, longest_lines_data) =
-            gpu.run(&self.dem.band_distances, &self.dem.band_deltas)?;
+        let (surfaces_data, rings_data, longest_lines_data) = gpu.run(self.constants)?;
         if Self::is_process_surfaces(&self.config.process) {
             cumulative_surfaces.copy_from_slice(surfaces_data.as_slice());
         }
@@ -426,19 +383,30 @@ impl<'compute> Compute<'compute> {
         cumulative_surfaces: &mut [f32],
         ring_data: &mut [u32],
         longest_lines: &mut [f32],
-    ) {
-        for kernel_id in 0..self.constants.total_bands {
-            kernel::kernel::kernel(
-                kernel_id,
+    ) -> Result<()> {
+        let mut rotated_elevations = vec![0.0; usize::try_from(self.dem.size)?];
+        for dem_id in 0..self.dem.size {
+            let rotator = kernel::rotation::Rotator::new_from_cached_trig(
+                dem_id,
+                self.dem.width,
+                self.constants.sine,
+                self.constants.cosine,
+            );
+            rotator.rotate_value_nearest_neighbour(&self.dem.elevations, &mut rotated_elevations);
+        }
+
+        for tvs_id in 0..self.constants.total_bands {
+            kernel::kernel::Kernel::run(
+                tvs_id,
                 &self.constants,
-                &self.dem.elevations,
-                &self.dem.band_distances,
-                &self.dem.band_deltas,
-                cumulative_surfaces,
+                &rotated_elevations,
                 ring_data,
+                cumulative_surfaces,
                 longest_lines,
             );
         }
+
+        Ok(())
     }
 }
 
@@ -446,190 +414,68 @@ impl<'compute> Compute<'compute> {
 pub mod test {
     use super::*;
 
-    pub fn make_dem() -> crate::dem::DEM {
-        crate::dem::DEM::new(
+    pub fn make_dem(elevations: &[i16]) -> crate::dem::DEM {
+        let width = elevations.len().isqrt() as u32;
+        let mut dem = crate::dem::DEM::new(
             crate::projection::LatLonCoord((33.33, 33.33).into()),
-            9,
+            width,
             1.0,
-            3,
+            width / 3,
         )
-        .unwrap()
+        .unwrap();
+        dem.elevations = elevations.iter().map(|&x| f32::from(x)).collect();
+        dem
     }
 
-    pub fn compute<'dem>(dem: &'dem mut crate::dem::DEM, elevations: &[i16]) -> Compute<'dem> {
+    pub fn compute(dem: &mut crate::dem::DEM) -> Compute<'_> {
         let config = ComputeConfig {
-            observer_height: 1.8,
-            backend: crate::config::Backend::CPU,
+            observer_height: 0.8,
+            scale: 1.0,
+            backend: crate::config::Backend::VulkanCPU,
             process: vec![
                 crate::config::Process::TotalSurfaces,
                 crate::config::Process::Viewsheds,
+                crate::config::Process::LongestLines,
             ],
-            state_directory: None,
             output_directory: None,
             rings_per_km: 5000.0,
             heatmap: crate::config::HeatmapNormalisation::UnitScale,
         };
-        dem.elevations = elevations.iter().map(|&x| f32::from(x)).collect();
 
         let mut compute = Compute::new(config, dem).unwrap();
         compute.run().unwrap();
         compute
     }
 
-    fn create_viewshed(elevations: &[i16], pov_id: u32) -> Vec<String> {
-        let mut dem = make_dem();
-        let compute = compute(&mut dem, elevations);
-        let ring_data = compute.ring_data;
-        crate::output::ascii::OutputASCII::convert(
-            &dem,
-            pov_id,
-            &ring_data,
-            crate::compute::Compute::ring_count_per_band(5000.0, 3),
-        )
-        .unwrap()
-    }
-
-    #[rustfmt::skip]
-    pub fn single_peak_dem() -> Vec<i16> {
-        vec![
-            0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 1, 1, 1, 1, 1, 1, 1, 0,
-            0, 1, 3, 3, 3, 3, 3, 1, 0,
-            0, 1, 3, 6, 6, 6, 3, 1, 0,
-            0, 1, 3, 6, 9, 6, 3, 1, 0,
-            0, 1, 3, 6, 6, 6, 3, 1, 0,
-            0, 1, 3, 3, 3, 3, 3, 1, 0,
-            0, 1, 1, 1, 1, 1, 1, 1, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 0
-        ]
-    }
-
-    #[rustfmt::skip]
-    pub fn double_peak_dem() -> Vec<i16> {
-        vec![
-            0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 1, 1, 1, 1, 1, 1, 1, 0,
-            0, 1, 3, 3, 3, 3, 3, 3, 4,
-            0, 1, 3, 4, 4, 4, 4, 4, 3,
-            0, 1, 3, 4, 6, 4, 4, 4, 3,
-            0, 1, 3, 4, 4, 4, 5, 5, 3,
-            0, 1, 3, 4, 4, 5, 9, 5, 3,
-            0, 1, 1, 4, 4, 5, 5, 5, 3,
-            0, 0, 4, 1, 3, 3, 3, 3, 3
-        ]
-    }
-
     #[test]
-    fn single_peak_totals() {
-        let mut dem = make_dem();
-        let compute = compute(&mut dem, &single_peak_dem());
+    fn total_surfaces() {
+        let mut dem = make_dem(&kernel::tests::dems::bigger_dem());
+        let compute = compute(&mut dem);
         #[rustfmt::skip]
         assert_eq!(
             compute.total_surfaces,
             [
-                2543.4292, 1649.654, 2696.0396,
-                1641.8002, 3197.66, 1641.8002,
-                2696.0396, 1649.6539, 2543.4292
+                0.0, 0.0,      0.0,      0.0,
+                0.0, 568.6271, 2491.442, 0.0,
+                0.0, 5053.866, 7107.859, 0.0,
+                0.0, 0.0,      0.0,      0.0
             ]
         );
     }
 
     #[test]
-    fn double_peak_totals() {
-        let mut dem = make_dem();
-        let compute = compute(&mut dem, &double_peak_dem());
+    fn longest_lines() {
+        let mut dem = make_dem(&kernel::tests::dems::bigger_dem());
+        let compute = compute(&mut dem);
         #[rustfmt::skip]
         assert_eq!(
-            compute.total_surfaces,
+            compute.longest_lines,
             [
-                2687.689, 2546.9956, 2622.3494,
-                2564.7678, 3231.647, 2239.714, 
-                2604.2551, 2186.5012, 1768.3433
+                0.0, 0.0, 0.0, 0.0,
+                0.0, 1.0, 5.0, 0.0,
+                0.0, 4.0, 5.0, 0.0,
+                0.0, 0.0, 0.0, 0.0
             ]
         );
-    }
-
-    // Here we use a simple ASCII representation of the opening and closing of ring
-    // sectors:
-    //   A '.' can be either inside or outisde a ring sector.
-    //   A '+' is the opening and a '-' is the closing.
-    //   A '±' represents both an opening and closing (from different sectors).
-    //
-    // Eg; Given this ASCII art profile of 2 mountain peaks, where the observer is
-    // 'X':
-    //
-    //                     .*`*.
-    //                  .*`  |  `*.
-    //       .      X.*`     |     `*.
-    //    .*`|`*. .*`        |        `*.
-    // .*`   |   `  |        |           `*.
-    //       |      |        |
-    // there would be 2 ring sectors, both opening at the same point but looking
-    // in different directions:
-    //       |      |        |
-    // ......-......+........-..............
-    //
-    // Or to use 0s and 1s to show the surfaces seen by the observer:
-    //
-    // 0000001111111111111111100000000000000
-    mod viewsheds {
-        #[test]
-        fn summit() {
-            let viewshed = super::create_viewshed(&super::single_peak_dem(), 40);
-            #[rustfmt::skip]
-            assert_eq!(
-                viewshed,
-                [
-                    ". . . . . . . . .",
-                    ". ± ± ± ± ± ± ± .",
-                    ". ± ± ± . ± ± ± .",
-                    ". ± ± . . . ± ± .",
-                    ". ± . . o . . ± .",
-                    ". ± ± . . . ± ± .",
-                    ". ± ± ± . ± ± ± .",
-                    ". ± ± ± ± ± ± ± .",
-                    ". . . . . . . . ."]
-            );
-        }
-
-        #[test]
-        fn off_summit() {
-            let viewshed = super::create_viewshed(&super::single_peak_dem(), 30);
-            #[rustfmt::skip]
-            assert_eq!(
-                viewshed,
-                [
-                    "± ± ± ± ± ± ± . .",
-                    "± ± ± . ± ± ± . .",
-                    "± ± . . ± ± ± . .",
-                    "± . . o . . ± . .",
-                    "± ± ± . . ± ± . .",
-                    "± ± ± . ± ± . . .",
-                    "± ± ± ± ± . . . .",
-                    ". . . . . . . . .",
-                    ". . . . . . . . ."
-                ]
-            );
-        }
-
-        #[test]
-        fn double_peak() {
-            let viewshed = super::create_viewshed(&super::double_peak_dem(), 30);
-            #[rustfmt::skip]
-            assert_eq!(
-                viewshed,
-                [
-                    "± ± ± ± ± ± ± . .",
-                    "± ± ± . ± ± ± . .",
-                    "± ± . . ± ± ± . .",
-                    "± . . o . . ± . .",
-                    "± ± ± . . ± ± . .",
-                    "± ± ± . ± ± . . .",
-                    "± ± ± ± ± . ± . .",
-                    ". . . . . . . . .",
-                    ". . . . . . . . ."
-                ]
-            );
-        }
     }
 }
