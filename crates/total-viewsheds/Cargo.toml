@@ -8,7 +8,6 @@ rust-version = "1.88"
 bytemuck = "1.22.0"
 clap = { version = "4.5.42", features = ["derive"] }
 color-eyre = "0.6.5"
-dirs = "6.0.0"
 fjall = "2.11.2"
 geo = "0.30.0"
 geojson = "0.24.2"
@@ -21,10 +20,8 @@ serde_json = "1.0.143"
 tracing = { version = "0.1.41" }
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 wgpu = { version = "27", default-features = false, features = ["spirv", "vulkan"] }
-radsort = "0.1.1"
 
 [dev-dependencies]
-googletest = "0.14.2"
 tempfile = "3.20.0"
 
 [lints]

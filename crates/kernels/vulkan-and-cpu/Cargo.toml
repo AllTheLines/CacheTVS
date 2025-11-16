@@ -7,16 +7,19 @@ edition = "2021"
 crate-type = ["dylib", "lib"]
 
 [dependencies]
-spirv-std = { git = "https://github.com/Rust-GPU/rust-gpu", rev = "86fc48032c4cd4afb74f1d81ae859711d20386a1" }
+spirv-std = { git = "https://github.com/Rust-GPU/rust-gpu", rev = "b3eda4df9814b6176d3c0844eb67f70a22ebb378" }
 
 # Dependencies for GPU code
 [target.'cfg(target_arch = "spirv")'.dependencies]
-glam = { version = "0.29", default-features = false, features = ["libm"] }
+glam = { version = "0.30.8", default-features = false, features = ["libm"] }
 
 # Dependencies for CPU code
 [target.'cfg(not(target_arch = "spirv"))'.dependencies]
-glam = { version = "0.29", features = ["std", "bytemuck"] }
+glam = { version = "0.30.8", features = ["std", "bytemuck"] }
 bytemuck = "1.22.0"
+
+[dev-dependencies]
+googletest = "0.14.2"
 
 [package.metadata.rust-gpu.build]
 # Where to output the compiled shader. Defaults to where `cargo gpu` is called from.
@@ -26,6 +29,8 @@ output-dir = "./"
 default_features = true
 # We don't want the manifest.json so hide it in an ignored path
 manifest-file = "../../../target/shader-manifest.json"
+# The SPIRV compile target.
+target = "spirv-unknown-vulkan1.4"
 
 [lints]
 workspace = true

@@ -1,275 +1,574 @@
-// You can use this for debugging when running with `--compute cpu`
-// #[cfg(not(target_arch = "spirv"))]
-// dbg!(distance);
-
 //! Total Viewsheds kernel. The heart of the calculations.
+
+use crate::{
+    ring_data::RingData,
+    rotation::{ANGLE_SHIFT, NOOP_DEM_ID},
+};
 
 /// Ensure that the first point from the point of view is always visible
 const MAX_ANGLE: f32 = -2000.0;
 
+#[expect(clippy::doc_markdown, reason = "PoV is just a shorthand")]
 /// Normalisation constant: due to repeated exposure of closer points and
-/// infrequent exposure of points further away. See main loop for more explanation.
-const TAN_ONE_RAD: f32 = 0.017_453_3;
+/// infrequent exposure of points further away.
+///
+/// This normalises surfaces due to repeated visibility over sectors.
+/// For example points near the PoV may be counted 180 times giving
+/// an unrealistic aggregation of total surfaces. This trig operation
+/// (0.017 is tan(1 degree) where 1 degree is the size of each sector)
+/// considers adjacent points as 1/57th, points that are about 57 cells
+/// away as 1 and points further away as increasingly over 1.
+/// Bear in my mind that due to the parallel nature of the band of sight,
+/// distant points may not even be swept for a given PoV, therefore it
+/// is an approximation to over-compensate the surface area of very
+/// distant points.
+///
+/// Ultimately the reasoning for such normalisation is not so much to
+/// measure true surface areas, but to ensure as much as possible that all
+/// PoVs are treated consistently so that overlapping TVS raster map tiles
+/// do not have visual artefacts.
+const TAN_ONE_RADIAN: f32 = 0.017_453_3;
 
 /// So that some points are not visible simply by virtue of the earth's spherical
 /// shape.
 const EARTH_RADIUS_DOUBLED: f32 = 12_742_000.0;
 
+#[cfg_attr(not(target_arch = "spirv"), derive(Debug, PartialEq, Eq))]
+#[expect(
+    clippy::exhaustive_enums,
+    reason = "There's never going to be more directions"
+)]
 /// The direction of a band from the observer's point of view. Whether it points North or South is
 /// not relevant, they're just opposite to each other.
-enum BandDirection {
+pub enum BandDirection {
     /// A band facing forward from the observer.
     Forward,
     /// A band facing behind the observer.
     Backward,
 }
 
-/// The kernel
-#[expect(clippy::too_many_arguments, reason = "This is the entrypoint.")]
-#[inline]
-pub fn kernel(
-    // The identifier that decides which PoV and band direction to calculate.
-    // The current known longest line of sight is 538km. Let's say that the actual longest could reach
-    // 600km. So for a DEM of 30m resolution, the maximum number of points we could be dealing with
-    // is: `(500,000 / 30)^2 = 400,000,000`. The max of `u32` is 4,294,967,295.
-    kernel_id: u32,
-    // Constants for the calculations.
-    constants: &crate::constants::Constants,
-    // Every single DEM point's elevation.
-    elevations: &[f32],
-    // All the required distances for the band. All bands share the same values.
-    distances: &[f32],
-    // Deltas used to build a band. Deltas are always the same for both front and back bands.
-    //
-    // Deltas are simply the numerical difference between DEM IDs in a band of
-    // sight. DEM IDs are certainly different for every point in a DEM, but
-    // conveniently the _differences_ between DEM IDs are identical. With the only
-    // caveat that back-facing bands have opposite magnitudes. It should be stressed
-    // that this feature of band data is a huge benefit to the space-requirements
-    // (and thus speed) of the algorithm.
-    // TODO: Explore:
-    //         * storing the band deltas in local memory.
-    //         * compressing repeating delta values -- is simple addition faster than
-    //           memory accesses?
-    deltas: &[i32],
-    // Array for final TVS values. Usually 1/8th the size of DEM.
-    cumulative_surfaces: &mut [f32],
-    // Array for keeping track of visible chunks called Ring Sectors.
-    ring_data: &mut [u32],
-    // Array for recording longest lines of sight.
-    longest_lines: &mut [f32],
-) {
-    let tvs_id: u32;
-    let mut max_angle = MAX_ANGLE;
-    let half_total_bands = constants.total_bands.div_euclid(2);
-    let mut is_currently_visible = true;
-    let mut is_previously_visible = true;
-    let mut closing = false;
-
-    // Keep track of the amount of the earth visible from this particular band
-    let mut band_surface = 0.0;
-
-    // Translate a kernel ID to a TVS ID
-    let band_direction = if kernel_id < half_total_bands {
-        tvs_id = kernel_id;
-        BandDirection::Forward
-    } else {
-        tvs_id = kernel_id - half_total_bands;
-        BandDirection::Backward
-    };
-
-    let pov_x = tvs_id.rem_euclid(constants.tvs_width) + constants.max_los_as_points;
-    let pov_y = (tvs_id.div_euclid(constants.tvs_width)) + constants.max_los_as_points;
-    #[expect(
-        clippy::as_conversions,
-        reason = "This needs to run on the GPU where fallibility isn't possible"
-    )]
-    let pov_id = ((pov_y * constants.dem_width) + pov_x) as usize;
-
-    // The PoV is involved in every calculation, so do now and save for later.
-    let pov_elevation = elevations[pov_id] + constants.observer_height;
-
-    #[expect(
-        clippy::as_conversions,
-        reason = "This needs to run on the GPU where fallibility isn't possible"
-    )]
-    let mut rings = crate::ring_data::RingData {
-        ring_data,
-        reserved_rings_per_band: constants.reserved_rings_per_band,
-        start: (kernel_id * constants.reserved_rings_per_band) as usize,
-        // Reserve 0 for the total count.
-        index: 1,
-    };
-
-    // We already know that the first point from the PoV is always visible and
-    // is therefore the opening of a visible region.
-    if constants.is_ring_data() {
-        rings.save(pov_id);
+impl core::fmt::Display for BandDirection {
+    #[expect(clippy::min_ident_chars, reason = "It's from core")]
+    #[inline]
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::Forward => "Forward",
+                Self::Backward => "Backward",
+            }
+        )
     }
+}
 
-    // Keep track of the longest line.
-    let mut longest_line = 0.0;
+/// Kernel state
+pub struct Kernel<'kernel> {
+    /// The identifier that decides which point of view and band direction to calculate.
+    /// The current known longest line of sight is 538km. Let's say that the actual longest could reach
+    /// 600km. So for a DEM of 30m resolution, the maximum number of points we could be dealing with
+    /// is: `(500,000 / 30)^2 = 400,000,000`. The max of `u32` is 4,294,967,295.
+    kernel_id: u32,
+    /// Constants for the calculations.
+    pub constants: &'kernel crate::constants::Constants,
+    /// The TVS ID in rotated coordinates.
+    rotated_tvs_id: u32,
+    /// Whether going forwards or backwards along the band of sight.
+    band_direction: BandDirection,
+    /// Every single DEM point's elevation.
+    elevations: &'kernel [f32],
+    /// Array for final TVS values. Usually 1/8th the size of DEM.
+    cumulative_surfaces: &'kernel mut [f32],
+    /// Array for recording longest lines of sight.
+    longest_lines: &'kernel mut [f32],
+}
 
-    // The DEM ID will change as we loop, but the PoV won't. For now we need the PoV
-    // ID to start the reconstruction of a unique band from the band delta template.
-    let mut dem_id = pov_id;
+impl<'kernel> Kernel<'kernel> {
+    #[inline]
+    /// Instantiate.
+    const fn new(
+        kernel_id: u32,
+        constants: &'kernel crate::constants::Constants,
+        elevations: &'kernel [f32],
+        cumulative_surfaces: &'kernel mut [f32],
+        longest_lines: &'kernel mut [f32],
+    ) -> Self {
+        let half_total_bands = constants.total_bands.div_euclid(2);
 
-    // The kernel's kernel. The most critical code of all.
-    for band_index in 0..deltas.len() {
-        let delta = deltas[band_index];
-
-        // Derive the new DEM ID.
-        dem_id = match band_direction {
-            BandDirection::Forward => delta_add(dem_id, delta),
-            BandDirection::Backward => delta_subtract(dem_id, delta),
+        // Translate a kernel ID to a TVS ID
+        let rotated_tvs_id: u32;
+        let band_direction = if kernel_id < half_total_bands {
+            rotated_tvs_id = kernel_id;
+            BandDirection::Forward
+        } else {
+            rotated_tvs_id = kernel_id - half_total_bands;
+            BandDirection::Backward
         };
 
-        // TODO: Is there a way to create the deltas so that they never create DEM IDs outside the
-        // DEM? The issue is that bands of sight need to be different lengths for different angles.
-        // Consider how the diagnols reach geographically further with the same number of points.
-        if dem_id >= elevations.len() {
-            break;
+        Self {
+            kernel_id,
+            constants,
+            rotated_tvs_id,
+            band_direction,
+            elevations,
+            cumulative_surfaces,
+            longest_lines,
+        }
+    }
+
+    /// Calculate the Point of View coordinate in rotated space.
+    const fn rotated_pov_id(&self) -> usize {
+        let pov_x = self.rotated_tvs_id.rem_euclid(self.constants.tvs_width)
+            + self.constants.max_los_as_points;
+        let pov_y = self.rotated_tvs_id.div_euclid(self.constants.tvs_width)
+            + self.constants.max_los_as_points;
+        #[expect(
+            clippy::as_conversions,
+            reason = "This needs to run on the GPU where fallibility isn't possible"
+        )]
+        let rotated_pov_id = ((pov_y * self.constants.dem_width) + pov_x) as usize;
+
+        rotated_pov_id
+    }
+
+    /// The kernel
+    #[inline]
+    pub fn run(
+        kernel_id: u32,
+        constants: &'kernel crate::constants::Constants,
+        elevations: &'kernel [f32],
+        rings_data: &'kernel mut [u32],
+        cumulative_surfaces: &'kernel mut [f32],
+        longest_lines: &'kernel mut [f32],
+    ) {
+        let mut runner = Self::new(
+            kernel_id,
+            constants,
+            elevations,
+            cumulative_surfaces,
+            longest_lines,
+        );
+        runner.kernel(rings_data);
+    }
+
+    /// The kernel
+    #[inline]
+    fn kernel(&mut self, rings_data: &'kernel mut [u32]) {
+        // This can't be placed on `Self` because on Vulkan any writes to it then cause an error
+        // about access out of bounds memory. It's a `rust-gpu` thing, I should make an issue for
+        // it.
+        let mut rings = RingData::new(
+            rings_data,
+            self.kernel_id,
+            self.constants.reserved_rings_per_band,
+        );
+
+        let rotator = crate::rotation::Rotator::new_from_cached_trig(
+            self.rotated_tvs_id,
+            self.constants.tvs_width,
+            self.constants.sine,
+            self.constants.cosine,
+        );
+        let original_tvs_id = rotator.rotate_dem_id();
+        if original_tvs_id == NOOP_DEM_ID {
+            return;
         }
 
-        // Pull the actual data needed to make a visibility calculation from global memory.
-        // TODO: does getting these all at once before the loop give a speed up?
-        let elevation_delta = elevations[dem_id] - pov_elevation;
-        let distance = distances[band_index];
+        let mut max_angle = MAX_ANGLE;
+        let mut is_currently_visible = true;
+        let mut is_previously_visible = true;
+        let mut closing = false;
 
-        // The actual visibility calculation.
-        // Note the adjustment for curvature of the earth. It is merely a crude
-        // approximation using the spherical earth model.
-        // TODO:
-        //   * Currently it's an approximation by not using arctan.
-        //   * Account for refraction.
-        //   * Is there a performance gain to be had from only checking for an
-        //     increase in elevation as a trigger for the full angle calculation?
-        //   * Is this safe for `f32`? At what point does it break down?
-        let angle = (elevation_delta / distance) - (distance / EARTH_RADIUS_DOUBLED);
+        // Keep track of the amount of the earth visible from this particular band
+        let mut band_surface = 0.0;
+        // Keep track of the longest line.
+        let mut longest_line = 0.0;
 
-        //                            5              |-
-        //                        4 .-`-. 6          |-
-        //            1       3  .-`     `-.  7      |-
-        //   o    0 .-`-. 2   .-`           `-.      |- Elevation deltas
-        //   /\  .-`     `-.-`                 `-.8  |-
-        //    |                                      |-
-        //    |---|---|---|---|---|---|---|---|---|
-        //    |       Distance deltas
-        //    |
-        //   PoV  --------> direction of band point iterations
-        //
-        // Notice how only points 1, 4 and 5 increase the angle between the viewer and
-        // the land and therefore can be considered visible.
-        is_currently_visible = angle > max_angle;
+        // The DEM ID will change as we loop, but the PoV won't. For now we need the PoV
+        // ID to start the reconstruction of a unique band from the band delta template.
+        let rotated_pov_id = self.rotated_pov_id();
+        let mut rotated_dem_id = rotated_pov_id;
+        let pov_elevation = self.elevations[rotated_pov_id] + self.constants.observer_height;
 
-        // Here we consider the *previous* visibility to decide whether this is the
-        // beginning or ending of a visible region.
-        let opening = is_currently_visible && !is_previously_visible;
-        closing = is_previously_visible && !is_currently_visible;
+        // The kernel's kernel. The most critical code of all.
+        for index in 0..=self.constants.max_los_as_points {
+            // Derive the new DEM ID.
+            rotated_dem_id = match self.band_direction {
+                BandDirection::Forward => rotated_dem_id + 1,
+                BandDirection::Backward => rotated_dem_id - 1,
+            };
 
-        if constants.is_total_surfaces() && is_currently_visible {
-            // This normalises surfaces due to repeated visibility over sectors.
-            // For example points near the PoV may be counted 180 times giving
-            // an unrealistic aggregation of total surfaces. This trig operation
-            // (0.017 is tan(1 degree) where 1 degree is the size of each sector)
-            // considers adjacent points as 1/57th, points that are about 57 cells
-            // away as 1 and points further away as increasingly over 1.
-            // Bear in my mind that due to the parallel nature of the band of sight,
-            // distant points may not even be swept for a given PoV, therefore it
-            // is an approximation to over-compensate the surface area of very
-            // distant points.
+            // Pull the actual data needed to make a visibility calculation from global memory.
+            // TODO: does getting these all at once before the loop give a speed up?
+            let elevation = self.elevations[rotated_dem_id];
+            let elevation_delta = elevation - pov_elevation;
+
+            #[expect(
+                clippy::as_conversions,
+                clippy::cast_precision_loss,
+                reason = "⚠️ Need to verify that distance never reaches the limits of f32."
+            )]
+            let distance = (index + 1) as f32 * self.constants.scale;
+
+            // The actual visibility calculation.
+            // Note the adjustment for curvature of the earth. It is merely a crude
+            // approximation using the spherical earth model.
+            // TODO:
+            //   * Currently it's an approximation by not using arctan.
+            //   * Account for refraction.
+            //   * Is there a performance gain to be had from only checking for an
+            //     increase in elevation as a trigger for the full angle calculation?
+            //   * Is this safe for `f32`? At what point does it break down?
+            let angle = (elevation_delta / distance) - (distance / EARTH_RADIUS_DOUBLED);
+
+            //                            5              |-
+            //                        4 .-`-. 6          |-
+            //            1       3  .-`     `-.  7      |-
+            //   o    0 .-`-. 2   .-`           `-.      |- Elevation deltas
+            //   /\  .-`     `-.-`                 `-.8  |-
+            //    |                                      |-
+            //    |---|---|---|---|---|---|---|---|---|
+            //    |       Distance deltas
+            //    |
+            //   PoV  --------> direction of band point iterations
             //
-            // Ultimately the reasoning for such normalisation is not so much to
-            // measure true surface areas, but to ensure as much as possible that all
-            // PoVs are treated consistently so that overlapping TVS raster map tiles
-            // do not have visual artefacts.
-            //
-            // TODO: Can this be refactored into a single calculation at the closing
-            //       of a ring sector?
-            band_surface += distance * TAN_ONE_RAD;
+            // Notice how only points 1, 4 and 5 increase the angle between the viewer and
+            // the land and therefore can be considered visible.
+            is_currently_visible = angle > max_angle;
+
+            // Here we consider the *previous* visibility to decide whether this is the
+            // beginning or ending of a visible region.
+            let opening = is_currently_visible && !is_previously_visible;
+            closing = is_previously_visible && !is_currently_visible;
+
+            if self.constants.is_total_surfaces() && is_currently_visible {
+                // TODO: Can this be refactored into a single calculation at the closing
+                //       of a ring sector?
+                band_surface += distance * TAN_ONE_RADIAN;
+            }
+
+            if self.constants.is_longest_lines() && is_currently_visible {
+                longest_line = distance;
+            }
+
+            if self.constants.is_ring_data() {
+                if opening {
+                    rings.save(index);
+                }
+
+                if closing {
+                    rings.save(index);
+                }
+            }
+
+            // Prepare for the next iteration.
+            is_previously_visible = is_currently_visible;
+            max_angle = f32::max(angle, max_angle);
         }
 
-        if constants.is_longest_lines() && is_currently_visible {
-            longest_line = distance;
+        // Close any ring sectors prematurely cut off by a restricted line of sight.
+        if self.constants.is_ring_data() && is_currently_visible && !closing {
+            rings.save(self.constants.max_los_as_points);
         }
 
-        // Store the position on the DEM where the visible region starts.
-        if constants.is_ring_data() && opening {
-            rings.save(dem_id);
+        if self.constants.is_ring_data() {
+            rings.finish();
         }
 
-        // Store the position on the DEM where the visible region ends.
-        if constants.is_ring_data() && closing {
-            rings.save(dem_id);
-        }
+        // TODO: Not thread safe because forward and backward invocations for the same point could
+        // theoretically update the value at the same time.
+        {
+            // Accumulate surfaces for a given TVS ID.
+            if self.constants.is_total_surfaces() {
+                self.cumulative_surfaces[original_tvs_id] += band_surface;
+            }
 
-        // Prepare for the next iteration.
-        is_previously_visible = is_currently_visible;
-        max_angle = f32::max(angle, max_angle);
-    }
-
-    // Close any ring sectors prematurely cut off by a restricted line of sight.
-    if constants.is_ring_data() && is_currently_visible && !closing {
-        rings.save(dem_id);
-    }
-
-    if constants.is_ring_data() {
-        rings.finish();
-    }
-
-    // TODO: Not thread safe.
-    #[expect(
-        clippy::as_conversions,
-        reason = "This needs to run on the GPU where fallibility isn't possible"
-    )]
-    {
-        // Accumulate surfaces for a given TVS ID.
-        if constants.is_total_surfaces() {
-            cumulative_surfaces[tvs_id as usize] += band_surface;
-        }
-
-        // Save the longest line of sight for the given TVS ID.
-        if constants.is_longest_lines() {
-            let current_longest = longest_lines[tvs_id as usize];
-            if longest_line > current_longest {
-                longest_lines[tvs_id as usize] = longest_line;
+            // Save the longest line of sight for the given TVS ID.
+            if self.constants.is_longest_lines() {
+                #[expect(
+                    clippy::as_conversions,
+                    reason = "This needs to run on the GPU where fallibility isn't possible"
+                )]
+                let current_longest = self.longest_lines[self.rotated_tvs_id as usize];
+                if longest_line > current_longest {
+                    self.longest_lines[original_tvs_id] = longest_line;
+                }
             }
         }
     }
-}
 
-/// Safely and efficiently add a `usize` and `i32`.
-const fn delta_add(dem_id: usize, delta: i32) -> usize {
+    #[cfg(not(target_arch = "spirv"))]
     #[expect(
+        dead_code,
         clippy::as_conversions,
-        reason = "
-          Our `usize`s are only ever created from `u32`s and deltas are calculated within
-          the limits of `u32`.
-        "
+        clippy::cast_possible_truncation,
+        clippy::float_cmp,
+        reason = "Used for debugging"
     )]
-    let absolute = delta.unsigned_abs() as usize;
-
-    if delta > 0 {
-        dem_id + absolute
-    } else {
-        dem_id - absolute
+    /// Check if the current invocation meets the given criteria.
+    fn is_debug_state(&self, angle: f32, pov_id: usize) -> bool {
+        let angle_to_debug = angle + ANGLE_SHIFT;
+        let rotated_pov_id = self.rotated_pov_id();
+        let original_pov_id = crate::rotation::Rotator::new_from_cached_trig(
+            rotated_pov_id as u32,
+            self.constants.dem_width,
+            self.constants.sine,
+            self.constants.cosine,
+        )
+        .rotate_dem_id();
+        angle_to_debug.to_radians().cos() == self.constants.cosine
+            && angle_to_debug.to_radians().sin() == self.constants.sine
+            && original_pov_id == pov_id
     }
 }
 
-/// Safely and efficiently subtract a `i32` from a `usize`.
-const fn delta_subtract(dem_id: usize, delta: i32) -> usize {
-    #[expect(
-        clippy::as_conversions,
-        reason = "
-          Our `usize`s are only ever created from `u32`s and deltas are calculated within
-          the limits of `u32`.
-        "
-    )]
-    let absolute = delta.unsigned_abs() as usize;
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    clippy::unreadable_literal,
+    reason = "These are tests"
+)]
+#[cfg(test)]
+mod test {
+    use crate::rotation;
 
-    if delta > 0 {
-        dem_id - absolute
-    } else {
-        dem_id + absolute
+    use super::*;
+    use googletest::prelude::*;
+
+    enum TvsId {
+        /// A TVS ID for a forward invocation.
+        Forward(u32),
+        /// A TVS ID for a backward invocation.
+        Backward(u32),
+    }
+
+    fn invoke(directed_tvs_id: &TvsId, angle: f32) -> (Vec<f32>, Vec<u32>, Vec<f32>) {
+        let constants = constants(angle);
+        let tvs_id = match directed_tvs_id {
+            TvsId::Forward(id) | TvsId::Backward(id) => id,
+        };
+
+        let elevations: Vec<f32> = crate::tests::dems::bigger_dem()
+            .iter()
+            .map(|elevation| f32::from(*elevation))
+            .collect();
+        let dem_size = constants.dem_width.pow(2);
+        let mut rotated_elevations = vec![0.0; constants.dem_width.pow(2) as usize];
+        for dem_id in 0..dem_size {
+            let rotator = crate::rotation::Rotator::new_from_cached_trig(
+                dem_id,
+                constants.dem_width,
+                constants.sine,
+                constants.cosine,
+            );
+            rotator.rotate_value_nearest_neighbour(&elevations, &mut rotated_elevations);
+        }
+
+        let tvs_size = constants.tvs_width.pow(2) as usize;
+        let mut cumulative_surfaces = vec![0.0; tvs_size];
+        let mut ring_data = vec![0; reserved_ring_data()];
+        let mut longest_lines = vec![0.0; tvs_size];
+
+        let rotator = crate::rotation::Rotator::new_from_angle(*tvs_id, constants.tvs_width, angle);
+        let rotated_tvs_id = rotator.anti_rotate_dem_id() as u32;
+
+        let offset = match directed_tvs_id {
+            TvsId::Forward(_) => 0,
+            TvsId::Backward(_) => tvs_size as u32,
+        };
+
+        Kernel::run(
+            rotated_tvs_id + offset,
+            &constants,
+            &rotated_elevations,
+            &mut ring_data,
+            &mut cumulative_surfaces,
+            &mut longest_lines,
+        );
+
+        (
+            cumulative_surfaces.clone(),
+            ring_data.clone(),
+            longest_lines.clone(),
+        )
+    }
+
+    fn reserved_ring_data() -> usize {
+        (constants(0.0).total_bands * constants(0.0).reserved_rings_per_band) as usize
+    }
+
+    fn constants(angle: f32) -> crate::constants::Constants {
+        let width = 4;
+        let trig = rotation::Rotator::calculate_trig(angle);
+        crate::constants::Constants {
+            total_bands: (width * width) * 2,
+            max_los_as_points: width,
+            dem_width: width * 3,
+            tvs_width: width,
+            scale: 1.0,
+            observer_height: 1.65,
+            reserved_rings_per_band: 5,
+            process: crate::constants::Flag::TotalSurfaces.bit()
+                | crate::constants::Flag::RingData.bit()
+                | crate::constants::Flag::LongestLines.bit(),
+            sine: trig.0,
+            cosine: trig.1,
+            ..Default::default()
+        }
+    }
+
+    fn empty_tvs() -> Vec<f32> {
+        vec![0.0; (constants(0.0).tvs_width.pow(2)) as usize]
+    }
+
+    fn empty_ring_data() -> Vec<u32> {
+        vec![0; reserved_ring_data()]
+    }
+
+    fn expect_tvs(directed_tvs_id: &TvsId, tvs: &[f32], expected: f32) {
+        let tvs_id = *match directed_tvs_id {
+            TvsId::Forward(id) | TvsId::Backward(id) => id,
+        };
+        let mut tvs_expected = empty_tvs();
+        tvs_expected[tvs_id as usize] = expected;
+        expect_eq!(tvs, tvs_expected);
+    }
+
+    fn expect_ring_data(
+        directed_tvs_id: &TvsId,
+        angle: f32,
+        ring_data: &[u32],
+        expected_dem_ids: Vec<u32>,
+    ) {
+        let constants = constants(angle);
+        let tvs_id = match directed_tvs_id {
+            TvsId::Forward(id) | TvsId::Backward(id) => id,
+        };
+        let tvs_size = constants.tvs_width.pow(2) as usize;
+        let rotator = crate::rotation::Rotator::new_from_angle(*tvs_id, constants.tvs_width, angle);
+        let rotated_tvs_id = rotator.anti_rotate_dem_id() as usize;
+        let mut ring_expected = empty_ring_data();
+        let offset = match directed_tvs_id {
+            TvsId::Forward(_) => 0,
+            TvsId::Backward(_) => tvs_size,
+        };
+        let start = (rotated_tvs_id + offset) * constants.reserved_rings_per_band as usize;
+        let rings = expected_dem_ids.len() + 1;
+        let mut expected = vec![rings as u32];
+        expected.extend(expected_dem_ids);
+        ring_expected.splice(start..start + rings, expected);
+        expect_eq!(ring_data, ring_expected);
+    }
+
+    #[gtest]
+    fn invocation_at_id5_0_degrees_forward() {
+        let tvs_id = TvsId::Forward(5);
+        let angle = 0.0;
+        let (surfaces, rings, lines) = invoke(&tvs_id, angle);
+
+        expect_tvs(&tvs_id, &surfaces, 0.0174533);
+        expect_ring_data(&tvs_id, angle, &rings, vec![1]);
+        expect_tvs(&tvs_id, &lines, 1.0);
+    }
+
+    #[gtest]
+    fn invocation_at_id10_0_degrees_forward() {
+        let tvs_id = TvsId::Forward(10);
+        let angle = 0.0;
+        let (surfaces, rings, lines) = invoke(&tvs_id, angle);
+
+        expect_tvs(&tvs_id, &surfaces, 0.17453301);
+        expect_ring_data(&tvs_id, angle, &rings, vec![4]);
+        expect_tvs(&tvs_id, &lines, 4.0);
+    }
+
+    #[gtest]
+    fn invocation_at_id5_45_degrees_forward() {
+        let tvs_id = TvsId::Forward(5);
+        let angle = 45.0;
+        let (surfaces, rings, lines) = invoke(&tvs_id, angle);
+
+        expect_tvs(&tvs_id, &surfaces, 0.0174533);
+        expect_ring_data(&tvs_id, angle, &rings, vec![1]);
+        expect_tvs(&tvs_id, &lines, 1.0);
+    }
+
+    #[gtest]
+    fn invocation_at_id10_90_degrees_forward() {
+        let tvs_id = TvsId::Forward(10);
+        let angle = 90.0;
+        let (surfaces, rings, lines) = invoke(&tvs_id, angle);
+
+        expect_tvs(&tvs_id, &surfaces, 0.17453301);
+        expect_ring_data(&tvs_id, angle, &rings, vec![4]);
+        expect_tvs(&tvs_id, &lines, 4.0);
+    }
+
+    #[gtest]
+    fn invocation_at_id5_135_degrees_forward() {
+        let tvs_id = TvsId::Forward(5);
+        let angle = 135.0;
+        let (surfaces, rings, lines) = invoke(&tvs_id, angle);
+
+        expect_tvs(&tvs_id, &surfaces, 0.0174533);
+        expect_ring_data(&tvs_id, angle, &rings, vec![1]);
+        expect_tvs(&tvs_id, &lines, 1.0);
+    }
+
+    #[gtest]
+    fn invocation_at_id5_0_degrees_backward() {
+        let tvs_id = TvsId::Backward(5);
+        let angle = 0.0;
+        let (surfaces, rings, lines) = invoke(&tvs_id, angle);
+
+        expect_tvs(&tvs_id, &surfaces, 0.0174533);
+        expect_ring_data(&tvs_id, angle, &rings, vec![1]);
+        expect_tvs(&tvs_id, &lines, 1.0);
+    }
+
+    #[gtest]
+    fn invocation_at_id10_0_degrees_backward() {
+        let tvs_id = TvsId::Backward(10);
+        let angle = 0.0;
+        let (surfaces, rings, lines) = invoke(&tvs_id, angle);
+
+        expect_tvs(&tvs_id, &surfaces, 0.2617995);
+        // TODO: I think this result clearly shows that we should be closing the ring sector for
+        // the _previous_ DEM ID?
+        expect_ring_data(&tvs_id, angle, &rings, vec![4]);
+        expect_tvs(&tvs_id, &lines, 5.0);
+    }
+
+    #[gtest]
+    fn invocation_at_id10_45_degrees_backward() {
+        let tvs_id = TvsId::Backward(10);
+        let angle = 45.0;
+        let (surfaces, rings, lines) = invoke(&tvs_id, angle);
+
+        expect_tvs(&tvs_id, &surfaces, 0.2617995);
+        expect_ring_data(&tvs_id, angle, &rings, vec![4]);
+        expect_tvs(&tvs_id, &lines, 5.0);
+    }
+
+    #[gtest]
+    fn invocation_at_id5_90_degrees_backward() {
+        let tvs_id = TvsId::Backward(5);
+        let angle = 90.0;
+        let (surfaces, rings, lines) = invoke(&tvs_id, angle);
+
+        expect_tvs(&tvs_id, &surfaces, 0.0174533);
+        expect_ring_data(&tvs_id, angle, &rings, vec![1]);
+        expect_tvs(&tvs_id, &lines, 1.0);
+    }
+
+    #[gtest]
+    fn invocation_at_id10_135_degrees_backward() {
+        let tvs_id = TvsId::Backward(10);
+        let angle = 135.0;
+        let (surfaces, rings, lines) = invoke(&tvs_id, angle);
+
+        expect_tvs(&tvs_id, &surfaces, 0.17453301);
+        expect_ring_data(&tvs_id, angle, &rings, vec![4]);
+        expect_tvs(&tvs_id, &lines, 4.0);
     }
 }

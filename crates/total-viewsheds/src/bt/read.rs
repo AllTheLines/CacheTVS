@@ -122,13 +122,20 @@ impl super::BinaryTerrain {
     }
 
     /// Derive the scale of the DEM. Units are in meters.
-    pub fn scale(&self) -> f64 {
+    pub fn scale(&self) -> f32 {
         let top_right = geo::Point::new(self.header.top, self.header.right);
         let top_left = geo::Point::new(self.header.top, self.header.left);
         let distance = geo::Haversine.distance(top_right, top_left);
         let scale = distance / f64::from(self.header.width);
         tracing::debug!("DEM scale calculated to {scale}m.");
-        scale
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::as_conversions,
+            reason = "This is just a scale, it never exceeds either f32 or f64"
+        )]
+        {
+            scale as f32
+        }
     }
 
     /// Get the centre of the tile. We repurpose the extent fields for this.

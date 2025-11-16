@@ -1,24 +1,4 @@
 //! Reconstruct _individual_ viewsheds, not total viewsheds.
-//!
-//! Here is a crude diagram of the raw visibility data returned from the kernel:
-//!
-//!    . . .C/ . / . / .
-//!    . . . . . ) . . .
-//!    . . / . / . /D. .
-//!    . . . . . . . . .
-//!    .A/ . / . / . . .
-//!    . . ( . . . . . .
-//!    / . / . /B. . . .
-//!    . . . . . . . . .
-//!    . o . / . . . . .
-//!
-//! Key:
-//!  * `o`: The point of view of the observer.
-//!  * `/`: The left edge, centre, and right edge of the band of sight.
-//!  * `(`: Opening of a visible "ring" within the band of sight.
-//!  * `)`: Closing of a visible "ring" within the band of sight.
-//!  * The line between `A` and `B` is the beginning of a visible region.
-//!  * The line between `C` and `D` is the end of a visible region.
 
 use color_eyre::eyre::{ContextCompat as _, Result};
 use geo::{BooleanOps as _, HasDimensions as _};
@@ -33,9 +13,9 @@ pub struct Coordinate(pub geo::Coord);
 /// `Viewshed`
 pub struct Viewshed<'viewshed> {
     /// The DEM used to compute the final data.
-    dem: &'viewshed crate::dem::DEM,
+    pub dem: &'viewshed crate::dem::DEM,
     /// Coordinate of the observer for the viewshed we want to reconstruct.
-    pov_coord: crate::dem::Coordinate,
+    pub pov_coord: crate::dem::Coordinate,
 }
 
 impl Viewshed<'_> {
@@ -53,9 +33,7 @@ impl Viewshed<'_> {
         };
         tracing::debug!("Using metadata for ring data: {:?}", ring_data.metadata);
 
-        let sector_shift = f64::from(ring_data.metadata.sector_shift);
         let mut polygon = geo::MultiPolygon::empty();
-        let mut current_angle = sector_shift;
         let dem = crate::dem::DEM::new(
             ring_data.metadata.centre,
             ring_data.metadata.width,
@@ -74,51 +52,20 @@ impl Viewshed<'_> {
             pov_coord: pov_dem_coord,
         };
 
-        for angle in 0..crate::axes::SECTOR_STEPS {
-            let mut reconstructor = Reconstructor::new(
-                &viewshed,
-                ring_data.metadata.reserved_ring_size,
-                current_angle,
-            )?;
-            let sector_ring_data = ring_data.get_sector(angle)?;
-            reconstructor.sector_ring_data = sector_ring_data.iter();
+        for angle_integer in 0..crate::compute::SECTOR_STEPS {
+            let angle = f32::from(angle_integer);
+            let mut reconstructor =
+                Reconstructor::new(&viewshed, ring_data.metadata.reserved_ring_size, angle)?;
+            reconstructor.sector_ring_data = ring_data.get_sector(angle_integer)?;
             polygon = reconstructor.reconstruct_sector(polygon)?;
-            current_angle += 1.0f64;
         }
 
         Ok(polygon)
     }
 
-    /// Convert from DEM coordinates (used by the GPU and tests) to the true geometric coordinate
-    /// projection of the viewshed.
-    fn convert_dem_coord_to_viewshed_coord(
-        &self,
-        dem_coord: crate::dem::Coordinate,
-    ) -> Result<Coordinate> {
-        let scale = f64::from(self.dem.scale);
-        let projected_coord = crate::projection::Converter::change_metric_origin(
-            self.dem.centre,
-            geo::coord! {
-                x: self.pov_coord.0.x,
-                y: -self.pov_coord.0.y
-            } * scale,
-            geo::coord! {
-                x: dem_coord.0.x,
-                y: -dem_coord.0.y
-            } * scale,
-        )?;
-        let viewshed_coord = Coordinate(
-            geo::coord! {
-                x: projected_coord.x,
-                y: -projected_coord.y
-            } / scale,
-        );
-        Ok(viewshed_coord)
-    }
-
     /// Convert from the viewshed projection to DEM coordinates.
     #[cfg(test)]
-    fn convert_viewshed_coord_to_dem_coord(
+    pub fn convert_viewshed_coord_to_dem_coord(
         &self,
         viewshed_coord: Coordinate,
     ) -> Result<geo::Coord> {
@@ -127,11 +74,15 @@ impl Viewshed<'_> {
             base: self.dem.centre,
         }
         .to_degrees((self.pov_coord.0.x, self.pov_coord.0.y).into())?;
+        let flipped = Coordinate(geo::Coord {
+            x: viewshed_coord.0.x,
+            y: -viewshed_coord.0.y,
+        });
         let projected_coord = crate::projection::Converter::change_metric_origin(
             origin,
             // The path back to (0,0) is exactly the opposite of the viewshed's point of view.
             -self.pov_coord.0 * scale,
-            viewshed_coord.0 * scale,
+            flipped.0 * scale,
         )?;
         Ok(projected_coord / scale)
     }
@@ -139,20 +90,22 @@ impl Viewshed<'_> {
 
 /// `Reconstructor`
 // TODO: Find a way to make this part of [`Viewshed`].
-pub struct Reconstructor<'viewshed, 'sector> {
+pub struct Reconstructor<'viewshed> {
     /// Data for the entire viewshed.
     viewshed: &'viewshed Viewshed<'viewshed>,
     /// Data about the visibility regions of each computed band of sight.
-    sector_ring_data: std::slice::Iter<'sector, u32>,
+    sector_ring_data: Vec<u32>,
+    /// Where we're currently reading sector data from.
+    cursor: usize,
     /// Amount of reserved ring data space.
     reserved_ring_size: usize,
     /// The DEM id of the observer.
     pov_id: u32,
     /// The current sector angle
-    current_angle: f64,
+    current_angle: f32,
 }
 
-impl<'viewshed> Reconstructor<'viewshed, '_> {
+impl<'viewshed> Reconstructor<'viewshed> {
     /// Instantiate the reconstructor for a single angle.
     ///
     /// The reason we only reconstruct for a single angle is that the sector data (for the angle)
@@ -161,15 +114,16 @@ impl<'viewshed> Reconstructor<'viewshed, '_> {
     fn new(
         viewshed: &'viewshed Viewshed<'viewshed>,
         reserved_ring_size: usize,
-        angle: f64,
+        angle: f32,
     ) -> Result<Self> {
         let pov_id = viewshed.dem.dem_coord_to_id(viewshed.pov_coord);
         let reconstructor = Self {
             viewshed,
-            sector_ring_data: std::slice::Iter::default(),
+            sector_ring_data: Vec::default(),
+            cursor: 0,
             reserved_ring_size,
             pov_id,
-            current_angle: angle - 90.0f64,
+            current_angle: angle,
         };
 
         if !viewshed.dem.is_point_computable(pov_id) {
@@ -196,8 +150,9 @@ impl<'viewshed> Reconstructor<'viewshed, '_> {
     fn read_next_value(&mut self) -> Result<u32> {
         let value = *self
             .sector_ring_data
-            .next()
+            .get(self.cursor)
             .context("Couldn't get next ring in ring data")?;
+        self.cursor += 1;
         Ok(value)
     }
 
@@ -206,14 +161,29 @@ impl<'viewshed> Reconstructor<'viewshed, '_> {
         &mut self,
         mut viewshed_so_far: geo::MultiPolygon,
     ) -> Result<geo::MultiPolygon> {
+        let tvs_id = self.viewshed.dem.pov_id_to_tvs_id(u64::from(self.pov_id));
+        let rotated_tvs_id = kernel::rotation::Rotator::new_from_angle(
+            u32::try_from(tvs_id)?,
+            self.viewshed.dem.tvs_width,
+            self.current_angle,
+        )
+        .anti_rotate_dem_id();
+        self.cursor = rotated_tvs_id * self.reserved_ring_size;
+
+        let computable_points = usize::try_from(self.viewshed.dem.computable_points_count)?;
+        let wrap_to_backwards_ids = (rotated_tvs_id + computable_points) * self.reserved_ring_size;
+
         let max_rings = u32::try_from((self.reserved_ring_size - 2).div_euclid(2))?;
-        for point in 0..self.viewshed.dem.computable_points_count * 2 {
+        for direction in [
+            kernel::kernel::BandDirection::Forward,
+            kernel::kernel::BandDirection::Backward,
+        ] {
             // We divide by 2 because every ring must have both an opening and a closing.
             let mut no_of_ring_values = self.read_next_value()?.div_euclid(2);
 
             if no_of_ring_values == 0 {
-                tracing::warn!("No rings for point {point}.");
-                self.sector_ring_data.nth(usize::try_from(max_rings * 2)?);
+                // These are most common outside the circle area of the TVS region.
+                self.cursor = wrap_to_backwards_ids;
                 continue;
             }
             if no_of_ring_values > max_rings {
@@ -221,63 +191,47 @@ impl<'viewshed> Reconstructor<'viewshed, '_> {
                     "More rings in band than reserved rings ({} > {}) for point {}",
                     no_of_ring_values,
                     max_rings,
-                    point
+                    direction
                 );
                 no_of_ring_values = max_rings;
             }
 
-            // Assume that every DEM point has an opening at the PoV.
-            let pov_id = self.read_next_value()?;
-
-            for index in 0..no_of_ring_values {
-                let opening = if index == 0 {
-                    pov_id
+            for ring in 0..no_of_ring_values {
+                let opening = if ring == 0 {
+                    0
                 } else {
                     self.read_next_value()?
                 };
                 let closing = self.read_next_value()?;
 
-                // TODO: jump straight to this, rather than looping ever point in between. Should
-                // get a huge speedup.
-                if pov_id == self.pov_id {
-                    let polygon = self.make_visible_polygon(opening, closing)?;
-                    viewshed_so_far = viewshed_so_far.union(&polygon);
-                    if viewshed_so_far.is_empty() {
-                        color_eyre::eyre::bail!("Invalid polygon: {polygon:?}");
-                    }
+                let polygon = self.make_visible_polygon(opening, closing, &direction);
+                viewshed_so_far = viewshed_so_far.union(&polygon);
+                if viewshed_so_far.is_empty() {
+                    color_eyre::eyre::bail!("Invalid polygon: {polygon:?}");
                 }
             }
 
-            let skip = self.reserved_ring_size - ((usize::try_from(no_of_ring_values)?) * 2) - 2;
-            self.sector_ring_data.nth(skip);
-        }
-
-        if viewshed_so_far.is_empty() {
-            color_eyre::eyre::bail!("No polygon rings added.");
+            self.cursor = wrap_to_backwards_ids;
         }
 
         Ok(viewshed_so_far)
     }
 
-    /// Find the intersection between the given point and its shortest path to the current band of
-    /// sight's centre.
-    #[expect(
-        clippy::suboptimal_flops,
-        reason = "I think readability is more important?"
-    )]
-    fn intersection_with_band_centre(&self, point: Coordinate) -> Coordinate {
-        // TODO: Is there not a form of the equation where we don't need to flip here?
-        let flip = f64::from(self.viewshed.dem.width - 1);
-        let flipped_point_y = flip - point.0.y;
-        let flipped_pov_y = flip;
+    /// Convert an index along a line of sight into a coordinate.
+    fn index_to_coordinate(
+        &self,
+        index: u32,
+        direction: &kernel::kernel::BandDirection,
+    ) -> Coordinate {
+        let angle = match direction {
+            kernel::kernel::BandDirection::Forward => self.current_angle.to_radians(),
+            kernel::kernel::BandDirection::Backward => (self.current_angle + 180.0).to_radians(),
+        };
+        let distance = f64::from(index);
 
-        let angle = self.current_angle.to_radians();
-        let cos = angle.cos();
-        let sin = angle.sin();
-        let factor = point.0.x * cos + (flipped_point_y - flipped_pov_y) * sin;
         Coordinate(geo::coord! {
-            x: cos * factor,
-            y: flip - (flipped_pov_y + sin * factor)
+            x: distance * f64::from(angle.cos()),
+            y: distance * f64::from(angle.sin())
         })
     }
 
@@ -300,29 +254,22 @@ impl<'viewshed> Reconstructor<'viewshed, '_> {
     /// Make a single polygon representing a visible region of the planet.
     fn make_visible_polygon(
         &self,
-        opening_dem_id: u32,
-        closing_dem_id: u32,
-    ) -> Result<geo::Polygon> {
-        let opening_dem_coord = self.viewshed.dem.convert_dem_id_to_coord(opening_dem_id);
-        let closing_dem_coord = self.viewshed.dem.convert_dem_id_to_coord(closing_dem_id);
-        let opening = self
-            .viewshed
-            .convert_dem_coord_to_viewshed_coord(opening_dem_coord)?;
-        let closing = self
-            .viewshed
-            .convert_dem_coord_to_viewshed_coord(closing_dem_coord)?;
-        let opening_intersection = self.intersection_with_band_centre(opening);
-        let closing_intersection = self.intersection_with_band_centre(closing);
+        opening_index: u32,
+        closing_index: u32,
+        direction: &kernel::kernel::BandDirection,
+    ) -> geo::Polygon {
+        let opening_coord = self.index_to_coordinate(opening_index, direction);
+        let closing_coord = self.index_to_coordinate(closing_index, direction);
 
         let spread = 0.5001f64;
-        let bottom_left = Self::rotate_by(opening_intersection, spread);
-        let bottom_right = Self::rotate_by(opening_intersection, -spread);
-        let top_left = Self::rotate_by(closing_intersection, spread);
-        let top_right = Self::rotate_by(closing_intersection, -spread);
+        let bottom_left = Self::rotate_by(opening_coord, spread);
+        let bottom_right = Self::rotate_by(opening_coord, -spread);
+        let top_left = Self::rotate_by(closing_coord, spread);
+        let top_right = Self::rotate_by(closing_coord, -spread);
 
         let scale = f64::from(self.viewshed.dem.scale);
 
-        Ok(geo::Polygon::new(
+        geo::Polygon::new(
             geo::LineString(vec![
                 bottom_left * scale,
                 bottom_right * scale,
@@ -331,14 +278,14 @@ impl<'viewshed> Reconstructor<'viewshed, '_> {
                 bottom_left * scale,
             ]),
             vec![],
-        ))
+        )
     }
 
     /// Save the viewshed to disk.
     #[expect(
         clippy::panic_in_result_fn,
         clippy::panic,
-        reason = "The closures expect () so I don't think there's any other way?"
+        reason = "The closures expects () so I don't think there's any other way?"
     )]
     pub fn save(
         mut viewshed: geo::MultiPolygon,
@@ -395,74 +342,44 @@ impl<'viewshed> Reconstructor<'viewshed, '_> {
     }
 }
 
-#[expect(
-    clippy::unreadable_literal,
-    clippy::default_numeric_fallback,
-    reason = "It's just for the tests"
-)]
 #[cfg(test)]
 mod test {
-    use geo::Extremes as _;
+    use crate::output::ascii::assert_viewshed;
 
     use super::*;
 
-    const SIGHT_OFFSET: f64 = 90.0;
     const RESERVED_RING_SIZE: usize = crate::compute::Compute::ring_count_per_band(5000.0, 3);
 
-    fn builder<'viewshed, 'sector>(
-        viewshed: &'viewshed Viewshed,
-        angle: f64,
-    ) -> Reconstructor<'viewshed, 'sector> {
-        Reconstructor::new(viewshed, RESERVED_RING_SIZE, angle + SIGHT_OFFSET).unwrap()
+    fn builder<'viewshed>(viewshed: &'viewshed Viewshed, angle: f32) -> Reconstructor<'viewshed> {
+        Reconstructor::new(viewshed, RESERVED_RING_SIZE, angle).unwrap()
     }
 
-    struct IntersectFor {
-        pov: geo::Coord,
-        angle: f64,
-        point: geo::Coord,
-    }
-
-    fn intersect_for(setup: &IntersectFor) -> geo::Coord {
-        let mut dem = crate::compute::test::make_dem();
-        crate::compute::test::compute(&mut dem, &crate::compute::test::single_peak_dem());
-        let viewshed = Viewshed {
-            dem: &dem,
-            pov_coord: crate::dem::Coordinate(setup.pov),
-        };
-        let viewsheder = builder(&viewshed, setup.angle);
-
-        let viewshed_coord = viewsheder
-            .viewshed
-            .convert_dem_coord_to_viewshed_coord(crate::dem::Coordinate(setup.point))
-            .unwrap();
-        let projected = viewsheder.intersection_with_band_centre(viewshed_coord);
-        let coordinate = viewsheder
-            .viewshed
-            .convert_viewshed_coord_to_dem_coord(projected)
-            .unwrap();
-        round_coordinate(coordinate)
-    }
-
+    #[derive(Debug)]
     struct VisiblePolygonFor {
         pov: geo::Coord,
-        angle: f64,
-        opening_coord: geo::Coord,
-        closing_coord: geo::Coord,
+        angle: f32,
+        opening_index: u32,
+        closing_index: u32,
     }
 
     fn make_visible_polygon_for(setup: &VisiblePolygonFor) -> Vec<geo::Coord> {
-        let mut dem = crate::compute::test::make_dem();
-        crate::compute::test::compute(&mut dem, &crate::compute::test::single_peak_dem());
+        let dem = crate::compute::test::make_dem(&kernel::tests::dems::single_peak_dem());
         let viewshed = Viewshed {
             dem: &dem,
             pov_coord: crate::dem::Coordinate(setup.pov),
         };
-        let viewsheder = builder(&viewshed, setup.angle);
-        let opening_dem_id = dem.dem_coord_to_id(crate::dem::Coordinate(setup.opening_coord));
-        let closing_dem_id = dem.dem_coord_to_id(crate::dem::Coordinate(setup.closing_coord));
-        let polygon = viewsheder
-            .make_visible_polygon(opening_dem_id, closing_dem_id)
-            .unwrap();
+        let direction = if setup.angle < 180.0 {
+            kernel::kernel::BandDirection::Forward
+        } else {
+            kernel::kernel::BandDirection::Backward
+        };
+        let angle = match direction {
+            kernel::kernel::BandDirection::Forward => setup.angle,
+            kernel::kernel::BandDirection::Backward => setup.angle - 180.0,
+        };
+        let viewsheder = builder(&viewshed, angle);
+        let polygon =
+            viewsheder.make_visible_polygon(setup.opening_index, setup.closing_index, &direction);
 
         let mut polygon_as_dem_coords = Vec::new();
         for coord in &polygon.exterior().0 {
@@ -491,9 +408,9 @@ mod test {
     //
     //    0  1  2  3  4  5  6  7  8
     // 0  .  .  .  .  .  .  .  .  .
-    // 1  .  .  .  .  .  .c .  .  .
+    // 1  .  .  .  .  .  .d .  .  .
     // 2  .  .  .  .  .a .  )  .  .
-    // 3  .  .  .  .  .  (  . d.  .
+    // 3  .  .  .  .  .  (  . c.  .
     // 4  .  .  .  .  o  . b.  .  .
     // 5  .  .  .  .  .  .  .  .  .
     // 6  .  .  .  .  .  .  .  .  .
@@ -502,40 +419,9 @@ mod test {
     //
     mod from_centre_to_top_right {
         use super::*;
-        use googletest::prelude::*;
 
         const POV: geo::Coord = geo::coord! {x: 4.0, y: 4.0};
-        const ANGLE: f64 = 45.0;
-
-        #[gtest]
-        fn intersection_with_band_centre() {
-            expect_eq!(
-                intersect_for(&IntersectFor {
-                    pov: POV,
-                    angle: ANGLE,
-                    point: geo::Coord { x: 4.0, y: 2.0 },
-                }),
-                geo::coord! { x: 4.9999992, y: 3.0000016 }
-            );
-
-            expect_eq!(
-                intersect_for(&IntersectFor {
-                    pov: POV,
-                    angle: ANGLE,
-                    point: geo::Coord { x: 8.0, y: 2.0 },
-                }),
-                geo::coord! { x: 6.9999992, y: 1.0000033 }
-            );
-
-            expect_eq!(
-                intersect_for(&IntersectFor {
-                    pov: POV,
-                    angle: ANGLE,
-                    point: geo::Coord { x: 8.0, y: 3.0 },
-                }),
-                geo::coord! { x: 6.4999988, y: 1.5000033 }
-            );
-        }
+        const ANGLE: f32 = 45.0;
 
         // The polygon we're making is `abcd` from the above guide.
         #[test]
@@ -544,15 +430,15 @@ mod test {
                 make_visible_polygon_for(&VisiblePolygonFor {
                     pov: POV,
                     angle: ANGLE,
-                    opening_coord: geo::coord! {x: 5.0, y: 3.0},
-                    closing_coord: geo::coord! {x: 6.0, y: 2.0},
+                    opening_index: 1,
+                    closing_index: 2,
                 }),
                 vec![
-                    (5.0086889, 3.0087684),
-                    (4.9912324, 2.9913119),
-                    (5.9824664, 1.9826221),
-                    (6.0173795, 2.0175352),
-                    (5.0086889, 3.0087684)
+                    (4.7009067, 3.2867503),
+                    (4.7132503, 3.2990939),
+                    (5.4265022, 2.5981862),
+                    (5.401815, 2.5734989),
+                    (4.7009067, 3.2867503)
                 ]
                 .into_iter()
                 .map(Into::into)
@@ -569,38 +455,16 @@ mod test {
     // 2  .  .  .  .  .  .  .  .  .
     // 3  .  .  .  .  .  .  .  .  .
     // 4  .  .  .  .  .  .  .  .  .
-    // 5  .  .  .  o  .b .  .  .  .
-    // 6  .  .  .  .  (  .c .  .  .
-    // 7  .  .  .  . a.  )  .  .  .
-    // 8  .  .  .  .  . d.  .  .  .
+    // 5  .  .  .  o  .a .  .  .  .
+    // 6  .  .  .  .  (  .d .  .  .
+    // 7  .  .  .  . b.  )  .  .  .
+    // 8  .  .  .  .  . c.  .  .  .
     //
     mod from_bottom_left_to_bottom_right {
         use super::*;
-        use googletest::prelude::*;
 
         const POV: geo::Coord = geo::coord! {x: 3.0, y: 5.0};
-        const ANGLE: f64 = 135.0;
-
-        #[gtest]
-        fn intersection_with_band_centre() {
-            expect_eq!(
-                intersect_for(&IntersectFor {
-                    pov: POV,
-                    angle: ANGLE,
-                    point: geo::Coord { x: 4.5, y: 5.0 },
-                }),
-                geo::coord! { x: 3.7499985, y: 5.7500014 }
-            );
-
-            expect_eq!(
-                intersect_for(&IntersectFor {
-                    pov: POV,
-                    angle: ANGLE,
-                    point: geo::Coord { x: 5.0, y: 7.5 },
-                }),
-                geo::coord! { x: 5.2499977, y: 7.2500015 }
-            );
-        }
+        const ANGLE: f32 = 135.0 + 180.0;
 
         // The polygon we're making is `abcd` from the above guide.
         #[test]
@@ -609,15 +473,15 @@ mod test {
                 make_visible_polygon_for(&VisiblePolygonFor {
                     pov: POV,
                     angle: ANGLE,
-                    opening_coord: geo::coord! {x: 4.0, y: 6.0},
-                    closing_coord: geo::coord! {x: 5.0, y: 7.0},
+                    opening_index: 1,
+                    closing_index: 2,
                 }),
                 vec![
-                    (3.9912318, 6.0086914),
-                    (4.0086883, 5.9912349),
-                    (5.0173782, 6.9824688),
-                    (4.9824651, 7.0173819),
-                    (3.9912318, 6.0086914),
+                    (3.7132498, 5.7009093),
+                    (3.7009061, 5.7132529),
+                    (4.4018138, 6.4265049),
+                    (4.4265011, 6.4018176),
+                    (3.7132498, 5.7009093)
                 ]
                 .into_iter()
                 .map(Into::into)
@@ -627,60 +491,80 @@ mod test {
     }
 
     #[test]
-    fn final_viewshed() {
-        let mut dem = crate::compute::test::make_dem();
-        let compute =
-            crate::compute::test::compute(&mut dem, &crate::compute::test::single_peak_dem());
+    fn viewshed_in_hole() {
+        let viewshed = crate::output::ascii::make_viewshed(
+            &kernel::tests::dems::bigger_dem(),
+            geo::Coord { x: 5.0, y: 5.0 },
+        );
 
-        let mut viewshed = Viewshed::reconstruct(
-            &super::super::ring_data::Source::RAM(crate::output::ring_data::AllData {
-                metadata: compute.metadata().unwrap(),
-                ring_data: crate::output::ring_data::SectorData::AllSectors(compute.ring_data),
-            }),
-            dem.centre,
-        )
-        .unwrap();
+        assert_viewshed(
+            &viewshed,
+            &[
+                "████████████████████████",
+                "████████████████████████",
+                "████████████████████████",
+                "████████████████████████",
+                "████████▀ ▄ ▀███████████",
+                "████████ ▀█▀ ███████████",
+                "█████████▄▄▄████████████",
+                "████████████████████████",
+                "████████████████████████",
+                "████████████████████████",
+                "████████████████████████",
+                "████████████████████████",
+            ],
+        );
+    }
 
-        let viewsheder = Viewshed {
-            dem: &dem,
-            // TODO: It would be good to have a function that derives the DEM coord from the
-            // lat/lon. Then we could use it here like: `latlon_to_dem_coord(dem.centre)`.
-            pov_coord: crate::dem::Coordinate(geo::coord! {x: 4.0, y: 4.0}),
-        };
+    #[test]
+    fn viewshed_on_summit() {
+        let viewshed = crate::output::ascii::make_viewshed(
+            &kernel::tests::dems::bigger_dem(),
+            geo::Coord { x: 6.0, y: 6.0 },
+        );
 
-        // Convert the viewshed coordinates to DEM-based. This helps give some intuition whilst
-        // debugging because you can use the littel ASCII grids above.
-        for point in viewshed.iter_mut() {
-            point.exterior_mut(|line| {
-                for coordinate in line.coords_mut() {
-                    let projected = viewsheder
-                        .convert_viewshed_coord_to_dem_coord(Coordinate(*coordinate))
-                        .unwrap();
-                    *coordinate = round_coordinate(projected);
-                }
-            });
-        }
+        assert_viewshed(
+            &viewshed,
+            &[
+                "████████████████████████",
+                "████████████████████████",
+                "███████▀▀ ▄▄▄▄▄ ▀▀██████",
+                "█████▀ ▄█████████▄ ▀████",
+                "████▀ █████████████ ▀███",
+                "████ ███████████████ ███",
+                "████ ███████████████ ███",
+                "████ ▀█████████████▀ ███",
+                "█████ ▀███████████▀ ████",
+                "██████▄ ▀▀█████▀▀ ▄█████",
+                "█████████▄▄▄▄▄▄▄████████",
+                "████████████████████████",
+            ],
+        );
+    }
 
-        assert_eq!(viewshed.0.len(), 1);
+    #[test]
+    fn viewshed_near_summit() {
+        let viewshed = crate::output::ascii::make_viewshed(
+            &kernel::tests::dems::bigger_dem(),
+            geo::Coord { x: 5.0, y: 6.0 },
+        );
 
-        let extent = geo::extremes::Outcome {
-            x_min: geo::extremes::Extreme {
-                index: 0,
-                coord: (0.7816801, 1.2514028).into(),
-            },
-            y_min: geo::extremes::Extreme {
-                index: 180,
-                coord: (6.7485972, 0.7816834).into(),
-            },
-            x_max: geo::extremes::Extreme {
-                index: 360,
-                coord: (7.2183166, 6.7486005).into(),
-            },
-            y_max: geo::extremes::Extreme {
-                index: 540,
-                coord: (1.2513995, 7.2183199).into(),
-            },
-        };
-        assert_eq!(viewshed.extremes().unwrap(), extent);
+        assert_viewshed(
+            &viewshed,
+            &[
+                "████████████████████████",
+                "████████████████████████",
+                "█████▀▀ ▄▄▄▄▄ ▀▀████████",
+                "███▀ ▄█████████ ▄███████",
+                "██▀ █████████▀▄█████████",
+                "██ ████████▀ ███████████",
+                "██ ████████▀ ███████████",
+                "██ ▀████████▄▀██████████",
+                "███ ▀█████████▄▀████████",
+                "████▄ ▀▀█████▀▀ ▄███████",
+                "███████▄▄▄▄▄▄▄██████████",
+                "████████████████████████",
+            ],
+        );
     }
 }

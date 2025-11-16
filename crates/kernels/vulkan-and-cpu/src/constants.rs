@@ -5,7 +5,7 @@
 #[cfg_attr(
     not(target_arch = "spirv"),
     derive(
-        Copy, Clone, Default,
+        Copy, Clone, Default, Debug,
         // Bytemuck is what we use to cast data into raw bytes for CPU/GPU transfer.
         bytemuck::Zeroable, bytemuck::Pod,
     )
@@ -27,14 +27,20 @@ pub struct Constants {
     pub dem_width: u32,
     /// The width of the computable region of the DEM. Units are DEM points.
     pub tvs_width: u32,
+    /// The scale of each elevation point in meters.
+    pub scale: f32,
     /// The height of the observer in meters.
     pub observer_height: f32,
     /// The amount of memory reserved for storing computed ring sectors.
     pub reserved_rings_per_band: u32,
     /// Bitmask of what computations to process.
     pub process: u32,
+    /// Cached sine of the angle being calculated.
+    pub sine: f32,
+    /// Cached cosine of the angle being calculated.
+    pub cosine: f32,
     /// Padding.
-    pub _pad0: u32,
+    pub _pad0: glam::Vec2,
 }
 impl Constants {
     #[inline]
