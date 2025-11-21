@@ -24,7 +24,7 @@ pub struct Compute<'compute> {
     /// Keeps track of the ring (viewshed) data.
     pub ring_data: Vec<Vec<u32>>,
     /// Keeps track of the longest lines of sight.
-    pub longest_lines: Vec<f32>,
+    pub longest_lines: Vec<crate::los_pack::LineOfSightPacked>,
 }
 
 /// Configuration for computing.
@@ -188,9 +188,11 @@ impl<'compute> Compute<'compute> {
         }
 
         let mut longest_lines = if Self::is_process_longest_lines(&self.config.process) {
-            let blank = vec![0.0; usize::try_from(self.dem.computable_points_count)?];
-            self.longest_lines.clone_from(&blank);
-            blank
+            self.longest_lines = vec![
+                crate::los_pack::LineOfSightPacked::default();
+                usize::try_from(self.dem.computable_points_count)?
+            ];
+            vec![0.0; usize::try_from(self.dem.computable_points_count)?]
         } else {
             Vec::new()
         };
@@ -218,12 +220,16 @@ impl<'compute> Compute<'compute> {
 
             if Self::is_process_surfaces(&self.config.process) {
                 self.add_sector_surfaces_to_running_total(&sector_surfaces);
-                self.render_total_surfaces()?;
+                if angle == SECTOR_STEPS - 1 {
+                    self.render_total_surfaces()?;
+                }
             }
 
             if Self::is_process_longest_lines(&self.config.process) {
-                self.increment_longest_lines(&longest_lines);
-                self.render_longest_lines()?;
+                self.increment_longest_lines(&longest_lines, angle)?;
+                if angle == SECTOR_STEPS - 1 {
+                    self.render_longest_lines()?;
+                }
             }
         }
 
@@ -242,12 +248,23 @@ impl<'compute> Compute<'compute> {
     }
 
     /// Check to see if this angle increases the current longest line of sight for the point.
-    fn increment_longest_lines(&mut self, longest_lines: &[f32]) {
+    fn increment_longest_lines(&mut self, longest_lines: &[f32], sector: u16) -> Result<()> {
         for (left, right) in self.longest_lines.iter_mut().zip(longest_lines.iter()) {
-            if right > left {
-                *left = *right;
+            #[expect(
+                clippy::as_conversions,
+                clippy::cast_sign_loss,
+                clippy::cast_possible_truncation,
+                reason = "Distances always fit in u32"
+            )]
+            let current = right.abs() as u32;
+            if current > left.distance() {
+                let angle = if *right >= 0.0 { sector } else { sector + 180 };
+                let packed = crate::los_pack::LineOfSightPacked::new(current, angle)?;
+                *left = packed;
             }
         }
+
+        Ok(())
     }
 
     /// The metadata needed to reconstruct viewsheds based on the DEM and reserved rings.
@@ -312,17 +329,36 @@ impl<'compute> Compute<'compute> {
             return Ok(());
         };
 
+        let distances = self
+            .longest_lines
+            .iter()
+            .map(|los| {
+                #[expect(
+                    clippy::as_conversions,
+                    clippy::cast_precision_loss,
+                    reason = "Distances always fit in u32"
+                )]
+                {
+                    los.distance() as f32
+                }
+            })
+            .collect::<Vec<_>>();
         crate::output::png::save(
-            &self.longest_lines,
+            &distances,
             self.dem.tvs_width,
             self.dem.tvs_width,
             output_dir.join("longest_lines.png"),
             self.config.heatmap,
         )?;
 
+        let packed_lines = self
+            .longest_lines
+            .iter()
+            .map(crate::los_pack::LineOfSightPacked::as_f32)
+            .collect::<Vec<_>>();
         crate::output::bt::save(
             self.dem,
-            &self.longest_lines,
+            &packed_lines,
             &output_dir.join("longest_lines.bt"),
         )?;
 
@@ -413,6 +449,7 @@ impl<'compute> Compute<'compute> {
 #[cfg(test)]
 pub mod test {
     use super::*;
+    use googletest::prelude::*;
 
     pub fn make_dem(elevations: &[i16]) -> crate::dem::DEM {
         let width = elevations.len().isqrt() as u32;
@@ -463,18 +500,39 @@ pub mod test {
         );
     }
 
-    #[test]
+    #[expect(
+        clippy::as_conversions,
+        clippy::cast_precision_loss,
+        reason = "Distances always fit in u32"
+    )]
+    #[gtest]
     fn longest_lines() {
         let mut dem = make_dem(&kernel::tests::dems::bigger_dem());
         let compute = compute(&mut dem);
+
         #[rustfmt::skip]
-        assert_eq!(
-            compute.longest_lines,
+        expect_eq!(
+            compute.longest_lines.iter()
+            .map(|los| los.distance() as f32)
+            .collect::<Vec<_>>(),
             [
                 0.0, 0.0, 0.0, 0.0,
                 0.0, 1.0, 5.0, 0.0,
                 0.0, 4.0, 5.0, 0.0,
                 0.0, 0.0, 0.0, 0.0
+            ]
+        );
+
+        #[rustfmt::skip]
+        expect_eq!(
+            compute.longest_lines.iter()
+            .map(|los| los.angle().unwrap())
+            .collect::<Vec<_>>(),
+            [
+                0, 0,   0,   0,
+                0, 0,   202, 0,
+                0, 180, 180, 0,
+                0, 0,   0,   0
             ]
         );
     }

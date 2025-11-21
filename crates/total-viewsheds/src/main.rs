@@ -29,6 +29,7 @@ mod compute;
 mod config;
 mod dem;
 mod dump_usage;
+mod los_pack;
 mod vulkan;
 /// Various ways to output data.
 mod output {
