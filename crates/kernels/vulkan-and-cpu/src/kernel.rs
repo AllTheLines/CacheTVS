@@ -290,7 +290,10 @@ impl<'kernel> Kernel<'kernel> {
                     reason = "This needs to run on the GPU where fallibility isn't possible"
                 )]
                 let current_longest = self.longest_lines[self.rotated_tvs_id as usize];
-                if longest_line > current_longest {
+                if longest_line > current_longest.abs() {
+                    if matches!(self.band_direction, BandDirection::Backward) {
+                        longest_line = -longest_line;
+                    }
                     self.longest_lines[original_tvs_id] = longest_line;
                 }
             }
@@ -523,7 +526,7 @@ mod test {
 
         expect_tvs(&tvs_id, &surfaces, 0.0174533);
         expect_ring_data(&tvs_id, angle, &rings, vec![1]);
-        expect_tvs(&tvs_id, &lines, 1.0);
+        expect_tvs(&tvs_id, &lines, -1.0);
     }
 
     #[gtest]
@@ -536,7 +539,7 @@ mod test {
         // TODO: I think this result clearly shows that we should be closing the ring sector for
         // the _previous_ DEM ID?
         expect_ring_data(&tvs_id, angle, &rings, vec![4]);
-        expect_tvs(&tvs_id, &lines, 5.0);
+        expect_tvs(&tvs_id, &lines, -5.0);
     }
 
     #[gtest]
@@ -547,7 +550,7 @@ mod test {
 
         expect_tvs(&tvs_id, &surfaces, 0.2617995);
         expect_ring_data(&tvs_id, angle, &rings, vec![4]);
-        expect_tvs(&tvs_id, &lines, 5.0);
+        expect_tvs(&tvs_id, &lines, -5.0);
     }
 
     #[gtest]
@@ -558,7 +561,7 @@ mod test {
 
         expect_tvs(&tvs_id, &surfaces, 0.0174533);
         expect_ring_data(&tvs_id, angle, &rings, vec![1]);
-        expect_tvs(&tvs_id, &lines, 1.0);
+        expect_tvs(&tvs_id, &lines, -1.0);
     }
 
     #[gtest]
@@ -569,6 +572,6 @@ mod test {
 
         expect_tvs(&tvs_id, &surfaces, 0.17453301);
         expect_ring_data(&tvs_id, angle, &rings, vec![4]);
-        expect_tvs(&tvs_id, &lines, 4.0);
+        expect_tvs(&tvs_id, &lines, -4.0);
     }
 }
