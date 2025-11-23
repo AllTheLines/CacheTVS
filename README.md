@@ -40,8 +40,7 @@ Once you have run the above computations you will have access to what's called "
 `RUST_LOG=trace cargo run --release -- viewshed output -- -3.1230,51.4898`
 
 ```
-* Total Viewsheds
-  Generate _all_ the viewsheds for a given Digital Elevation Model, therefore the total viewsheds.
+Generate _all_ the viewsheds for a given Digital Elevation Model, therefore the total viewsheds.
 
   Usage: tvs <COMMAND>
 
@@ -84,12 +83,12 @@ Once you have run the above computations you will have access to what's called "
         --backend <The method of running the kernel>
             Where to run the kernel calculations
 
-            [default: vulkan]
-
             Possible values:
-            - cpu:    Conventional CPU computations. The slowest method
-            - vulkan: A SPIRV shader run on the GPU via Vulkan
-            - cuda:   TBC
+            - vulkan:     A SPIRV shader run on the GPU via Vulkan
+            - vulkan-cpu: Vulkan shader but run on the CPU
+            - cuda:       TBC
+
+            [default: vulkan]
 
         --output-dir <Directory to save output to>
             Directory to save results in
@@ -102,12 +101,23 @@ Once you have run the above computations you will have access to what's called "
         --process <What to compute>
             What to compute
 
+            Possible values:
+            - all:            Calculate everything
+            - total-surfaces: Compute the total visible surfaces for each computable DEM point and output as a heatmap
+            - viewsheds:      Compute all the ring sectors saving them to disk so that they can be used to later reconstruct viewsheds
+            - longest-lines:  Compute the longest line of sight for each DEM point
+
             [default: all]
 
+        --heatmap <Heatmap normalisation method>
+            How to normalise heatmap data
+
             Possible values:
-            - all:             Calculate everything
-            - total-surfaces:  Compute the total visible surfaves for each computable DEM point and output as a heatmap
-            - viewsheds:       Compute all the ring sectors saving them to disk so that they can be used to later reconstruct viewsheds
+            - unit-scale:  Just scale between 0 and 1
+            - exponential: Scale between 0 and 1 with an exponential factor
+            - welford:     Use Z-score normalisation based on Welford's algorithm. This basically means that the data is redistributed such that the mean is 0.5. Useful for overly dark or bright heatmaps. https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Welford's_online_algorithm
+
+            [default: exponential]
 
     -h, --help
             Print help (see a summary with '-h')
@@ -128,7 +138,6 @@ Once you have run the above computations you will have access to what's called "
   Options:
     -h, --help
             Print help
-
 ```
 
 ## Building Vulkan shader

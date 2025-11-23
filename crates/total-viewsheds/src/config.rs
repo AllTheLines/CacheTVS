@@ -100,7 +100,7 @@ pub struct Compute {
         long,
         value_enum,
         value_name = "Heatmap normalisation method",
-        default_value_t = HeatmapNormalisation::UnitScale
+        default_value_t = HeatmapNormalisation::Exponential
     )]
     pub heatmap: HeatmapNormalisation,
 }
@@ -165,6 +165,8 @@ pub enum Process {
 pub enum HeatmapNormalisation {
     /// Just scale between 0 and 1
     UnitScale,
+    /// Scale between 0 and 1 with an exponential factor.
+    Exponential,
     #[expect(clippy::doc_markdown, reason = "This is displayed on the CLI")]
     /// Use Z-score normalisation based on Welford's algorithm. This basically means that the
     /// data is redistributed such that the mean is 0.5. Useful for overly dark or bright
