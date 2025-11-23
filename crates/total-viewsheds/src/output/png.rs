@@ -12,7 +12,8 @@ pub fn save(
     tracing::info!("Writing PNG data to: {}", path.display());
 
     let data_normalised = match normalisation {
-        crate::config::HeatmapNormalisation::UnitScale => normalise(data),
+        crate::config::HeatmapNormalisation::UnitScale => unit_normalise(data),
+        crate::config::HeatmapNormalisation::Exponential => exponential_normalise(data),
         crate::config::HeatmapNormalisation::Welford => welford_normalise(data),
     };
 
@@ -47,10 +48,18 @@ pub fn save(
 }
 
 /// Scale values from 0 to 1.
-fn normalise(data: &[f32]) -> Vec<f32> {
+fn unit_normalise(data: &[f32]) -> Vec<f32> {
     let min = data.iter().copied().fold(f32::INFINITY, f32::min);
     let max = data.iter().copied().fold(f32::NEG_INFINITY, f32::max);
     data.iter().map(|&x| (x - min) / (max - min)).collect()
+}
+
+/// Scale values from 0 to 1 with an exponential factor. Can be useful to counteract heatmaps that
+/// have too much of one colour in them.
+fn exponential_normalise(data: &[f32]) -> Vec<f32> {
+    let factor = 0.5;
+    let max = data.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    data.iter().map(|&x| (x / max).powf(factor)).collect()
 }
 
 /// Redistribute values from 0 to 1 such that the distribution is centered.
