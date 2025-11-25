@@ -200,13 +200,14 @@ impl Vulkan {
     /// Get the limits for the GPU.
     fn limits(adapter: &wgpu::Adapter) -> wgpu::Limits {
         let limits = adapter.limits();
+        let max_buffer_size = 2_500_000_000;
         tracing::debug!("GPU limits: {limits:?}");
         wgpu::Limits {
             max_storage_buffers_per_shader_stage: 6,
             max_storage_buffer_binding_size: limits
                 .max_storage_buffer_binding_size
-                .min(2_000_000_000),
-            max_buffer_size: limits.max_buffer_size.min(2_000_000_000),
+                .min(max_buffer_size),
+            max_buffer_size: limits.max_buffer_size.min(u64::from(max_buffer_size)),
             max_compute_workgroups_per_dimension: 1024,
             ..wgpu::Limits::default()
         }
