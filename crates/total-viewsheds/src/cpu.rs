@@ -10,7 +10,6 @@ use std::arch::x86_64::{
 };
 
 use clap::builder::TypedValueParser;
-use image::flat::View;
 use rayon::prelude::IntoParallelIterator;
 use rayon::ThreadPoolBuilder;
 #[cfg(all(
@@ -23,13 +22,12 @@ use std::arch::x86_64::{
     _mm256_blend_ps, _mm256_castps_si256, _mm256_castsi256_ps, _mm256_cmp_ps, _mm256_max_ps,
     _mm256_slli_si256, _mm_castps_si128, _mm_cmpge_ps, _mm_max_ps, _CMP_LE_OS,
 };
-use std::cmp::max;
-use std::iter::zip;
+use std::iter::{repeat, zip, IntoIterator};
 use std::simd::prelude::*;
-use std::simd::{LaneCount, Mask, StdFloat as _, SupportedLaneCount};
+use std::simd::{LaneCount, Mask, SupportedLaneCount};
 use std::sync::Mutex;
 use std::time::Instant;
-use std::{array, f32, mem, slice, thread};
+use std::{array, f32, mem, slice};
 
 /// `EARTH_RADIUS_SQUARED` is the earth's radius squared in meters
 const EARTH_RADIUS_SQUARED: f32 = 12_742_000.0;
@@ -288,6 +286,11 @@ where
     float_elevs - Simd::splat(pov_height)
 }
 
+struct IndexUnrolled<'idx, const N: usize> {
+    indexes_in: &'idx [[i32; N]],
+    indexes_out: &'idx mut [[i32; N]],
+}
+
 #[inline]
 /// `line_of_sight` calculates a single line of sight for a given pov, which is passed in via `pov_height`
 fn line_of_sight<const N: usize, const UNROLL: usize, VS>(
@@ -296,8 +299,7 @@ fn line_of_sight<const N: usize, const UNROLL: usize, VS>(
     distances: &[Simd<f32, N>],
     adjustments: &[Simd<f32, N>],
     prefix_in: Simd<f32, N>,
-    indexes_in: &[[i32; N]],
-    indexes_out: &mut [[i32; N]],
+    indexes: Option<IndexUnrolled<N>>,
     pov_height: f32,
 ) -> ([Simd<f32, N>; UNROLL], [Simd<f32, N>; UNROLL], Simd<f32, N>)
 where
@@ -331,34 +333,54 @@ where
 
     let prefix_out = vs.prefix_max(&angle_buf, &mut prefix_buf, prefix_in);
 
-    izip!(
-        &mut sum_buf,
-        &mut longest_line_buf,
-        angle_buf.iter(),
-        prefix_buf.iter(),
-        distances.iter(),
-        indexes_in
-            .iter()
-            .map(|ind| Simd::<i32, N>::from_array(*ind)),
-        indexes_out,
-    )
-    .for_each(
-        |(next_sum, longest_line, &angle, &pref, &dists, indexes_in, indexes_out)| {
+    if let Some(indexes) = indexes {
+        izip!(
+            &mut sum_buf,
+            &mut longest_line_buf,
+            angle_buf.iter(),
+            prefix_buf.iter(),
+            distances.iter(),
+            indexes
+                .indexes_in
+                .iter()
+                .map(|ind| Simd::<i32, N>::from_array(*ind)),
+            indexes.indexes_out,
+        )
+        .for_each(
+            |(next_sum, longest_line, &angle, &pref, &dists, inds_in, inds_out)| {
+                let mask = vs.gte(angle, pref);
+                inds_in.store_select(inds_out, mask);
+
+                let selected_distances = mask.select(dists, Simd::splat(0.0));
+                *longest_line = vs.max(*longest_line, selected_distances);
+
+                let selected_tans = mask.select(Simd::splat(TAN_ONE_RAD), Simd::splat(0.0));
+                *next_sum = selected_distances * selected_tans;
+            },
+        )
+    } else {
+        izip!(
+            &mut sum_buf,
+            &mut longest_line_buf,
+            angle_buf.iter(),
+            prefix_buf.iter(),
+            distances.iter()
+        )
+        .for_each(|(next_sum, longest_line, &angle, &pref, &dists)| {
             let mask = vs.gte(angle, pref);
-            indexes_in.store_select(indexes_out, mask);
 
             let selected_distances = mask.select(dists, Simd::splat(0.0));
             *longest_line = vs.max(*longest_line, selected_distances);
 
             let selected_tans = mask.select(Simd::splat(TAN_ONE_RAD), Simd::splat(0.0));
             *next_sum = selected_distances * selected_tans;
-        },
-    );
+        });
+    }
 
     (sum_buf, longest_line_buf, prefix_out)
 }
 
-fn dem_to_pov(val: i32, width: usize, max_los: usize) -> i32 {
+fn dem_to_pov(dem_id: i32, width: usize, max_los: usize) -> i32 {
     #[expect(
         clippy::as_conversions,
         clippy::cast_possible_truncation,
@@ -369,10 +391,183 @@ fn dem_to_pov(val: i32, width: usize, max_los: usize) -> i32 {
         clippy::integer_division,
         reason = "i32 is constructed from (i32, i32) converting back should succeed"
     )]
-    let x = (val / width as i32) - max_los as i32;
-    let y = (val % width as i32) - max_los as i32;
+    let x = (dem_id / width as i32) - max_los as i32;
+    let y = (dem_id % width as i32) - max_los as i32;
 
     x * (max_los as i32) + y
+}
+
+struct Indexes<'a> {
+    indexes_in: &'a [i32],
+    indexes_out: &'a mut [i32],
+}
+
+struct OptionIter<T, Iter>
+where
+    Iter: Iterator<Item = T>,
+{
+    iter: Option<Iter>,
+}
+
+impl<T, Iter> OptionIter<T, Iter>
+where
+    Iter: Iterator<Item = T>,
+{
+    fn new(iter: Option<Iter>) -> Self {
+        OptionIter { iter }
+    }
+}
+
+impl<T, Iter> Iterator for OptionIter<T, Iter>
+where
+    Iter: Iterator<Item = T>,
+{
+    type Item = Option<T>;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(ref mut iter) = &mut self.iter {
+            match iter.next() {
+                Some(item) => Some(Some(item)),
+                None => None,
+            }
+        } else {
+            Some(None)
+        }
+    }
+}
+
+fn viewshed<const WIDTH: usize, const UNROLL: usize, VS>(
+    vs: &VS,
+    pov_idx: usize,
+    pov_height: i16,
+    dem_id: i32,
+    max_los: usize,
+    heatmap: &mut [f32],
+    longest_line: &mut [f32],
+    line: &[i16],
+    index_data: Option<Indexes>,
+    adjustments: (&[[Simd<f32, WIDTH>; UNROLL]], &[Simd<f32, WIDTH>]),
+    distances: (&[[Simd<f32, WIDTH>; UNROLL]], &[Simd<f32, WIDTH>]),
+) where
+    LaneCount<WIDTH>: SupportedLaneCount,
+    VS: Viewshed<WIDTH>,
+{
+    let result_tvs_id = dem_to_pov(dem_id, 3 * max_los, max_los);
+
+    // if the line of sight is not within our computable points, do not consider it
+    if result_tvs_id < 0i32 || result_tvs_id >= (max_los * max_los) as i32 {
+        return;
+    }
+
+    // safety: pov is guaranteed to be in bounds since the slice is max_los in size
+    let pov_height = f32::from(pov_height);
+
+    // safety: max_los % WIDTH == 0, so [pov_idx..pov_idx+max_los) will also be WIDTH wide
+    let (elevations, _): (&[[i16; WIDTH]], _) =
+        unsafe { line.get_unchecked(pov_idx..pov_idx + max_los) }.as_chunks::<WIDTH>();
+
+    let iter = index_data.map(|data| {
+        let (indexes, _): (&[[i32; WIDTH]], _) =
+            unsafe { data.indexes_in.get_unchecked(pov_idx..pov_idx + max_los) }
+                .as_chunks::<WIDTH>();
+
+        let (indexes_out, _) = data.indexes_out.as_chunks_mut::<WIDTH>();
+
+        let (chunked_indexes, rest_indexes) = indexes.as_chunks::<UNROLL>();
+        let (chunked_indexes_out, rest_indexes_out) = indexes_out.as_chunks_mut::<UNROLL>();
+
+        zip(chunked_indexes.iter(), chunked_indexes_out.iter_mut()).map(|(inds_in, inds_out)| {
+            IndexUnrolled {
+                indexes_in: inds_in,
+                indexes_out: inds_out,
+            }
+        })
+    });
+
+    let (chunked_elevs, rest_elevs) = elevations.as_chunks::<UNROLL>();
+
+    let (chunked_distances, rest_distances) = distances;
+    let (chunked_adjustments, rest_adjustments) = adjustments;
+
+    let (local_sums, local_longest, prefix) = izip!(
+        chunked_elevs,
+        chunked_distances,
+        chunked_adjustments,
+        OptionIter::new(iter),
+    )
+    .fold(
+        (
+            [Simd::splat(0.0); UNROLL],
+            [Simd::splat(0.0); UNROLL],
+            Simd::splat(-2000.0),
+        ),
+        |(sum, longest, prefix), (elevs, dists, adjusts, inds)| {
+            let (next_sum, next_longest, acc) = line_of_sight::<WIDTH, UNROLL, VS>(
+                vs,      // elevs: &[[i16; N]],
+                elevs,   // distances: &[Simd<f32, N>],
+                dists,   // adjustments: &[Simd<f32, N>],
+                adjusts, // prefix_in: Simd<f32, N>,
+                prefix,  // pov_height: f32,
+                inds, pov_height,
+            );
+
+            let mut copied_sum = sum;
+            zip(copied_sum.iter_mut(), next_sum).for_each(|(old, new)| {
+                *old += new;
+            });
+
+            let mut copied_longest_line = longest;
+            zip(copied_longest_line.iter_mut(), next_longest).for_each(|(old, new)| {
+                *old = old.simd_max(new);
+            });
+
+            (copied_sum, copied_longest_line, acc)
+        },
+    );
+
+    let sum = local_sums
+        .iter()
+        .fold(0.0f32, |acc, partial| acc + partial.reduce_sum());
+
+    let longest = local_longest
+        .iter()
+        .fold(0.0f32, |acc, new| acc.max(new.reduce_max()));
+
+    // let (sum_buf, longest_buf, _) = line_of_sight::<WIDTH, UNROLL, VS>(
+    //     vs,
+    //     rest_elevs,
+    //     rest_distances,
+    //     rest_adjustments,
+    //     prefix,
+    //     Some(IndexUnrolled {
+    //         indexes_in: rest_indexes,
+    //         indexes_out: rest_index_out,
+    //     }),
+    //     pov_height,
+    // );
+    //
+    // sum += sum_buf
+    //     .iter()
+    //     .fold(0.0f32, |acc, partial| acc + partial.reduce_sum());
+    //
+    // let longest = longest_buf
+    //     .iter()
+    //     .fold(chunked_longest, |acc, new| acc.max(new.reduce_max()));
+
+    #[expect(
+        clippy::as_conversions,
+        clippy::cast_sign_loss,
+        reason = "result_idx should be in [0, 2^31]"
+    )]
+    // safety: it is guaranteed by the rotation kernel that if the index is
+    // greater than zero that it is in-bounds. This saves ~10% of bounds checks
+    unsafe {
+        *heatmap.get_unchecked_mut(result_tvs_id as usize) += sum;
+
+        let old_longest: *mut f32 = longest_line.get_unchecked_mut(result_tvs_id as usize);
+        *old_longest = (*old_longest).max(longest as f32);
+    }
 }
 
 /// `total_viewshed` computes a total viewshed heatmap for a given elevation map,
@@ -382,6 +577,7 @@ fn total_viewshed<const WIDTH: usize, const UNROLL: usize, V: Viewshed<WIDTH>>(
     elevation_map: &[i16],
     indexes: &[i32],
     max_los: usize,
+    output_sector_data: bool,
 ) -> ViewshedAngle
 where
     LaneCount<WIDTH>: SupportedLaneCount,
@@ -406,7 +602,8 @@ where
 
     let mut heatmap = vec![0.0f32; max_los * max_los];
     let mut longest_line = vec![0.0f32; max_los * max_los];
-    let mut sector_data = vec![0i32; max_los * max_los * max_los];
+    let mut sector_data: Option<Vec<i32>> =
+        output_sector_data.then(|| vec![0i32; max_los * max_los * max_los]);
 
     let width = 2 * max_los;
 
@@ -441,116 +638,58 @@ where
     let (chunked_distances, rest_distances) = distances.as_chunks::<UNROLL>();
     let (chunked_adjustments, rest_adjustments) = adjustments.as_chunks::<UNROLL>();
 
-    for (line, indexes, sector_chunk) in izip!(
-        elevation_map.chunks_exact(width),
-        indexes.chunks_exact(width),
-        sector_data.chunks_exact_mut(max_los * max_los),
-    ) {
-        for (pov, (&pov_height, &result_dem_id, line_bitmap)) in izip!(
-            &line[..max_los],
-            &indexes[..max_los],
-            sector_chunk.chunks_exact_mut(max_los)
-        )
-        .enumerate()
-        {
-            let result_tvs_id = dem_to_pov(result_dem_id, 3 * max_los, max_los);
-
-            // if the line of sight is not within our computable points, do not consider it
-            if result_tvs_id < 0i32 || result_tvs_id >= (max_los * max_los) as i32 {
-                continue;
-            }
-
-            // safety: pov is guaranteed to be in bounds since the slice is max_los in size
-            let pov_height = f32::from(pov_height);
-
-            // safety: max_los % WIDTH == 0, so [pov..pov+max_los) will also be WIDTH wide
-            let (elevations, _): (&[[i16; WIDTH]], _) =
-                unsafe { line.get_unchecked(pov..pov + max_los) }.as_chunks::<WIDTH>();
-
-            let (indexes, _): (&[[i32; WIDTH]], _) =
-                unsafe { indexes.get_unchecked(pov..pov + max_los) }.as_chunks::<WIDTH>();
-
-            let (bitmap_out, _): (&mut [[i32; WIDTH]], _) = line_bitmap.as_chunks_mut::<WIDTH>();
-
-            let (chunked_elevs, rest_elevs) = elevations.as_chunks::<UNROLL>();
-            let (chunked_indexes, rest_indexes) = indexes.as_chunks::<UNROLL>();
-            let (chunked_index_out, rest_index_out) = bitmap_out.as_chunks_mut::<UNROLL>();
-
-            let (local_sums, local_longest, prefix) = izip!(
-                chunked_elevs,
-                chunked_distances,
-                chunked_adjustments,
-                chunked_indexes,
-                chunked_index_out
+    if let Some(ref mut sd) = &mut sector_data {
+        for (line, indexes, sector_chunk) in izip!(
+            elevation_map.chunks_exact(width),
+            indexes.chunks_exact(width),
+            sd.chunks_exact_mut(max_los * max_los),
+        ) {
+            for (pov, (&pov_height, &result_dem_id, line_bitmap)) in izip!(
+                &line[..max_los],
+                &indexes[..max_los],
+                sector_chunk.chunks_exact_mut(max_los)
             )
-            .fold(
-                (
-                    [Simd::splat(0.0); UNROLL],
-                    [Simd::splat(0.0); UNROLL],
-                    Simd::splat(-2000.0),
-                ),
-                |(sum, longest, prefix), (elevs, dists, adjusts, inds, inds_out)| {
-                    let (next_sum, next_longest, acc) = line_of_sight::<WIDTH, UNROLL, V>(
-                        vs,      // elevs: &[[i16; N]],
-                        elevs,   // distances: &[Simd<f32, N>],
-                        dists,   // adjustments: &[Simd<f32, N>],
-                        adjusts, // prefix_in: Simd<f32, N>,
-                        prefix,  // pov_height: f32,
-                        inds, inds_out, pov_height,
-                    );
-
-                    let mut copied_sum = sum;
-                    zip(copied_sum.iter_mut(), next_sum).for_each(|(old, new)| {
-                        *old += new;
-                    });
-
-                    let mut copied_longest_line = longest;
-                    zip(copied_longest_line.iter_mut(), next_longest).for_each(|(old, new)| {
-                        *old = old.simd_max(new);
-                    });
-
-                    (copied_sum, copied_longest_line, acc)
-                },
-            );
-
-            let mut sum = local_sums
-                .iter()
-                .fold(0.0f32, |acc, partial| acc + partial.reduce_sum());
-
-            let chunked_longest = local_longest
-                .iter()
-                .fold(0.0f32, |acc, new| acc.max(new.reduce_max()));
-
-            let (sum_buf, longest_buf, _) = line_of_sight::<WIDTH, UNROLL, V>(
-                vs,
-                rest_elevs,
-                rest_distances,
-                rest_adjustments,
-                prefix,
-                rest_indexes,
-                rest_index_out,
-                pov_height,
-            );
-
-            sum += sum_buf
-                .iter()
-                .fold(0.0f32, |acc, partial| acc + partial.reduce_sum());
-
-            let longest = longest_buf
-                .iter()
-                .fold(chunked_longest, |acc, new| acc.max(new.reduce_max()));
-
-            #[expect(
-                clippy::as_conversions,
-                clippy::cast_sign_loss,
-                reason = "result_idx should be in [0, 2^31]"
-            )]
-            // safety: it is guaranteed by the rotation kernel that if the index is
-            // greater than zero that it is in-bounds. This saves ~10% of bounds checks
-            unsafe {
-                *heatmap.get_unchecked_mut(result_tvs_id as usize) += sum;
-                let old_longest: *mut f32 = longest_line.get_unchecked_mut(result_tvs_id as usize);
-                *old_longest = (*old_longest).max(longest as f32);
+            .enumerate()
+            {
+                viewshed(
+                    vs,
+                    pov,
+                    pov_height,
+                    result_dem_id,
+                    max_los,
+                    &mut heatmap,
+                    &mut longest_line,
+                    &line,
+                    Some(Indexes {
+                        indexes_in: indexes,
+                        indexes_out: line_bitmap,
+                    }),
+                    (chunked_adjustments, rest_adjustments),
+                    (chunked_distances, rest_distances),
+                )
+            }
+        }
+    } else {
+        for (line, indexes) in izip!(
+            elevation_map.chunks_exact(width),
+            indexes.chunks_exact(width),
+        ) {
+            for (pov, (&pov_height, &result_dem_id)) in
+                izip!(&line[..max_los], &indexes[..max_los],).enumerate()
+            {
+                viewshed(
+                    vs,
+                    pov,
+                    pov_height,
+                    result_dem_id,
+                    max_los,
+                    &mut heatmap,
+                    &mut longest_line,
+                    &line,
+                    None,
+                    (chunked_adjustments, rest_adjustments),
+                    (chunked_distances, rest_distances),
+                );
             }
         }
     }
@@ -645,34 +784,31 @@ fn generate_rotation(elevs: &[i16], angle: f64, max_los: usize) -> (Vec<i32>, Ve
 struct ViewshedAngle {
     heatmap: Vec<f32>,
     longest_line: Vec<f32>,
-    sector_data: Vec<i32>,
+    sector_data: Option<Vec<i32>>,
 }
 
 impl ViewshedAngle {
-    fn new(max_los: usize) -> Self {
+    fn new(max_los: usize, sector_data: bool) -> Self {
         ViewshedAngle {
             heatmap: vec![0.0f32; max_los * max_los],
             longest_line: vec![0.0f32; max_los * max_los],
-            sector_data: vec![0i32; max_los],
+            sector_data: sector_data.then(|| Vec::with_capacity(max_los * max_los * max_los)),
         }
     }
 
-    fn default() -> Self {
-        ViewshedAngle {
-            heatmap: vec![],
-            longest_line: vec![],
-            sector_data: vec![],
-        }
-    }
-
-    fn acc<'a, 'b>(&mut self, other: &Self) {
+    fn acc(&mut self, other: &Self) {
         zip(&mut self.heatmap, &other.heatmap).for_each(|(a, b)| {
             *a = *a + *b;
         });
         zip(&mut self.longest_line, &other.longest_line).for_each(|(a, b)| {
             *a = (*a).max(*b);
         });
-        self.sector_data.extend_from_slice(&other.sector_data);
+
+        if let Some(ref mut sector_data) = &mut self.sector_data {
+            if let Some(other_sector_data) = &other.sector_data {
+                sector_data.extend_from_slice(&other_sector_data);
+            }
+        }
     }
 }
 
@@ -704,6 +840,7 @@ fn kernel(elevations: &[i16], max_los_points: usize, angle: usize) -> ViewshedAn
         &rotated_elevations,
         &indexes,
         max_los_points,
+        false,
     );
     tracing::info!("kernel for {} run in: {:?}", angle, start.elapsed());
     result
@@ -716,7 +853,8 @@ pub fn multithreaded_kernel(
     max_los_points_original: usize,
     num_angles: usize,
     core_count: usize,
-) -> (Vec<f32>, Vec<f32>, Vec<i32>) {
+    output_sector_data: bool,
+) -> (Vec<f32>, Vec<f32>, Option<Vec<i32>>) {
     let max_los_points = max_los_points_original.div_ceil(4) * 4;
     let dem_width = max_los_points * 3;
     let mut elevations_vec = elevations_original.to_vec();
@@ -739,7 +877,7 @@ pub fn multithreaded_kernel(
         .build()
         .unwrap();
 
-    let mut final_angle = ViewshedAngle::new(max_los_points);
+    let mut final_angle: ViewshedAngle = ViewshedAngle::new(max_los_points, output_sector_data);
     let angle_mu = &Mutex::new(&mut final_angle);
 
     pool.install(move || {
@@ -756,40 +894,10 @@ pub fn multithreaded_kernel(
     let (heatmap, longest_line, sector) = (
         mem::take(&mut final_angle.heatmap),
         mem::take(&mut final_angle.longest_line),
-        mem::take(&mut final_angle.sector_data),
+        final_angle
+            .sector_data
+            .map(|mut sector_data| mem::take(&mut sector_data)),
     );
 
-    return (heatmap, longest_line, sector);
-
-    // thread::scope(|scope| {
-    //     let threads = (0..core_count)
-    //         .map(|start_angle: usize| {
-    //             scope.spawn(move || {
-    //                 let mut res = vec![0.0f32; max_los_points * max_los_points];
-    //                 let mut line_data = vec![0.0f32; max_los_points * max_los_points];
-    //                 let mut sector_data =
-    //                     vec![0i32; max_los_points * max_los_points * max_los_points];
-    //                 for angle in (start_angle..num_angles).step_by(core_count) {
-    //
-    //                 }
-    //                 (res, line_data, sector_data)
-    //             })
-    //         })
-    //         .collect::<Vec<_>>();
-    //
-    //     let mut res = vec![0.0f32; max_los_points * max_los_points];
-    //     let mut longest = vec![0.0f32; max_los_points * max_los_points];
-    //
-    //     #[expect(
-    //         clippy::unwrap_used,
-    //         reason = "if the thread doesn't join, the program should terminate"
-    //     )]
-    //     for thread in threads {
-    //         let (thread_heatmap, thread_longest, thread_sector) = thread.join().unwrap();
-    //         zip(&mut res, thread_heatmap).for_each(|(acc, heatmap)| *acc += heatmap);
-    //         zip(&mut longest, thread_longest).for_each(|(acc, heatmap)| *acc = acc.max(heatmap));
-    //     }
-    //     (res, longest, vec![])
-    // })
-    (vec![], vec![], vec![])
+    (heatmap, longest_line, sector)
 }

@@ -212,15 +212,19 @@ impl<'compute> Compute<'compute> {
                 self.dem.max_los_as_points as usize,
                 360,
                 NUM_CORES,
+                false,
             );
 
             self.add_sector_surfaces_to_running_total(&surfaces);
             self.increment_longest_lines(&longest);
 
-            let longest_line_distance: f32 = longest
-                .iter()
-                .fold(0.0f32, |acc, &long| { acc.max(long) } );
-            println!("the longest line of sight is {}km", longest_line_distance/1000.0);
+            let longest_line_distance: f32 =
+                longest.iter().fold(0.0f32, |acc, &long| acc.max(long));
+
+            println!(
+                "the longest line of sight is {}km",
+                longest_line_distance / 1000.0
+            );
 
             self.render_total_surfaces()?;
             self.render_longest_lines()?;
