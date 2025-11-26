@@ -188,7 +188,7 @@ impl<'viewshed> Reconstructor<'viewshed> {
             }
             if no_of_ring_values > max_rings {
                 tracing::warn!(
-                    "More rings in band than reserved rings ({} > {}) for point {}",
+                    "More rings in band than reserved rings ({} > {}) for point {:?}",
                     no_of_ring_values,
                     max_rings,
                     direction
