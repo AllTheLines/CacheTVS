@@ -1,9 +1,9 @@
 //! Total Viewsheds kernel. The heart of the calculations.
 
-use crate::{
-    ring_data::RingData,
-    rotation::{ANGLE_SHIFT, NOOP_DEM_ID},
-};
+#[cfg(not(target_arch = "spirv"))]
+use crate::rotation::ANGLE_SHIFT;
+
+use crate::{ring_data::RingData, rotation::NOOP_DEM_ID};
 
 /// Ensure that the first point from the point of view is always visible
 const MAX_ANGLE: f32 = -2000.0;
@@ -47,18 +47,30 @@ pub enum BandDirection {
     Backward,
 }
 
-impl core::fmt::Display for BandDirection {
-    #[expect(clippy::min_ident_chars, reason = "It's from core")]
-    #[inline]
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Self::Forward => "Forward",
-                Self::Backward => "Backward",
-            }
-        )
+struct Elevations<'kernel> {
+    /// Every single DEM point's elevation.
+    elevations: &'kernel [f32],
+    /// A record of the last valid elevation. Used to fill "nodata" regions.
+    ///
+    /// Note that even though most, if not all, of these "nodata" regions occur at sea, that
+    /// doesn't necessarily mean that a default elevation of 0 is best. There are various reasons
+    /// why the sea isn't always at a perfect 0 elevation, which we won't go into here. The
+    /// point being that we need to smoothly transition into "nodata" regions to avoid visual
+    /// artefacts.
+    last_valid_elevation: f32,
+}
+
+impl Elevations<'_> {
+    /// Get a single elevation from the rotated DEM.
+    fn get(&mut self, rotated_dem_id: usize) -> f32 {
+        let elevation = self.elevations[rotated_dem_id];
+        let is_invalid = elevation < -1000.0 || elevation.is_nan();
+        if is_invalid {
+            self.last_valid_elevation
+        } else {
+            self.last_valid_elevation = elevation;
+            elevation
+        }
     }
 }
 
@@ -75,16 +87,6 @@ pub struct Kernel<'kernel> {
     rotated_tvs_id: u32,
     /// Whether going forwards or backwards along the band of sight.
     band_direction: BandDirection,
-    /// Every single DEM point's elevation.
-    elevations: &'kernel [f32],
-    /// A record of the last valid elevation. Used to fill "nodata" regions.
-    ///
-    /// Note that even though most, if not all, of these "nodata" regions occur at sea, that
-    /// doesn't necessarily mean that a default elevation of 0 is best. There are various reasons
-    /// why the sea isn't always at a perfect 0 elevation, which we won't go into here. The
-    /// point being that we need to smoothly transition into "nodata" regions to avoid visual
-    /// artefacts.
-    last_valid_elevation: f32,
     /// Array for final TVS values. Usually 1/8th the size of DEM.
     cumulative_surfaces: &'kernel mut [f32],
     /// Array for recording longest lines of sight.
@@ -97,7 +99,6 @@ impl<'kernel> Kernel<'kernel> {
     const fn new(
         kernel_id: u32,
         constants: &'kernel crate::constants::Constants,
-        elevations: &'kernel [f32],
         cumulative_surfaces: &'kernel mut [f32],
         longest_lines: &'kernel mut [f32],
     ) -> Self {
@@ -118,8 +119,6 @@ impl<'kernel> Kernel<'kernel> {
             constants,
             rotated_tvs_id,
             band_direction,
-            elevations,
-            last_valid_elevation: 0.0,
             cumulative_surfaces,
             longest_lines,
         }
@@ -150,19 +149,13 @@ impl<'kernel> Kernel<'kernel> {
         cumulative_surfaces: &'kernel mut [f32],
         longest_lines: &'kernel mut [f32],
     ) {
-        let mut runner = Self::new(
-            kernel_id,
-            constants,
-            elevations,
-            cumulative_surfaces,
-            longest_lines,
-        );
-        runner.kernel(rings_data);
+        let mut runner = Self::new(kernel_id, constants, cumulative_surfaces, longest_lines);
+        runner.kernel(elevations, rings_data);
     }
 
     /// The kernel
     #[inline]
-    fn kernel(&mut self, rings_data: &'kernel mut [u32]) {
+    fn kernel(&mut self, elevations: &'kernel [f32], rings_data: &'kernel mut [u32]) {
         // This can't be placed on `Self` because on Vulkan any writes to it then cause an error
         // about access out of bounds memory. It's a `rust-gpu` thing, I should make an issue for
         // it.
@@ -171,6 +164,14 @@ impl<'kernel> Kernel<'kernel> {
             self.kernel_id,
             self.constants.reserved_rings_per_band,
         );
+
+        // This can't be placed on `Self` because on Vulkan any writes to it then cause an error
+        // about access out of bounds memory. It's a `rust-gpu` thing, I should make an issue for
+        // it.
+        let mut elevation = Elevations {
+            elevations,
+            last_valid_elevation: 0.0,
+        };
 
         let rotator = crate::rotation::Rotator::new_from_cached_trig(
             self.rotated_tvs_id,
@@ -197,7 +198,7 @@ impl<'kernel> Kernel<'kernel> {
         // ID to start the reconstruction of a unique band from the band delta template.
         let rotated_pov_id = self.rotated_pov_id();
         let mut rotated_dem_id = rotated_pov_id;
-        let pov_elevation = self.get_elevation(rotated_dem_id) + self.constants.observer_height;
+        let pov_elevation = elevation.get(rotated_dem_id) + self.constants.observer_height;
 
         // The kernel's kernel. The most critical code of all.
         for index in 0..=self.constants.max_los_as_points {
@@ -209,8 +210,7 @@ impl<'kernel> Kernel<'kernel> {
 
             // Pull the actual data needed to make a visibility calculation from global memory.
             // TODO: does getting these all at once before the loop give a speed up?
-            let elevation = self.get_elevation(rotated_dem_id);
-            let elevation_delta = elevation - pov_elevation;
+            let elevation_delta = elevation.get(rotated_dem_id) - pov_elevation;
 
             #[expect(
                 clippy::as_conversions,
@@ -306,18 +306,6 @@ impl<'kernel> Kernel<'kernel> {
                     self.longest_lines[original_tvs_id] = longest_line;
                 }
             }
-        }
-    }
-
-    /// Get a single elevation from the rotated DEM.
-    fn get_elevation(&mut self, rotated_dem_id: usize) -> f32 {
-        let elevation = self.elevations[rotated_dem_id];
-        let is_invalid = elevation < -1000.0 || elevation.is_nan();
-        if is_invalid {
-            self.last_valid_elevation
-        } else {
-            self.last_valid_elevation = elevation;
-            elevation
         }
     }
 
