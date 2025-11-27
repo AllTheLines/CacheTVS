@@ -105,7 +105,17 @@ fn compute(config: &config::Compute) -> Result<()> {
     tracing::info!("Converting DEM data to `f32`");
     match &tile.data {
         bt::header::Data::Int16(points) => {
-            dem.elevations = points.iter().map(|point| f32::from(*point)).collect();
+            dem.elevations = points
+                .iter()
+                .map(|point| {
+                    let float = f32::from(*point);
+                    if float > kernel::elevations::NODATA {
+                        float
+                    } else {
+                        f32::NAN
+                    }
+                })
+                .collect();
         }
         bt::header::Data::Float32(points) => dem.elevations.clone_from(points),
     }

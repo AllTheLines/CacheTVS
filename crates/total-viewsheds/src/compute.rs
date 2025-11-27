@@ -431,15 +431,16 @@ impl<'compute> Compute<'compute> {
             rotator.rotate_value_nearest_neighbour(&self.dem.elevations, &mut rotated_elevations);
         }
 
+        let mut buffers = kernel::kernel::Buffers {
+            constants: &self.constants,
+            elevations: &rotated_elevations,
+            cumulative_surfaces,
+            longest_lines,
+            ring_data,
+        };
+
         for tvs_id in 0..self.constants.total_bands {
-            kernel::kernel::Kernel::run(
-                tvs_id,
-                &self.constants,
-                &rotated_elevations,
-                ring_data,
-                cumulative_surfaces,
-                longest_lines,
-            );
+            kernel::kernel::Kernel::run(tvs_id, &mut buffers);
         }
 
         Ok(())

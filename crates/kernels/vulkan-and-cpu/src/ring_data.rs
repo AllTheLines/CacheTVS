@@ -3,9 +3,7 @@
 //! It is not needed for calculating total surface areas or longest lines of sight.
 
 /// Helper to store ring data.
-pub struct RingData<'ring_data> {
-    /// The ring data buffer.
-    pub ring_data: &'ring_data mut [u32],
+pub struct RingData {
     /// The amount of reserved space in the global ring data buffer.
     pub reserved_rings_per_band: u32,
     /// Where this point's ring data starts in the ring data buffer.
@@ -14,13 +12,9 @@ pub struct RingData<'ring_data> {
     pub cursor: usize,
 }
 
-impl<'ring_data> RingData<'ring_data> {
+impl RingData {
     /// Instantiate.
-    pub const fn new(
-        ring_data: &'ring_data mut [u32],
-        kernel_id: u32,
-        reserved_rings_per_band: u32,
-    ) -> Self {
+    pub const fn new(kernel_id: u32, reserved_rings_per_band: u32) -> Self {
         #[expect(
             clippy::as_conversions,
             reason = "This needs to run on the GPU where fallibility isn't possible"
@@ -30,7 +24,6 @@ impl<'ring_data> RingData<'ring_data> {
         let cursor = 1;
 
         Self {
-            ring_data,
             reserved_rings_per_band,
             start,
             cursor,
@@ -38,7 +31,7 @@ impl<'ring_data> RingData<'ring_data> {
     }
 
     /// Save ring data.
-    pub fn save(&mut self, value: u32) {
+    pub fn save(&mut self, ring_data: &mut [u32], value: u32) {
         #[expect(
             clippy::as_conversions,
             reason = "
@@ -48,12 +41,12 @@ impl<'ring_data> RingData<'ring_data> {
         if self.cursor >= self.reserved_rings_per_band as usize {
             return;
         }
-        self.ring_data[self.start + self.cursor] = value;
+        ring_data[self.start + self.cursor] = value;
         self.cursor += 1;
     }
 
     /// Make a note at the start of the ring sector data of how many rings we found.
-    pub fn finish(&mut self) {
+    pub fn finish(&self, ring_data: &mut [u32]) {
         #[expect(
             clippy::as_conversions,
             clippy::cast_possible_truncation,
@@ -62,7 +55,7 @@ impl<'ring_data> RingData<'ring_data> {
             "
         )]
         {
-            self.ring_data[self.start] = self.cursor as u32;
+            ring_data[self.start] = self.cursor as u32;
         }
     }
 }

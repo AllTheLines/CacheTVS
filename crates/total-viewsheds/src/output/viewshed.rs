@@ -175,8 +175,8 @@ impl<'viewshed> Reconstructor<'viewshed> {
 
         let max_rings = u32::try_from((self.reserved_ring_size - 2).div_euclid(2))?;
         for direction in [
-            kernel::kernel::BandDirection::Forward,
-            kernel::kernel::BandDirection::Backward,
+            kernel::elevations::Direction::Forward,
+            kernel::elevations::Direction::Backward,
         ] {
             // We divide by 2 because every ring must have both an opening and a closing.
             let mut no_of_ring_values = self.read_next_value()?.div_euclid(2);
@@ -221,11 +221,11 @@ impl<'viewshed> Reconstructor<'viewshed> {
     fn index_to_coordinate(
         &self,
         index: u32,
-        direction: &kernel::kernel::BandDirection,
+        direction: &kernel::elevations::Direction,
     ) -> Coordinate {
         let angle = match direction {
-            kernel::kernel::BandDirection::Forward => self.current_angle.to_radians(),
-            kernel::kernel::BandDirection::Backward => (self.current_angle + 180.0).to_radians(),
+            kernel::elevations::Direction::Forward => self.current_angle.to_radians(),
+            kernel::elevations::Direction::Backward => (self.current_angle + 180.0).to_radians(),
         };
         let distance = f64::from(index);
 
@@ -256,7 +256,7 @@ impl<'viewshed> Reconstructor<'viewshed> {
         &self,
         opening_index: u32,
         closing_index: u32,
-        direction: &kernel::kernel::BandDirection,
+        direction: &kernel::elevations::Direction,
     ) -> geo::Polygon {
         let opening_coord = self.index_to_coordinate(opening_index, direction);
         let closing_coord = self.index_to_coordinate(closing_index, direction);
@@ -369,13 +369,13 @@ mod test {
             pov_coord: crate::dem::Coordinate(setup.pov),
         };
         let direction = if setup.angle < 180.0 {
-            kernel::kernel::BandDirection::Forward
+            kernel::elevations::Direction::Forward
         } else {
-            kernel::kernel::BandDirection::Backward
+            kernel::elevations::Direction::Backward
         };
         let angle = match direction {
-            kernel::kernel::BandDirection::Forward => setup.angle,
-            kernel::kernel::BandDirection::Backward => setup.angle - 180.0,
+            kernel::elevations::Direction::Forward => setup.angle,
+            kernel::elevations::Direction::Backward => setup.angle - 180.0,
         };
         let viewsheder = builder(&viewshed, angle);
         let polygon =
