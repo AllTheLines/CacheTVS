@@ -17,6 +17,7 @@
 use spirv_std::spirv;
 
 pub mod constants;
+pub mod elevations;
 pub mod kernel;
 mod ring_data;
 pub mod rotation;
@@ -54,14 +55,15 @@ pub fn visibility(
         return;
     }
 
-    kernel::Kernel::run(
-        linear_id,
+    let mut buffers = kernel::Buffers {
         constants,
         elevations,
-        ring_data,
         cumulative_surfaces,
         longest_lines,
-    );
+        ring_data,
+    };
+
+    kernel::Kernel::run(linear_id, &mut buffers);
 }
 
 #[allow(

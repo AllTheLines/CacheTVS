@@ -48,13 +48,18 @@ pub fn single_peak_dem() -> Vec<i16> {
 // 108,109,110,111, 112,113,114,115, 116,117,118,119
 // 120,121,122,123, 124,125,126,127, 128,129,130,131
 // 132,133,134,135, 136,137,138,139, 140,141,142,143
-#[rustfmt::skip]
 #[inline]
 #[must_use]
+#[rustfmt::skip]
 /// A bigger DEM for making viewsheds.
 pub fn bigger_dem() -> Vec<i16> {
     let x = 15;
-    let n = -10000;
+    #[expect(
+        clippy::as_conversions,
+        clippy::cast_possible_truncation,
+        reason = "NODATA is actually i16::MIN"
+    )]
+    let n = crate::elevations::NODATA as i16;
     vec![
         0,0,0,0, 0,0,0,0, 0,0,0,1,
         0,1,1,1, 1,1,1,1, 0,1,0,0,

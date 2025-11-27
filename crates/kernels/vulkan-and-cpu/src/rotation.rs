@@ -118,7 +118,8 @@ impl Rotator {
         let width_f32 = self.width as f32;
         let clamped_x = x.clamp(0.0, width_f32 - 1.0) as usize;
         let clamped_y = y.clamp(0.0, width_f32 - 1.0) as usize;
-        elevations[clamped_y * self.width as usize + clamped_x]
+        let id = clamped_y * self.width as usize + clamped_x;
+        elevations[id]
     }
 
     #[inline]
