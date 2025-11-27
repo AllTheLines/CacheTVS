@@ -29,9 +29,9 @@ const MAX_ANGLE: f32 = -2000.0;
 /// do not have visual artefacts.
 const TAN_ONE_RADIAN: f32 = 0.017_453_3;
 
-/// So that some points are not visible simply by virtue of the earth's spherical
-/// shape.
-const EARTH_RADIUS_DOUBLED: f32 = 12_742_000.0;
+/// Diameter of the Earth in meters. So that some points are not visible simply
+/// by virtue of the earth's spherical shape.
+const EARTH_DIAMETER: f32 = 12_742_000.0;
 
 #[expect(
     clippy::exhaustive_structs,
@@ -73,6 +73,13 @@ pub struct Kernel {
     ring_data: RingData,
     /// Keep track of where to get the next elevation in elevations buffer.
     elevations: Elevations,
+    /// Refraction constant.
+    ///
+    /// A good brief overview of refraction in viewshed analysis:
+    /// <https://pro.arcgis.com/en/pro-app/latest/tool-reference/3d-analyst/how-line-of-sight-works.htm>
+    /// A more in-depth analysis of how refraction can vary with altitude:
+    /// <https://agupubs.onlinelibrary.wiley.com/doi/pdf/10.1029/2010JD014067>
+    refraction: f32,
 }
 
 impl Kernel {
@@ -117,6 +124,7 @@ impl Kernel {
                 buffers.constants.observer_height,
             ),
             longest_line: 0.0,
+            refraction: buffers.constants.refraction - 1.0,
         }
     }
 
@@ -198,15 +206,13 @@ impl Kernel {
         let distance = (index + 1) as f32 * buffers.constants.scale;
 
         // The actual visibility calculation.
-        // Note the adjustment for curvature of the earth. It is merely a crude
-        // approximation using the spherical earth model.
         // TODO:
         //   * Currently it's an approximation by not using arctan.
-        //   * Account for refraction.
         //   * Is there a performance gain to be had from only checking for an
         //     increase in elevation as a trigger for the full angle calculation?
         //   * Is this safe for `f32`? At what point does it break down?
-        let angle = (elevation_delta / distance) - (distance / EARTH_RADIUS_DOUBLED);
+        let curvature_correction = (distance * distance * self.refraction) / EARTH_DIAMETER;
+        let angle = (elevation_delta + curvature_correction) / distance;
 
         //                            5              |-
         //                        4 .-`-. 6          |-
@@ -296,8 +302,17 @@ mod test {
         Backward(u32),
     }
 
-    fn invoke(directed_tvs_id: &TvsId, angle: f32) -> (Vec<f32>, Vec<u32>, Vec<f32>) {
+    fn invoke_default(directed_tvs_id: &TvsId, angle: f32) -> (Vec<f32>, Vec<u32>, Vec<f32>) {
         let constants = constants(angle);
+        invoke(directed_tvs_id, angle, Some(constants))
+    }
+
+    fn invoke(
+        directed_tvs_id: &TvsId,
+        angle: f32,
+        maybe_constants: Option<crate::constants::Constants>,
+    ) -> (Vec<f32>, Vec<u32>, Vec<f32>) {
+        let constants = maybe_constants.unwrap_or_else(|| constants(angle));
         let tvs_id = match directed_tvs_id {
             TvsId::Forward(id) | TvsId::Backward(id) => id,
         };
@@ -419,7 +434,7 @@ mod test {
     fn invocation_at_id5_0_degrees_forward() {
         let tvs_id = TvsId::Forward(5);
         let angle = 0.0;
-        let (surfaces, rings, lines) = invoke(&tvs_id, angle);
+        let (surfaces, rings, lines) = invoke_default(&tvs_id, angle);
 
         expect_tvs(&tvs_id, &surfaces, 0.0174533);
         expect_ring_data(&tvs_id, angle, &rings, vec![1]);
@@ -430,7 +445,7 @@ mod test {
     fn invocation_at_id10_0_degrees_forward() {
         let tvs_id = TvsId::Forward(10);
         let angle = 0.0;
-        let (surfaces, rings, lines) = invoke(&tvs_id, angle);
+        let (surfaces, rings, lines) = invoke_default(&tvs_id, angle);
 
         expect_tvs(&tvs_id, &surfaces, 0.2617995);
         expect_ring_data(&tvs_id, angle, &rings, vec![4]);
@@ -441,7 +456,7 @@ mod test {
     fn invocation_at_id5_45_degrees_forward() {
         let tvs_id = TvsId::Forward(5);
         let angle = 45.0;
-        let (surfaces, rings, lines) = invoke(&tvs_id, angle);
+        let (surfaces, rings, lines) = invoke_default(&tvs_id, angle);
 
         expect_tvs(&tvs_id, &surfaces, 0.0174533);
         expect_ring_data(&tvs_id, angle, &rings, vec![1]);
@@ -452,7 +467,7 @@ mod test {
     fn invocation_at_id10_90_degrees_forward() {
         let tvs_id = TvsId::Forward(10);
         let angle = 90.0;
-        let (surfaces, rings, lines) = invoke(&tvs_id, angle);
+        let (surfaces, rings, lines) = invoke_default(&tvs_id, angle);
 
         expect_tvs(&tvs_id, &surfaces, 0.2617995);
         expect_ring_data(&tvs_id, angle, &rings, vec![4]);
@@ -463,7 +478,7 @@ mod test {
     fn invocation_at_id5_135_degrees_forward() {
         let tvs_id = TvsId::Forward(5);
         let angle = 135.0;
-        let (surfaces, rings, lines) = invoke(&tvs_id, angle);
+        let (surfaces, rings, lines) = invoke_default(&tvs_id, angle);
 
         expect_tvs(&tvs_id, &surfaces, 0.0174533);
         expect_ring_data(&tvs_id, angle, &rings, vec![1]);
@@ -474,7 +489,7 @@ mod test {
     fn invocation_at_id5_0_degrees_backward() {
         let tvs_id = TvsId::Backward(5);
         let angle = 0.0;
-        let (surfaces, rings, lines) = invoke(&tvs_id, angle);
+        let (surfaces, rings, lines) = invoke_default(&tvs_id, angle);
 
         expect_tvs(&tvs_id, &surfaces, 0.0174533);
         expect_ring_data(&tvs_id, angle, &rings, vec![1]);
@@ -485,7 +500,7 @@ mod test {
     fn invocation_at_id10_0_degrees_backward() {
         let tvs_id = TvsId::Backward(10);
         let angle = 0.0;
-        let (surfaces, rings, lines) = invoke(&tvs_id, angle);
+        let (surfaces, rings, lines) = invoke_default(&tvs_id, angle);
 
         expect_tvs(&tvs_id, &surfaces, 0.2617995);
         // TODO: I think this result clearly shows that we should be closing the ring sector for
@@ -498,7 +513,7 @@ mod test {
     fn invocation_at_id10_45_degrees_backward() {
         let tvs_id = TvsId::Backward(10);
         let angle = 45.0;
-        let (surfaces, rings, lines) = invoke(&tvs_id, angle);
+        let (surfaces, rings, lines) = invoke_default(&tvs_id, angle);
 
         expect_tvs(&tvs_id, &surfaces, 0.2617995);
         expect_ring_data(&tvs_id, angle, &rings, vec![4]);
@@ -509,7 +524,7 @@ mod test {
     fn invocation_at_id5_90_degrees_backward() {
         let tvs_id = TvsId::Backward(5);
         let angle = 90.0;
-        let (surfaces, rings, lines) = invoke(&tvs_id, angle);
+        let (surfaces, rings, lines) = invoke_default(&tvs_id, angle);
 
         expect_tvs(&tvs_id, &surfaces, 0.0174533);
         expect_ring_data(&tvs_id, angle, &rings, vec![1]);
@@ -520,10 +535,23 @@ mod test {
     fn invocation_at_id10_135_degrees_backward() {
         let tvs_id = TvsId::Backward(10);
         let angle = 135.0;
-        let (surfaces, rings, lines) = invoke(&tvs_id, angle);
+        let (surfaces, rings, lines) = invoke_default(&tvs_id, angle);
 
         expect_tvs(&tvs_id, &surfaces, 0.2617995);
         expect_ring_data(&tvs_id, angle, &rings, vec![4]);
         expect_tvs(&tvs_id, &lines, -5.0);
+    }
+
+    #[gtest]
+    fn refraction_affects_visibility() {
+        let tvs_id = TvsId::Backward(10);
+        let angle = 135.0;
+        let mut constants = constants(angle);
+        constants.refraction = -EARTH_DIAMETER;
+        let (surfaces, rings, lines) = invoke(&tvs_id, angle, Some(constants));
+
+        expect_tvs(&tvs_id, &surfaces, 0.1047198);
+        expect_ring_data(&tvs_id, angle, &rings, vec![3]);
+        expect_tvs(&tvs_id, &lines, -3.0);
     }
 }

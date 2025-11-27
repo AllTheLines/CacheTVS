@@ -39,8 +39,10 @@ pub struct Constants {
     pub sine: f32,
     /// Cached cosine of the angle being calculated.
     pub cosine: f32,
+    /// Refraction coefficient.
+    pub refraction: f32,
     /// Padding.
-    pub _pad0: glam::Vec2,
+    pub _pad0: f32,
 }
 impl Constants {
     #[inline]

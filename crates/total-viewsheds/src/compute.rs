@@ -43,6 +43,8 @@ pub struct ComputeConfig {
     pub rings_per_km: f32,
     /// How to normalise the heatmap data.
     pub heatmap: crate::config::HeatmapNormalisation,
+    /// Refractoin coefficient
+    pub refraction: f32,
 }
 
 impl<'compute> Compute<'compute> {
@@ -81,6 +83,7 @@ impl<'compute> Compute<'compute> {
             reserved_rings_per_band: u32::try_from(rings_per_band)?,
             process: Self::bitmask_flags_for_kernel(&config.process),
             scale: config.scale,
+            refraction: config.refraction,
             ..Default::default()
         };
 
@@ -478,6 +481,7 @@ pub mod test {
             output_directory: None,
             rings_per_km: 5000.0,
             heatmap: crate::config::HeatmapNormalisation::UnitScale,
+            refraction: 0.13,
         };
 
         let mut compute = Compute::new(config, dem).unwrap();

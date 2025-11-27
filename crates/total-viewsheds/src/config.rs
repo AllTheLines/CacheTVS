@@ -103,6 +103,15 @@ pub struct Compute {
         default_value_t = HeatmapNormalisation::Exponential
     )]
     pub heatmap: HeatmapNormalisation,
+
+    /// Air refraction coefficient. Therefore, how much impact refraction has on visibility. Values
+    /// typically range from 0.1 (less impact) to 0.2 (more impact).
+    #[arg(
+        long,
+        value_name = "Air refraction coefficient",
+        default_value = "0.13"
+    )]
+    pub refraction: f32,
 }
 
 #[derive(clap::Parser, Debug)]
