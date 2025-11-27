@@ -40,7 +40,7 @@ Once you have run the above computations you will have access to what's called "
 `RUST_LOG=trace cargo run --release -- viewshed output -- -3.1230,51.4898`
 
 ```
-Generate _all_ the viewsheds for a given Digital Elevation Model, therefore the total viewsheds.
+  Generate _all_ the viewsheds for a given Digital Elevation Model, therefore the total viewsheds.
 
   Usage: tvs <COMMAND>
 
@@ -118,6 +118,11 @@ Generate _all_ the viewsheds for a given Digital Elevation Model, therefore the 
             - welford:     Use Z-score normalisation based on Welford's algorithm. This basically means that the data is redistributed such that the mean is 0.5. Useful for overly dark or bright heatmaps. https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Welford's_online_algorithm
 
             [default: exponential]
+
+        --refraction <Air refraction coefficient>
+            Air refraction coefficient. Therefore, how much impact refraction has on visibility. Values typically range from 0.1 (less impact) to 0.2 (more impact)
+
+            [default: 0.13]
 
     -h, --help
             Print help (see a summary with '-h')

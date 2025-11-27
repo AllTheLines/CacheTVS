@@ -134,6 +134,7 @@ fn compute(config: &config::Compute) -> Result<()> {
         output_directory: Some(config.output_dir.clone()),
         rings_per_km: config.rings_per_km,
         heatmap: config.heatmap,
+        refraction: config.refraction,
     };
     let mut compute = crate::compute::Compute::new(compute_config, &mut dem)?;
     compute.run()?;
