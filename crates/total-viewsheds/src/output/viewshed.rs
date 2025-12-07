@@ -162,12 +162,12 @@ impl<'viewshed> Reconstructor<'viewshed> {
         mut viewshed_so_far: geo::MultiPolygon,
     ) -> Result<geo::MultiPolygon> {
         let tvs_id = self.viewshed.dem.pov_id_to_tvs_id(u64::from(self.pov_id));
-        let rotated_tvs_id = kernel::rotation::Rotator::new_from_angle(
+        let rotated_tvs_id = kernel::rotation::Rotator::anti_rotate_index(
             u32::try_from(tvs_id)?,
             self.viewshed.dem.tvs_width,
             self.current_angle,
-        )
-        .anti_rotate_dem_id();
+        );
+
         self.cursor = rotated_tvs_id * self.reserved_ring_size;
 
         let computable_points = usize::try_from(self.viewshed.dem.computable_points_count)?;

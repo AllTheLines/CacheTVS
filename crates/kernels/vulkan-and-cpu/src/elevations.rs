@@ -21,8 +21,8 @@ pub enum Direction {
 pub struct Elevations {
     /// Whether going forwards or backwards along the line of sight.
     pub direction: Direction,
-    /// The DEM ID of the current eleveation point in rotated space.
-    rotated_dem_id: usize,
+    /// The Chocolate Box ID of the current elevation point in rotated space.
+    chocolate_box_id: usize,
     /// The elevation at the observer.
     pov_elevation: f32,
     /// A record of the last valid elevation. Used to fill "nodata" regions.
@@ -42,10 +42,10 @@ impl Elevations {
     pub fn new(
         elevations: &[f32],
         direction: Direction,
-        rotated_dem_id: usize,
+        chocolate_box_id: usize,
         observer_height: f32,
     ) -> Self {
-        let elevation = elevations[rotated_dem_id];
+        let elevation = elevations[chocolate_box_id];
         let last_valid_elevation = if Self::is_valid(elevation) {
             elevation
         } else {
@@ -55,7 +55,7 @@ impl Elevations {
 
         Self {
             direction,
-            rotated_dem_id,
+            chocolate_box_id,
             pov_elevation,
             last_valid_elevation,
         }
@@ -65,11 +65,11 @@ impl Elevations {
     /// Get the next elevation.
     pub fn next(&mut self, elevations: &[f32]) -> f32 {
         match self.direction {
-            Direction::Forward => self.rotated_dem_id += 1,
-            Direction::Backward => self.rotated_dem_id -= 1,
+            Direction::Forward => self.chocolate_box_id += 1,
+            Direction::Backward => self.chocolate_box_id -= 1,
         }
 
-        let elevation = elevations[self.rotated_dem_id];
+        let elevation = elevations[self.chocolate_box_id];
 
         if Self::is_valid(elevation) {
             self.last_valid_elevation = elevation;

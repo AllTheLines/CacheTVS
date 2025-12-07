@@ -68,8 +68,8 @@ impl Vulkan {
     /// Instantiate.
     pub fn new(
         constants: kernel::constants::Constants,
-        elevations: Vec<f32>,
-        rotations_count: usize,
+        elevations: Vec<i16>,
+        chocolate_box_size: usize,
         total_reserved_rings: usize,
     ) -> Result<Self> {
         let instance = Self::instance();
@@ -113,13 +113,13 @@ impl Vulkan {
 
         let total_bands = u64::from(constants.total_bands.div_euclid(2));
         let rotations_size =
-            u64::try_from(rotations_count)? * u64::try_from(std::mem::size_of::<f32>())?;
+            u64::try_from(chocolate_box_size)? * u64::try_from(std::mem::size_of::<f32>())?;
         let output_surfaces_size = total_bands * u64::try_from(std::mem::size_of::<f32>())?;
         let output_rings_size =
             u64::try_from(total_reserved_rings)? * u64::try_from(std::mem::size_of::<u32>())?;
         let output_longest_lines_size = total_bands * u64::try_from(std::mem::size_of::<f32>())?;
 
-        let required_rotation_invocations = constants.dem_width * constants.dem_width;
+        let required_rotation_invocations = u32::try_from(chocolate_box_size)?;
         let (rotation_dispatches, rotation_invocations) =
             Self::find_dispatch_dimensions(required_rotation_invocations, KERNEL_WORKGROUPS)?;
         let mut rotation_constants = constants;
@@ -200,7 +200,8 @@ impl Vulkan {
     /// Get the limits for the GPU.
     fn limits(adapter: &wgpu::Adapter) -> wgpu::Limits {
         let limits = adapter.limits();
-        let max_buffer_size = 2_500_000_000;
+        // See: https://github.com/gfx-rs/wgpu/issues/8105
+        let max_buffer_size = 0x7F_FFF_FFF;
         tracing::debug!("GPU limits: {limits:?}");
         wgpu::Limits {
             max_storage_buffers_per_shader_stage: 6,
@@ -290,7 +291,7 @@ impl Vulkan {
     /// Setup the buffers for the rotation kernel.
     fn setup_rotation_buffers(
         device: &wgpu::Device,
-        elevations: Vec<f32>,
+        elevations: Vec<i16>,
         rotations_size: u64,
     ) -> Result<(wgpu::Buffer, wgpu::Buffer, wgpu::BindGroup)> {
         tracing::trace!("Creating GPU buffers for rotation kernel...");

@@ -18,6 +18,7 @@ and simplifies the code. As such it resembles some of the ideas in the same auth
 ## DEM file format
 Currently only the [`.bt` file format](http://vterrain.org/Implementation/Formats/BT.html) is supported.
 * It must be perfectly square.
+* The width must be divisible by 3.
 * Must be in an AEQD projection whose anchor is the centre of the tile.
 * The tile's extent must be set so that both the bottom-left and top-right are repurposed to define the lon/lat coordinates of the centre.
 * All points must be the same metric distance apart.
@@ -67,9 +68,6 @@ Once you have run the above computations you will have access to what's called "
             The input DEM file. Currently only `.hgt` files are supported
 
   Options:
-        --max-line-of-sight <The maximum expected line of sight in meters>
-            The maximum distance in metres to search for visible points. For a TVS calculation to be truly correct, it must have access to all the DEM data around it that may possibly be visible to it. However, the further the distances searched the exponentially greater the computations required. Note that the largest currently known line of sight in the world is 538km. Defaults to one third of the DEM width
-
         --rings-per-km <Expected rings per km>
             The maximum number of visible rings expected per km of band of sight. This is the number of times land may appear and disappear for an observer looking out into the distance. The value is used to decide how much memory is reserved for collecting ring data. So if it is too low then the program may panic. If it is too high then performance is lost due to unused RAM
 

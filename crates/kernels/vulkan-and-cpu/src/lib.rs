@@ -16,6 +16,7 @@
 
 use spirv_std::spirv;
 
+pub mod chocolate_box;
 pub mod constants;
 pub mod elevations;
 pub mod kernel;
@@ -80,7 +81,7 @@ pub fn visibility(
 pub fn rotate(
     #[spirv(global_invocation_id)] id: glam::UVec3,
     #[spirv(uniform, descriptor_set = 0, binding = 0)] constants: &constants::Constants,
-    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] elevations_in: &[f32],
+    #[spirv(storage_buffer, descriptor_set = 0, binding = 1)] elevations_in: &[i16],
     #[spirv(storage_buffer, descriptor_set = 0, binding = 2)] elevations_out: &mut [f32],
 ) {
     let linear_id = id.x
@@ -90,9 +91,10 @@ pub fn rotate(
         return;
     }
 
-    let rotator = rotation::Rotator::new_from_cached_trig(
+    let rotator = chocolate_box::Rotator::new_from_cached_trig(
         linear_id,
         constants.dem_width,
+        constants.tvs_width,
         constants.sine,
         constants.cosine,
     );
