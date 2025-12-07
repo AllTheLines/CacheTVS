@@ -96,28 +96,16 @@ fn compute(config: &config::Compute) -> Result<()> {
         clippy::cast_precision_loss,
         reason = "Sign loss and truncation aren't relevant"
     )]
-    let max_line_of_sight = config
-        .max_line_of_sight
-        .unwrap_or_else(|| ((tile.header.width.div_euclid(3) as f32) * scale) as u32);
+    let max_line_of_sight = (tile.header.width.div_euclid(3) as f32 * scale) as u32;
 
     let mut dem = crate::dem::DEM::new(tile.centre(), tile.header.width, scale, max_line_of_sight)?;
 
     tracing::info!("Converting DEM data to `f32`");
     match &tile.data {
-        bt::header::Data::Int16(points) => {
-            dem.elevations = points
-                .iter()
-                .map(|point| {
-                    let float = f32::from(*point);
-                    if float > kernel::elevations::NODATA {
-                        float
-                    } else {
-                        f32::NAN
-                    }
-                })
-                .collect();
+        bt::header::Data::Int16(points) => dem.elevations.clone_from(points),
+        bt::header::Data::Float32(_) => {
+            color_eyre::eyre::bail!("Float `.bt` files aren't supported yet.")
         }
-        bt::header::Data::Float32(points) => dem.elevations.clone_from(points),
     }
 
     // Free up RAM

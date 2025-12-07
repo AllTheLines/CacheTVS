@@ -33,14 +33,6 @@ pub enum Commands {
 /// Arguments to the `compute` subcommand.
 #[derive(clap::Parser, Debug)]
 pub struct Compute {
-    /// The maximum distance in metres to search for visible points. For a TVS calculation to be
-    /// truly correct, it must have access to all the DEM data around it that may possibly be
-    /// visible to it. However, the further the distances searched the exponentially greater the
-    /// computations required. Note that the largest currently known line of sight in the world
-    /// is 538km. Defaults to one third of the DEM width.
-    #[arg(long, value_name = "The maximum expected line of sight in meters")]
-    pub max_line_of_sight: Option<u32>,
-
     // TODO: make this "reserved rings" and add support to the kernel so that the user can get
     // feedback of the actual number needed.
     //

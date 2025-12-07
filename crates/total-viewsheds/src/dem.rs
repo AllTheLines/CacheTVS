@@ -18,7 +18,7 @@ pub struct Coordinate(pub geo::Coord);
 /// `DEM`
 pub struct DEM {
     /// All the elevation data.
-    pub elevations: Vec<f32>,
+    pub elevations: Vec<i16>,
     /// The width of the DEM.
     pub width: u32,
     /// The width of the computable sub-grid within the DEM. Consider a point on the edge of the
@@ -31,8 +31,6 @@ pub struct DEM {
     pub scale: f32,
     /// The geographic location of the centre of the DEM tile.
     pub centre: crate::projection::LatLonCoord,
-    /// The maximum distance in metres to search for visible points.
-    pub max_line_of_sight: u32,
     /// The maximum distance in terms of points to search.
     pub max_los_as_points: u32,
     /// The total number of points that can have full viewsheds calculated for them.
@@ -66,41 +64,42 @@ impl DEM {
             );
         }
 
-        let mut dem = Self {
+        if width.rem_euclid(3) != 0 {
+            color_eyre::eyre::bail!("Point width ({width} is not divisible by 3)");
+        }
+
+        let tvs_width = width.div_euclid(3);
+        let computable_points_count = tvs_width.pow(2);
+
+        let dem = Self {
             elevations: Vec::default(),
             width,
-            tvs_width: 0,
+            tvs_width,
             size,
             scale,
             centre: centre_latlon,
-            max_line_of_sight,
             max_los_as_points,
-            computable_points_count: 0,
+            computable_points_count,
         };
-        dem.count_computable_points();
-        dem.tvs_width = dem.computable_points_count.isqrt();
         Ok(dem)
     }
 
-    /// Count the number of points in the DEM that can have their viewsheds fully calculated.
-    fn count_computable_points(&mut self) {
-        self.computable_points_count = 0;
-        for point in 0..self.size {
-            if self.is_point_computable(point) {
-                self.computable_points_count += 1;
-            }
-        }
+    #[expect(
+        clippy::as_conversions,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "The scale is positive and never be beyond the limts of f32"
+    )]
+    /// Cast the scale into an integer
+    pub const fn scale_u32(&self) -> u32 {
+        self.scale as u32
     }
 
-    /// Depending on the requested max line of sight, only certain points in the middle of the DEM
-    /// can truly have their total visible surfaces calculated. This is because points on the edge
-    /// do not have access to further elevation data.
+    /// Is the DEM ID within the DEM such that a valid viewshed can be made for it?
     pub fn is_point_computable(&self, dem_id: u32) -> bool {
-        let scale = f64::from(self.scale);
-        let max_line_of_sight = f64::from(self.max_line_of_sight);
-        let coord = self.convert_dem_id_to_coord(dem_id).0 * scale;
-        let lower = max_line_of_sight;
-        let upper = f64::from(self.width - 1).mul_add(scale, -max_line_of_sight);
+        let coord = self.convert_dem_id_to_coord(dem_id).0;
+        let lower = f64::from(self.max_los_as_points);
+        let upper = f64::from((self.width - 1) - self.max_los_as_points);
         coord.x >= lower && coord.x <= upper && coord.y >= lower && coord.y <= upper
     }
 
@@ -170,7 +169,6 @@ impl std::fmt::Debug for DEM {
             .field("size", &self.size)
             .field("scale", &self.scale)
             .field("centre", &self.centre)
-            .field("max_line_of_sight", &self.max_line_of_sight)
             .field("max_los_as_points", &self.max_los_as_points)
             .field("computable_points_count", &self.computable_points_count)
             .finish()
@@ -184,11 +182,11 @@ mod test {
     #[test]
     fn latlon_to_dem_coord() {
         let centre = crate::projection::LatLonCoord((-33.33f64, 12.34f64).into());
-        let dem = DEM::new(centre, 101, 5.0, 250).unwrap();
+        let dem = DEM::new(centre, 102, 5.0, 250).unwrap();
 
         assert_eq!(
             dem.latlon_to_dem_coord(centre).unwrap(),
-            Coordinate((50.0f64, 50.0f64).into())
+            Coordinate((50.5f64, 50.5f64).into())
         );
     }
 }

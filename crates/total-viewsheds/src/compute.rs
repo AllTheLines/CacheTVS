@@ -53,7 +53,7 @@ impl<'compute> Compute<'compute> {
         let total_bands = dem.computable_points_count * 2;
 
         let rings_per_band = if Self::is_process_viewsheds(&config.process) {
-            Self::ring_count_per_band(config.rings_per_km, dem.max_line_of_sight)
+            Self::ring_count_per_band(config.rings_per_km, dem.max_los_as_points * dem.scale_u32())
         } else {
             1
         };
@@ -87,6 +87,9 @@ impl<'compute> Compute<'compute> {
             ..Default::default()
         };
 
+        // We only need the "chocolate box" section of rotations to do visibility calculations.
+        let rotations_size = kernel::chocolate_box::size(dem.width, dem.tvs_width);
+
         #[expect(
             clippy::if_then_some_else_none,
             reason = "The `?` is hard to use in the closure"
@@ -97,7 +100,7 @@ impl<'compute> Compute<'compute> {
             Some(super::vulkan::Vulkan::new(
                 constants,
                 elevations,
-                usize::try_from(dem.size)?,
+                usize::try_from(rotations_size)?,
                 total_reserved_rings,
             )?)
         } else {
@@ -275,7 +278,7 @@ impl<'compute> Compute<'compute> {
         Ok(crate::output::ring_data::MetaData {
             width: self.dem.width,
             scale: self.dem.scale,
-            max_line_of_sight: self.dem.max_line_of_sight,
+            max_line_of_sight: self.dem.max_los_as_points * self.dem.scale_u32(),
             reserved_ring_size: usize::try_from(self.constants.reserved_rings_per_band)?,
             centre: self.dem.centre,
         })
@@ -423,15 +426,17 @@ impl<'compute> Compute<'compute> {
         ring_data: &mut [u32],
         longest_lines: &mut [f32],
     ) -> Result<()> {
-        let mut rotated_elevations = vec![0.0; usize::try_from(self.dem.size)?];
-        for dem_id in 0..self.dem.size {
-            let rotator = kernel::rotation::Rotator::new_from_cached_trig(
-                dem_id,
+        let chocolate_box_size = kernel::chocolate_box::size(self.dem.width, self.dem.tvs_width);
+        let mut rotated_elevations = vec![0.0; usize::try_from(chocolate_box_size)?];
+        for chocolate_id in 0..(self.dem.computable_points_count * 2) {
+            let chocolate = kernel::chocolate_box::Rotator::new_from_cached_trig(
+                chocolate_id,
                 self.dem.width,
+                self.dem.tvs_width,
                 self.constants.sine,
                 self.constants.cosine,
             );
-            rotator.rotate_value_nearest_neighbour(&self.dem.elevations, &mut rotated_elevations);
+            chocolate.rotate_value_nearest_neighbour(&self.dem.elevations, &mut rotated_elevations);
         }
 
         let mut buffers = kernel::kernel::Buffers {
@@ -464,7 +469,7 @@ pub mod test {
             width / 3,
         )
         .unwrap();
-        dem.elevations = elevations.iter().map(|&x| f32::from(x)).collect();
+        dem.elevations = elevations.into();
         dem
     }
 
@@ -498,8 +503,8 @@ pub mod test {
             compute.total_surfaces,
             [
                 0.0, 0.0,       0.0,      0.0,
-                0.0, 568.6271,  3463.1523,  0.0,
-                0.0, 6475.4287, 8529.429, 0.0,
+                0.0, 568.6271,  3430.8115,  0.0,
+                0.0, 6453.858, 8529.429, 0.0,
                 0.0, 0.0,       0.0,      0.0
             ]
         );

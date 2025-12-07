@@ -41,7 +41,7 @@ const EARTH_DIAMETER: f32 = 12_742_000.0;
 pub struct Buffers<'buffers> {
     /// Constants for the calculations.
     pub constants: &'buffers crate::constants::Constants,
-    /// Every single DEM point's elevation.
+    /// Every single rotated DEM point's elevation.
     pub elevations: &'buffers [f32],
     /// Array for final TVS values. Usually 1/8th the size of DEM.
     pub cumulative_surfaces: &'buffers mut [f32],
@@ -53,7 +53,7 @@ pub struct Buffers<'buffers> {
 
 /// Kernel state
 pub struct Kernel {
-    /// The TVS ID in its original coordinates.
+    /// The TVS ID in its non-rotated coordinates.
     original_tvs_id: usize,
     /// The TVS ID in rotated coordinates.
     rotated_tvs_id: u32,
@@ -64,7 +64,7 @@ pub struct Kernel {
     /// Is the previous elevation visible.
     is_previously_visible: bool,
     /// Is region of visibility closing.
-    closing: bool,
+    is_closing: bool,
     /// Keep track of the amount of the earth visible from this particular band
     band_surface: f32,
     /// Keep track of the longest line.
@@ -98,15 +98,15 @@ impl Kernel {
             crate::elevations::Direction::Backward
         };
 
-        let rotated_pov_id = Self::rotated_pov_id(rotated_tvs_id, buffers.constants);
+        let chocolate_id =
+            crate::chocolate_box::chocolate_id_from_tvs_id(rotated_tvs_id, buffers.constants);
 
-        let original_tvs_id = crate::rotation::Rotator::new_from_cached_trig(
+        let original_tvs_id = crate::rotation::Rotator::rotate_index_from_cached_trig(
             rotated_tvs_id,
             buffers.constants.tvs_width,
             buffers.constants.sine,
             buffers.constants.cosine,
-        )
-        .rotate_dem_id();
+        );
 
         Self {
             original_tvs_id,
@@ -114,31 +114,18 @@ impl Kernel {
             rotated_tvs_id,
             is_currently_visible: true,
             is_previously_visible: true,
-            closing: false,
+            is_closing: false,
             band_surface: 0.0,
             ring_data: RingData::new(kernel_id, buffers.constants.reserved_rings_per_band),
             elevations: Elevations::new(
                 buffers.elevations,
                 direction,
-                rotated_pov_id,
+                chocolate_id,
                 buffers.constants.observer_height,
             ),
             longest_line: 0.0,
             refraction: buffers.constants.refraction - 1.0,
         }
-    }
-
-    /// Calculate the Point of View coordinate in rotated space.
-    const fn rotated_pov_id(rotated_tvs_id: u32, constants: &crate::constants::Constants) -> usize {
-        let pov_x = rotated_tvs_id.rem_euclid(constants.tvs_width) + constants.max_los_as_points;
-        let pov_y = rotated_tvs_id.div_euclid(constants.tvs_width) + constants.max_los_as_points;
-        #[expect(
-            clippy::as_conversions,
-            reason = "This needs to run on the GPU where fallibility isn't possible"
-        )]
-        let rotated_pov_id = ((pov_y * constants.dem_width) + pov_x) as usize;
-
-        rotated_pov_id
     }
 
     /// The kernel
@@ -154,7 +141,7 @@ impl Kernel {
         }
 
         // Close any ring sectors prematurely cut off by a restricted line of sight.
-        if buffers.constants.is_ring_data() && runner.is_currently_visible && !runner.closing {
+        if buffers.constants.is_ring_data() && runner.is_currently_visible && !runner.is_closing {
             runner
                 .ring_data
                 .save(buffers.ring_data, buffers.constants.max_los_as_points);
@@ -240,14 +227,14 @@ impl Kernel {
         }
 
         if buffers.constants.is_ring_data() {
-            let opening = self.is_currently_visible && !self.is_previously_visible;
-            self.closing = self.is_previously_visible && !self.is_currently_visible;
+            let is_opening = self.is_currently_visible && !self.is_previously_visible;
+            self.is_closing = self.is_previously_visible && !self.is_currently_visible;
 
-            if opening {
+            if is_opening {
                 self.ring_data.save(buffers.ring_data, index);
             }
 
-            if self.closing {
+            if self.is_closing {
                 self.ring_data.save(buffers.ring_data, index);
             }
         }
@@ -268,14 +255,16 @@ impl Kernel {
     /// Check if the current invocation meets the given criteria.
     fn is_debug_state(&self, buffers: &Buffers, angle: f32, pov_id: usize) -> bool {
         let angle_to_debug = angle + ANGLE_SHIFT;
-        let rotated_pov_id = Self::rotated_pov_id(self.rotated_tvs_id, buffers.constants);
-        let original_pov_id = crate::rotation::Rotator::new_from_cached_trig(
-            rotated_pov_id as u32,
+        let chocolate_id =
+            crate::chocolate_box::chocolate_id_from_tvs_id(self.rotated_tvs_id, buffers.constants);
+        let original_pov_id = crate::chocolate_box::Rotator::new_from_cached_trig(
+            chocolate_id as u32,
             buffers.constants.dem_width,
+            buffers.constants.tvs_width,
             buffers.constants.sine,
             buffers.constants.cosine,
         )
-        .rotate_dem_id();
+        .rotate_chocolate_id_to_dem_id();
         angle_to_debug.to_radians().cos() == buffers.constants.cosine
             && angle_to_debug.to_radians().sin() == buffers.constants.sine
             && original_pov_id == pov_id
@@ -317,16 +306,15 @@ mod test {
             TvsId::Forward(id) | TvsId::Backward(id) => id,
         };
 
-        let elevations: Vec<f32> = crate::tests::dems::bigger_dem()
-            .iter()
-            .map(|elevation| f32::from(*elevation))
-            .collect();
+        let elevations = crate::tests::dems::bigger_dem();
         let dem_size = constants.dem_width.pow(2);
-        let mut rotated_elevations = vec![0.0; constants.dem_width.pow(2) as usize];
-        for dem_id in 0..dem_size {
-            let rotator = crate::rotation::Rotator::new_from_cached_trig(
-                dem_id,
+        let chocolate_box_size = dem_size.div_euclid(3);
+        let mut rotated_elevations = vec![0.0; chocolate_box_size as usize];
+        for chocolate_id in 0..chocolate_box_size {
+            let rotator = crate::chocolate_box::Rotator::new_from_cached_trig(
+                chocolate_id,
                 constants.dem_width,
+                constants.tvs_width,
                 constants.sine,
                 constants.cosine,
             );
@@ -338,8 +326,8 @@ mod test {
         let mut ring_data = vec![0; reserved_ring_data()];
         let mut longest_lines = vec![0.0; tvs_size];
 
-        let rotator = crate::rotation::Rotator::new_from_angle(*tvs_id, constants.tvs_width, angle);
-        let rotated_tvs_id = rotator.anti_rotate_dem_id() as u32;
+        let rotated_tvs_id =
+            crate::rotation::Rotator::anti_rotate_index(*tvs_id, constants.tvs_width, angle);
 
         let offset = match directed_tvs_id {
             TvsId::Forward(_) => 0,
@@ -354,7 +342,7 @@ mod test {
             ring_data: &mut ring_data,
         };
 
-        Kernel::run(rotated_tvs_id + offset, &mut buffers);
+        Kernel::run(rotated_tvs_id as u32 + offset, &mut buffers);
 
         (
             cumulative_surfaces.clone(),
@@ -415,8 +403,8 @@ mod test {
             TvsId::Forward(id) | TvsId::Backward(id) => id,
         };
         let tvs_size = constants.tvs_width.pow(2) as usize;
-        let rotator = crate::rotation::Rotator::new_from_angle(*tvs_id, constants.tvs_width, angle);
-        let rotated_tvs_id = rotator.anti_rotate_dem_id() as usize;
+        let rotated_tvs_id =
+            crate::rotation::Rotator::anti_rotate_index(*tvs_id, constants.tvs_width, angle);
         let mut ring_expected = empty_ring_data();
         let offset = match directed_tvs_id {
             TvsId::Forward(_) => 0,
