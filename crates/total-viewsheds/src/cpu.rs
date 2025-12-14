@@ -439,9 +439,15 @@ where
     LaneCount<WIDTH>: SupportedLaneCount,
 {
     /// `adjustments` holds a slice of UNROLL sized slices used during loop unrolling, and then the "rest" portion
-    adjustments: (&'angle [[Simd<f32, WIDTH>; UNROLL]], &'angle [Simd<f32, WIDTH>]),
+    adjustments: (
+        &'angle [[Simd<f32, WIDTH>; UNROLL]],
+        &'angle [Simd<f32, WIDTH>],
+    ),
     /// `distances` holds a slice of UNROLL sized slices used during loop unrolling, and then the "rest" portion
-    distances: (&'angle [[Simd<f32, WIDTH>; UNROLL]], &'angle [Simd<f32, WIDTH>]),
+    distances: (
+        &'angle [[Simd<f32, WIDTH>; UNROLL]],
+        &'angle [Simd<f32, WIDTH>],
+    ),
 }
 
 /// `viewshed` computes the viewshed for a single pov, using its `elevation`, and `max_los`
@@ -457,7 +463,7 @@ fn viewshed<const WIDTH: usize, const UNROLL: usize, VS>(
     longest_line: &mut [f32],
     line: &[i16],
     index_data: Option<Indexes>,
-    unrolled_angles: &UnrolledAngles<WIDTH, UNROLL>
+    unrolled_angles: &UnrolledAngles<WIDTH, UNROLL>,
 ) where
     LaneCount<WIDTH>: SupportedLaneCount,
     VS: Viewshed<WIDTH>,
@@ -589,9 +595,11 @@ fn viewshed<const WIDTH: usize, const UNROLL: usize, VS>(
 
 /// `precalculate_distances` precalculates earth curvature adjustments and
 /// the distance from a particular point (which is just linear)
-fn precalculate_distances<const WIDTH: usize>(max_los: usize) -> (Vec<Simd<f32, WIDTH>>, Vec<Simd<f32, WIDTH>>)
+fn precalculate_distances<const WIDTH: usize>(
+    max_los: usize,
+) -> (Vec<Simd<f32, WIDTH>>, Vec<Simd<f32, WIDTH>>)
 where
-    LaneCount<WIDTH>: SupportedLaneCount
+    LaneCount<WIDTH>: SupportedLaneCount,
 {
     (0..max_los)
         .step_by(WIDTH)
@@ -651,10 +659,11 @@ where
         "to help the vectorizer, max_los must be a multiple of {WIDTH}"
     );
 
+    let mut sector_data_buf = vec![0i32; if output_sector_data { max_los * max_los * max_los } else { 0 }];
     let mut heatmap = vec![0.0f32; max_los * max_los];
     let mut longest_line = vec![0.0f32; max_los * max_los];
-    let mut sector_data: Option<Vec<i32>> =
-        output_sector_data.then(|| vec![0i32; max_los * max_los * max_los]);
+    let mut sector_data: Option<&mut Vec<i32>> =
+        output_sector_data.then_some(&mut sector_data_buf);
 
     let width = 2 * max_los;
 
@@ -667,64 +676,40 @@ where
         adjustments: adjustments.as_chunks::<UNROLL>(),
     };
 
-    if let Some(ref mut sd) = &mut sector_data {
-        for (line, line_indexes, sector_chunk) in izip!(
+    for (line, line_indexes, sector_chunk) in izip!(
             elevation_map.chunks_exact(width),
             indexes.chunks_exact(width),
-            sd.chunks_exact_mut(max_los * max_los),
+            OptionIter::new(sector_data.as_mut().map(|sd| sd.chunks_exact_mut(max_los * max_los))),
         ) {
-            for (pov, (&pov_height, &result_dem_id, line_bitmap)) in izip!(
+        for (pov, (&pov_height, &result_dem_id, line_bitmap)) in izip!(
                 line.iter().take(max_los),
                 line_indexes.iter().take(max_los),
-                sector_chunk.chunks_exact_mut(max_los)
+                OptionIter::new(sector_chunk.map(|chunk| chunk.chunks_exact_mut(max_los)))
             )
             .enumerate()
-            {
-                viewshed(
-                    vs,
-                    pov,
-                    pov_height,
-                    result_dem_id,
-                    max_los,
-                    &mut heatmap,
-                    &mut longest_line,
-                    line,
-                    Some(Indexes {
-                        indexes_in: line_indexes,
-                        indexes_out: line_bitmap,
-                    }),
-                    &unrolled_angle,
-                );
-            }
-        }
-    } else {
-        for (line, line_indexes) in izip!(
-            elevation_map.chunks_exact(width),
-            indexes.chunks_exact(width),
-        ) {
-            for (pov, (&pov_height, &result_dem_id)) in
-                izip!(line.iter().take(max_los), line_indexes.iter().take(max_los)).enumerate()
-            {
-                viewshed(
-                    vs,
-                    pov,
-                    pov_height,
-                    result_dem_id,
-                    max_los,
-                    &mut heatmap,
-                    &mut longest_line,
-                    line,
-                    None,
-                    &unrolled_angle,
-                );
-            }
+        {
+            viewshed(
+                vs,
+                pov,
+                pov_height,
+                result_dem_id,
+                max_los,
+                &mut heatmap,
+                &mut longest_line,
+                line,
+                line_bitmap.map(|bitmap| Indexes{
+                    indexes_in: line_indexes,
+                    indexes_out: bitmap,
+                }),
+                &unrolled_angle,
+            );
         }
     }
 
     ViewshedAngle {
         heatmap,
         longest_line,
-        sector_data,
+        sector_data: sector_data.cloned(),
     }
 }
 
