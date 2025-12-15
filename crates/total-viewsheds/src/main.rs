@@ -1,6 +1,8 @@
 //! Total Viewshed Calculator
-
+#![feature(portable_simd)]
+#![feature(generic_const_exprs)]
 #![expect(clippy::pub_use, reason = "I admit I don't understand the other way.")]
+
 #![cfg_attr(
     test,
     expect(
@@ -13,6 +15,8 @@
         reason = "It's just for the tests"
     )
 )]
+
+extern crate core;
 
 use clap::Parser as _;
 use color_eyre::eyre::Result;
@@ -40,6 +44,7 @@ mod output {
     pub mod ring_data;
     pub mod viewshed;
 }
+mod cpu;
 mod projection;
 
 fn main() -> Result<()> {
