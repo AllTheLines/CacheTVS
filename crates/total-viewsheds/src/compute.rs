@@ -27,6 +27,10 @@ pub struct Compute<'compute> {
     pub longest_lines: Vec<crate::los_pack::LineOfSightPacked>,
 }
 
+/// `NUM_CORES` is the physical number of cores on a machine. Currently hardcoded to 8
+/// as that is what an i9900k has, and is a common configuration.
+/// TODO find a good syscall for this
+const NUM_CORES: usize = 8;
 /// Configuration for computing.
 pub struct ComputeConfig {
     /// The height of the observer that views viewsheds.
@@ -87,10 +91,6 @@ impl<'compute> Compute<'compute> {
             ..Default::default()
         };
 
-        #[expect(
-            clippy::if_then_some_else_none,
-            reason = "The `?` is hard to use in the closure"
-        )]
         let vulkan = if matches!(config.backend, crate::config::Backend::Vulkan) {
             let elevations = dem.elevations.clone();
             dem.elevations = Vec::new(); // Free up some RAM.
@@ -176,6 +176,16 @@ impl<'compute> Compute<'compute> {
 
     /// Do all computations.
     pub fn run(&mut self) -> Result<()> {
+        if matches!(self.config.backend, crate::config::Backend::CPU) {
+            self.run_parallel();
+        } else {
+            self.run_sequential();
+        }
+
+        Ok(())
+    }
+
+    fn run_sequential(&mut self) -> Result<()> {
         let mut sector_surfaces = if Self::is_process_surfaces(&self.config.process) {
             let blank = vec![0.0; usize::try_from(self.dem.computable_points_count)?];
             self.total_surfaces.clone_from(&blank);
@@ -235,6 +245,40 @@ impl<'compute> Compute<'compute> {
                 }
             }
         }
+
+        Ok(())
+    }
+
+    fn run_parallel(&mut self) -> Result<()> {
+        #[expect(
+            clippy::as_conversions,
+            clippy::cast_possible_truncation,
+            reason = "elevations start out as i16s, and i16 -> f32 -> i16 is lossless"
+        )]
+        let elevations = self
+            .dem
+            .elevations
+            .iter()
+            .map(|&x| x as i16)
+            .collect::<Vec<i16>>();
+
+        #[expect(clippy::as_conversions, reason = "u32 -> usize is valid")]
+        // TODO: third param is ring data which needs to be saved
+        let (surfaces, _longest, _) = crate::cpu::multithreaded_kernel(
+            &elevations,
+            self.dem.max_los_as_points as usize,
+            360,
+            NUM_CORES,
+            false,
+        );
+
+        self.add_sector_surfaces_to_running_total(&surfaces);
+
+        // TODO: Pack longest lines
+        // self.longest_lines = longest;
+
+        self.render_total_surfaces()?;
+        self.render_longest_lines()?;
 
         Ok(())
     }
@@ -383,6 +427,9 @@ impl<'compute> Compute<'compute> {
             }
             crate::config::Backend::Vulkan => {
                 self.compute_sector_vulkan(cumulative_surfaces, ring_data, longest_lines)?;
+            }
+            crate::config::Backend::CPU => {
+                unimplemented!();
             }
 
             #[expect(clippy::unimplemented, reason = "Coming Soon!")]

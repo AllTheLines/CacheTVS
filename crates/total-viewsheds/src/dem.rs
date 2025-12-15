@@ -162,7 +162,6 @@ impl DEM {
     reason = "We don't want to output GBs of data!"
 )]
 impl std::fmt::Debug for DEM {
-    #[expect(clippy::min_ident_chars, reason = "This is from `std`")]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DEM")
             .field("width", &self.width)
