@@ -142,6 +142,8 @@ pub enum Backend {
     Vulkan,
     /// Vulkan shader but run on the CPU.
     VulkanCPU,
+    /// Optimised cache-efficient CPU kernel
+    CPU,
     /// TBC
     Cuda,
 }
