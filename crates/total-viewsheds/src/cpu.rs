@@ -19,7 +19,7 @@ use rayon::ThreadPoolBuilder;
 ))]
 use std::arch::x86_64::{
     _mm256_blend_ps, _mm256_castps_si256, _mm256_castsi256_ps, _mm256_cmp_ps, _mm256_max_ps,
-    _mm256_slli_si256, _mm_castps_si128, _mm_cmpge_ps, _mm_max_ps, _CMP_LE_OS,
+    _mm256_slli_si256, _CMP_LE_OS,
 };
 use std::iter::zip;
 use std::simd::prelude::*;
@@ -27,6 +27,9 @@ use std::simd::{LaneCount, Mask, SupportedLaneCount};
 use std::sync::Mutex;
 use std::time::Instant;
 use std::{array, f32, mem, slice};
+
+#[cfg(all(target_feature = "sse", target_feature = "sse2"))]
+use std::arch::x86_64::{_mm_castps_si128, _mm_cmpge_ps, _mm_max_ps};
 
 /// `EARTH_RADIUS_SQUARED` is the earth's radius squared in meters
 const EARTH_RADIUS_SQUARED: f32 = 12_742_000.0;
@@ -453,6 +456,11 @@ where
 /// `viewshed` computes the viewshed for a single pov, using its `elevation`, and `max_los`
 /// and stores the results in `heatmap` and `longest_line` using the `dem_id`
 #[inline]
+#[expect(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    reason = "it is what it is for now"
+)]
 fn viewshed<const WIDTH: usize, const UNROLL: usize, VS>(
     vs: &VS,
     pov_idx: usize,
@@ -471,6 +479,12 @@ fn viewshed<const WIDTH: usize, const UNROLL: usize, VS>(
     let result_tvs_id = dem_to_pov(dem_id, 3 * max_los, max_los);
 
     // if the line of sight is not within our computable points, do not consider it
+    #[expect(
+        clippy::as_conversions,
+        clippy::cast_possible_wrap,
+        clippy::cast_possible_truncation,
+        reason = "max_los^2 < 2^31"
+    )]
     if result_tvs_id < 0i32 || result_tvs_id >= (max_los * max_los) as i32 {
         return;
     }
@@ -659,11 +673,17 @@ where
         "to help the vectorizer, max_los must be a multiple of {WIDTH}"
     );
 
-    let mut sector_data_buf = vec![0i32; if output_sector_data { max_los * max_los * max_los } else { 0 }];
+    let mut sector_data_buf = vec![
+        0i32;
+        if output_sector_data {
+            max_los * max_los * max_los
+        } else {
+            0
+        }
+    ];
     let mut heatmap = vec![0.0f32; max_los * max_los];
     let mut longest_line = vec![0.0f32; max_los * max_los];
-    let mut sector_data: Option<&mut Vec<i32>> =
-        output_sector_data.then_some(&mut sector_data_buf);
+    let mut sector_data: Option<&mut Vec<i32>> = output_sector_data.then_some(&mut sector_data_buf);
 
     let width = 2 * max_los;
 
@@ -677,16 +697,20 @@ where
     };
 
     for (line, line_indexes, sector_chunk) in izip!(
-            elevation_map.chunks_exact(width),
-            indexes.chunks_exact(width),
-            OptionIter::new(sector_data.as_mut().map(|sd| sd.chunks_exact_mut(max_los * max_los))),
-        ) {
+        elevation_map.chunks_exact(width),
+        indexes.chunks_exact(width),
+        OptionIter::new(
+            sector_data
+                .as_mut()
+                .map(|sd| sd.chunks_exact_mut(max_los * max_los))
+        ),
+    ) {
         for (pov, (&pov_height, &result_dem_id, line_bitmap)) in izip!(
-                line.iter().take(max_los),
-                line_indexes.iter().take(max_los),
-                OptionIter::new(sector_chunk.map(|chunk| chunk.chunks_exact_mut(max_los)))
-            )
-            .enumerate()
+            line.iter().take(max_los),
+            line_indexes.iter().take(max_los),
+            OptionIter::new(sector_chunk.map(|chunk| chunk.chunks_exact_mut(max_los)))
+        )
+        .enumerate()
         {
             viewshed(
                 vs,
@@ -697,7 +721,7 @@ where
                 &mut heatmap,
                 &mut longest_line,
                 line,
-                line_bitmap.map(|bitmap| Indexes{
+                line_bitmap.map(|bitmap| Indexes {
                     indexes_in: line_indexes,
                     indexes_out: bitmap,
                 }),
@@ -859,7 +883,38 @@ fn kernel(elevations: &[i16], max_los_points: usize, angle: usize) -> ViewshedAn
 
     let vectorized = Vectorized {};
 
-    let result = total_viewshed::<8, 8, Vectorized>(
+    #[cfg(target_feature = "avx512f")]
+    {
+        let result = total_viewshed::<16, 8, Vectorized>(
+            &vectorized,
+            &rotated_elevations,
+            &indexes,
+            max_los_points,
+            false,
+        );
+        tracing::info!("kernel for {} run in: {:?}", angle, start.elapsed());
+        return result;
+    };
+
+    #[cfg(all(target_feature = "avx2", target_feature = "avx"))]
+    {
+        let result = total_viewshed::<8, 8, Vectorized>(
+            &vectorized,
+            &rotated_elevations,
+            &indexes,
+            max_los_points,
+            false,
+        );
+        tracing::info!("kernel for {} run in: {:?}", angle, start.elapsed());
+        return result;
+    };
+
+    #[expect(
+        unreachable_code,
+        unused_variables,
+        reason = "conditionally compiled out"
+    )]
+    let result = total_viewshed::<4, 8, Vectorized>(
         &vectorized,
         &rotated_elevations,
         &indexes,
