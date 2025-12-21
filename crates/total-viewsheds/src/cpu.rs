@@ -19,7 +19,7 @@ use rayon::ThreadPoolBuilder;
 ))]
 use std::arch::x86_64::{
     _mm256_blend_ps, _mm256_castps_si256, _mm256_castsi256_ps, _mm256_cmp_ps, _mm256_max_ps,
-    _mm256_slli_si256, _mm_castps_si128, _mm_cmpge_ps, _mm_max_ps, _CMP_LE_OS,
+    _mm256_slli_si256, _CMP_LE_OS,
 };
 use std::iter::zip;
 use std::simd::prelude::*;
@@ -27,6 +27,12 @@ use std::simd::{LaneCount, Mask, SupportedLaneCount};
 use std::sync::Mutex;
 use std::time::Instant;
 use std::{array, f32, mem, slice};
+
+#[cfg(all(
+    target_feature = "sse",
+    target_feature = "sse2"
+))]
+use std::arch::x86_64::{_mm_castps_si128, _mm_max_ps, _mm_cmpge_ps};
 
 /// `EARTH_RADIUS_SQUARED` is the earth's radius squared in meters
 const EARTH_RADIUS_SQUARED: f32 = 12_742_000.0;
@@ -859,7 +865,33 @@ fn kernel(elevations: &[i16], max_los_points: usize, angle: usize) -> ViewshedAn
 
     let vectorized = Vectorized {};
 
-    let result = total_viewshed::<8, 8, Vectorized>(
+    #[cfg(target_feature = "avx512f")]
+    {
+        let result = total_viewshed::<16, 8, Vectorized>(
+            &vectorized,
+            &rotated_elevations,
+            &indexes,
+            max_los_points,
+            false,
+        );
+        tracing::info!("kernel for {} run in: {:?}", angle, start.elapsed());
+        return result
+    };
+
+    #[cfg(all(target_feature = "avx2", target_feature = "avx"))]
+    {
+        let result = total_viewshed::<8, 8, Vectorized>(
+            &vectorized,
+            &rotated_elevations,
+            &indexes,
+            max_los_points,
+            false,
+        );
+        tracing::info!("kernel for {} run in: {:?}", angle, start.elapsed());
+        return result
+    };
+
+    let result = total_viewshed::<4, 8, Vectorized>(
         &vectorized,
         &rotated_elevations,
         &indexes,
