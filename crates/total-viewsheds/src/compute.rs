@@ -184,14 +184,15 @@ impl<'compute> Compute<'compute> {
     /// Do all computations.
     pub fn run(&mut self) -> Result<()> {
         if matches!(self.config.backend, crate::config::Backend::CPU) {
-            self.run_parallel();
+            self.run_parallel()?;
         } else {
-            self.run_sequential();
+            self.run_sequential()?;
         }
 
         Ok(())
     }
 
+    /// `run_sequential` runs a sequential GPU or CPU kernel
     fn run_sequential(&mut self) -> Result<()> {
         let mut sector_surfaces = if Self::is_process_surfaces(&self.config.process) {
             let blank = vec![0.0; usize::try_from(self.dem.computable_points_count)?];
@@ -256,6 +257,7 @@ impl<'compute> Compute<'compute> {
         Ok(())
     }
 
+    /// `run_parallel` runs the CPU kernel in parallel
     fn run_parallel(&mut self) -> Result<()> {
         #[expect(
             clippy::as_conversions,
@@ -435,6 +437,7 @@ impl<'compute> Compute<'compute> {
             crate::config::Backend::Vulkan => {
                 self.compute_sector_vulkan(cumulative_surfaces, ring_data, longest_lines)?;
             }
+            #[expect(clippy::unimplemented, reason = "CPU kernel is only multithreaded")]
             crate::config::Backend::CPU => {
                 unimplemented!();
             }
