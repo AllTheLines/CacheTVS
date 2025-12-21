@@ -1,14 +1,8 @@
 name: Rust
 
-# Note: when forking on GitHub, workflows are disabled-by-default; the jobs
-# won't run when pushing to the fork and there won't be a button to run
-# anything manually. Owners of the fork can, through the website, re-enable
-# these workflows to run as specified here.
 on:
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+  push: {}
+  pull_request: {}
 
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
@@ -24,9 +18,11 @@ env:
 
 jobs:
   build-test:
-    strategy:
-      fail-fast: false
     name: Build and Test 🔬
+    strategy:
+      matrix:
+        arch: [x86_64, aarch64]
+        runner: [ubuntu-latest]
     runs-on: ubuntu-latest
 
     steps:
@@ -43,8 +39,6 @@ jobs:
         run: cargo test
 
   check-spirv-kernel:
-    strategy:
-      fail-fast: false
     name: Check SPIRV kernel is compiled
     runs-on: ubuntu-latest
 
@@ -95,6 +89,8 @@ jobs:
   lints:
     name: "Lints 💅"
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
 
     steps:
       - uses: actions/checkout@v4

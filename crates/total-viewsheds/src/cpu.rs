@@ -96,7 +96,7 @@ impl Viewshed<4> for Vectorized {
     #[inline]
     #[cfg(not(all(target_feature = "sse", target_feature = "sse2")))]
     fn max(&self, lhs: f32x4, rhs: f32x4) -> Simd<f32, 4> {
-        lhs.simd_max(r)
+        lhs.simd_max(rhs)
     }
 
     #[inline]
