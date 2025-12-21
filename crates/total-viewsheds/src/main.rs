@@ -1,8 +1,11 @@
 //! Total Viewshed Calculator
 #![feature(portable_simd)]
+#![expect(
+    incomplete_features,
+    reason = "our usage isn't crazy and unlikely to break"
+)]
 #![feature(generic_const_exprs)]
 #![expect(clippy::pub_use, reason = "I admit I don't understand the other way.")]
-
 #![cfg_attr(
     test,
     expect(
