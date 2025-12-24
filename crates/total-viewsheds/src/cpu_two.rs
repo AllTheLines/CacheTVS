@@ -1,7 +1,11 @@
 use itertools::izip;
-use std::arch::x86_64::{_mm256_cmp_ps, _mm_castps_si128, _mm_cmpgt_ps, _mm_cmple_ps, _mm_cmplt_ps, _mm_max_ps};
-use std::cmp::max;
-use std::iter::zip;
+
+#[cfg(all(target_feature = "sse", target_feature = "sse2"))]
+use std::arch::x86_64::{_mm_castps_si128, _mm_cmpgt_ps, _mm_max_ps};
+
+#[cfg(not(all(target_feature = "sse", target_feature = "sse2")))]
+use std::simd::cmp::SimdPartialOrd;
+
 use std::simd::prelude::{SimdFloat, SimdInt};
 use std::simd::{f32x4, Mask, Simd};
 
@@ -101,6 +105,8 @@ fn generate_distances(max_los: usize) -> (Vec<f32>, Vec<f32>) {
         .unzip()
 }
 
+/// `ViewShed` holds all reusable structures for the total viewshed computation
+/// TODO: probably rename this
 struct ViewShed {
     max_los: usize,
     angles: Vec<f32>,
@@ -108,17 +114,30 @@ struct ViewShed {
     adjustments: Vec<f32>,
 }
 
-#[inline]
 #[cfg(all(target_feature = "sse", target_feature = "sse2"))]
-fn simd_max(lhs: f32x4, rhs: f32x4) -> Simd<f32, 4> {
+fn simd_max(lhs: f32x4, rhs: f32x4) -> f32x4 {
     // safety: the caller of Viewshed<4> guarantees that -0.0 or NaN are not in the input
     // thus allowing this to be non IEEE754 compliant
     unsafe { _mm_max_ps(lhs.into(), rhs.into()).into() }
 }
 
+#[inline]
+#[cfg(not(all(target_feature = "sse", target_feature = "sse2")))]
+fn simd_max(lhs: f32x4, rhs: f32x4) -> Simd<f32, 4> {
+    lhs.simd_max(rhs)
+}
+
+#[inline]
+#[cfg(all(target_feature = "sse", target_feature = "sse2"))]
 fn simd_cmp(angles: f32x4, prefix: f32x4) -> Mask<i32, 4> {
     let cmp = unsafe { _mm_castps_si128(_mm_cmpgt_ps(angles.into(), prefix.into())) };
     unsafe { Mask::from_int_unchecked(cmp.into()) }
+}
+
+#[inline]
+#[cfg(not(all(target_feature = "sse", target_feature = "sse2")))]
+fn simd_cmp(angles: f32x4, prefix: f32x4) -> Mask<i32, 4> {
+    angles.simd_gt(prefix)
 }
 
 impl ViewShed {
@@ -141,7 +160,7 @@ impl ViewShed {
     /// `line_of_sight` calculates the line of sight given a `pov_height` and the
     /// elevations of the points directly in front of the observer
     fn line_of_sight(&mut self, pov_height: i16, line: &[i16]) -> (f32, Vec<bool>) {
-        assert_eq!(line.len(), self.max_los);
+        assert_eq!(line.len(), self.max_los, "the line needs to be los long");
 
         let (chunked_line, _) = line.as_chunks::<{ Self::VECTOR_WIDTH }>();
         let (distances, _) = self.distances.as_chunks::<{ Self::VECTOR_WIDTH }>();
@@ -164,8 +183,8 @@ impl ViewShed {
 
         let masks = prefix
             .iter()
-            .map(|&prefix| {
-                let start = Simd::from_array(prefix);
+            .map(|&angle| {
+                let start = Simd::from_array(angle);
                 let mut v_prefix_max = {
                     let shifted = start.shift_elements_right::<1>(-2000.0f32);
                     simd_max(start, shifted)
@@ -198,25 +217,6 @@ impl ViewShed {
             })
             .reduce_sum();
 
-        // let most_prefix = &self.prefix_max[..self.max_los];
-        //
-        // let (prefix_max, _) = most_prefix.as_chunks::<{ Self::VECTOR_WIDTH }>();
-        // let (angles, _) = self.angles.as_chunks::<{ Self::VECTOR_WIDTH }>();
-        //
-        // let res: Simd<f32, { Self::VECTOR_WIDTH }> = izip!(angles.iter(), prefix_max, distances)
-        //     .map(|(&angles, &prefix, &dists)| {
-        //         let cmp = unsafe {
-        //             _mm_castps_si128(_mm_cmpgt_ps(
-        //                 Simd::from_array(angles).into(),
-        //                 Simd::from_array(prefix).into(),
-        //             ))
-        //         };
-        //         let mask: Mask<i32, { Self::VECTOR_WIDTH }> =
-        //             unsafe { Mask::from_int_unchecked(cmp.into()) };
-        //         mask.select(Simd::from_array(dists), Simd::splat(0.0f32)) * Simd::splat(TAN_ONE_RAD)
-        //     })
-        //     .fold(Simd::splat(0.0f32), |acc, dists| acc + dists);
-
         (heatmap, masks.iter().flat_map(|mask| mask.to_array()).collect())
     }
 }
@@ -243,7 +243,7 @@ const fn dem_to_pov(dem_id: i32, width: usize, max_los: usize) -> i32 {
 /// assuming that the maximum line of sight mis `max_los`
 pub fn kernel(elevation_map: &[i16], max_los: usize, angle: f32) -> (Vec<f32>, Vec<Vec<bool>>) {
     let mut heatmap = vec![0.0f32; max_los * max_los];
-    let mut sector_data: Vec<Vec<bool>> = vec![];
+    let mut sector_data: Vec<Vec<bool>> = vec![vec![]; max_los * max_los];
 
     let (indexes, rotated_elevations) = generate_rotation(elevation_map, angle as f64, max_los);
 
@@ -276,11 +276,11 @@ pub fn kernel(elevation_map: &[i16], max_los: usize, angle: f32) -> (Vec<f32>, V
                 continue;
             }
 
-            let (pixel, sector) = vs.line_of_sight(pov_height, &line[pov..pov + max_los]);
-
+            let neighbor = pov+1;
+            let (pixel, sector) = vs.line_of_sight(pov_height, &line[neighbor..neighbor + max_los]);
 
             heatmap[result_tvs_id as usize] = pixel;
-            sector_data.push(sector)
+            sector_data[result_tvs_id as usize] = sector;
         }
     }
 
