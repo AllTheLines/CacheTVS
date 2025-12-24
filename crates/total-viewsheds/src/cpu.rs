@@ -19,7 +19,7 @@ use rayon::ThreadPoolBuilder;
 ))]
 use std::arch::x86_64::{
     _mm256_blend_ps, _mm256_castps_si256, _mm256_castsi256_ps, _mm256_cmp_ps, _mm256_max_ps,
-    _mm256_slli_si256, _CMP_LE_OS,
+    _mm256_slli_si256, _CMP_GT_OS, _CMP_LE_OS,
 };
 use std::iter::zip;
 use std::simd::prelude::*;
@@ -30,6 +30,7 @@ use std::{array, f32, mem, slice};
 
 #[cfg(all(target_feature = "sse", target_feature = "sse2"))]
 use std::arch::x86_64::{_mm_castps_si128, _mm_cmpge_ps, _mm_max_ps};
+use std::arch::x86_64::_mm_cmpgt_ps;
 
 /// `EARTH_RADIUS_SQUARED` is the earth's radius squared in meters
 const EARTH_RADIUS_SQUARED: f32 = 12_742_000.0;
@@ -63,8 +64,8 @@ where
         &self,
         angles: &[Simd<f32, WIDTH>],
         prefix_max: &mut [Simd<f32, WIDTH>],
-        acc: Simd<f32, WIDTH>,
-    ) -> Simd<f32, WIDTH>;
+        acc: f32,
+    ) -> f32;
 }
 
 impl Viewshed<4> for Vectorized {
@@ -74,7 +75,7 @@ impl Viewshed<4> for Vectorized {
         // safety: the caller of Viewshed<4> guarantees that -0.0 or NaN are not in the input
         // thus allowing this to be non IEEE754 compliant
         unsafe {
-            let mask = _mm_castps_si128(_mm_cmpge_ps(angle.into(), prefix.into()));
+            let mask = _mm_castps_si128(_mm_cmpgt_ps(angle.into(), prefix.into()));
             Mask::<i32, 4>::from_int_unchecked(mask.into())
         }
     }
@@ -100,182 +101,201 @@ impl Viewshed<4> for Vectorized {
     }
 
     #[inline]
-    fn prefix_max(&self, angles: &[f32x4], prefix_max: &mut [f32x4], acc: f32x4) -> f32x4 {
-        for (prefix, &angle) in zip(prefix_max.iter_mut(), angles.iter()) {
-            let mut v_prefix_max = {
-                let shifted = angle.shift_elements_right::<1>(-2000.0f32);
-                self.max(angle, shifted)
-            };
+    fn prefix_max(&self, angles: &[f32x4], prefix_max: &mut [f32x4], acc: f32) -> f32 {
+        zip(prefix_max.iter_mut(), angles.iter())
+            .fold(acc, |next: f32, (prefix, &angle)| {
+                let start = angle.shift_elements_right::<1>(next);
 
-            v_prefix_max = {
-                let shifted = v_prefix_max.shift_elements_right::<2>(-2000.0f32);
-                self.max(v_prefix_max, shifted)
-            };
+                let mut v_prefix_max = {
+                    let shifted = start.shift_elements_right::<1>(-2000.0f32);
+                    self.max(start, shifted)
+                };
 
-            *prefix = v_prefix_max;
-        }
+                v_prefix_max = {
+                    let shifted = v_prefix_max.shift_elements_right::<2>(-2000.0f32);
+                    self.max(v_prefix_max, shifted)
+                };
 
-        let mut local_acc = acc;
-
-        // accumulate the prefix maxes for blocks, re-computing all prefix maxes
-        // to include the accumulated value
-        for prefix in prefix_max {
-            let cur_prefix: f32x4 = *prefix;
-            let cur_max: f32x4 = Simd::splat(cur_prefix[3]);
-
-            *prefix = self.max(local_acc, cur_prefix);
-            local_acc = self.max(local_acc, cur_max);
-        }
-
-        local_acc
-    }
-}
-
-#[cfg(all(target_feature = "avx2", target_feature = "avx"))]
-impl Viewshed<8> for Vectorized {
-    #[inline]
-    fn gte(&self, angle: f32x8, prefix: f32x8) -> Mask<i32, 8> {
-        // safety: the caller of Viewshed<8> guarantees that -0.0 or NaN are not in the input
-        // thus allowing this to be non IEEE754 compliant
-        unsafe {
-            let mask =
-                _mm256_castps_si256(_mm256_cmp_ps::<_CMP_LE_OS>(prefix.into(), angle.into()));
-            Mask::<i32, 8>::from_int_unchecked(mask.into())
-        }
-    }
-
-    #[inline]
-    fn max(&self, lhs: f32x8, rhs: f32x8) -> Simd<f32, 8> {
-        // safety: the caller of Viewshed<8> guarantees that -0.0 or NaN are not in the input
-        // thus allowing this to be non IEEE754 compliant
-        unsafe { _mm256_max_ps(lhs.into(), rhs.into()).into() }
-    }
-
-    #[inline]
-    fn prefix_max(&self, angles: &[f32x8], prefix_max: &mut [f32x8], acc: f32x8) -> f32x8 {
-        // Calculate the 4-wide block prefix max two at a time
-        for (prefix, &angle) in zip(prefix_max.iter_mut(), angles.iter()) {
-            // safety: all mm256 operations are avx2, and Viewshed<8> has feature guards for both
-            let mut v_prefix_max = unsafe {
-                let shifted = _mm256_slli_si256::<4>(_mm256_castps_si256(angle.into()));
-                let blended = _mm256_blend_ps::<0b1000_1000>(
-                    _mm256_castsi256_ps(shifted),
-                    Simd::splat(-2000.0f32).into(),
-                );
-                self.max(angle, blended.into())
-            };
-
-            // safety: all mm256 operations are avx2, and Viewshed<8> has feature guards for both
-            v_prefix_max = unsafe {
-                let shifted = _mm256_slli_si256::<8>(_mm256_castps_si256(v_prefix_max.into()));
-                let blended = _mm256_blend_ps::<0b1100_1100>(
-                    _mm256_castsi256_ps(shifted),
-                    Simd::splat(-2000.0f32).into(),
-                );
-
-                self.max(v_prefix_max, blended.into())
-            };
-
-            *prefix = v_prefix_max;
-        }
-
-        let mut local_acc = f32x4::splat(acc[3]);
-
-        // safety: because f32x8s are aligned to exactly sizeof(f32x4) * 2
-        // this is well aligned, so the cast is valid
+                *prefix = v_prefix_max;
+                start[3].max(v_prefix_max[3])
+            })
+        // for (prefix, &angle) in zip(prefix_max.iter_mut(), angles.iter()) {
+        //     let start = angle.shift_elements_right::<1>(-2000.0f32);
         //
-        // This is SUPER MEGA UBER VERY sketchy, and shouldn't be copied
-        // unless you _really_, _truly_ understand what the compiler will do
-        let single_wide_prefx: &mut [f32x4] = unsafe {
-            let ptr = prefix_max.as_mut_ptr();
-            slice::from_raw_parts_mut(ptr.cast::<f32x4>(), prefix_max.len() * 2)
-        };
-
-        // accumulate the prefix maxes for blocks, re-computing all prefix maxes
-        // to include the accumulated value
-        for prefix in single_wide_prefx {
-            let cur_prefix: f32x4 = *prefix;
-            let cur_max: f32x4 = Simd::splat(cur_prefix[3]);
-
-            *prefix = self.max(local_acc, cur_prefix);
-            local_acc = self.max(local_acc, cur_max);
-        }
-
-        f32x8::splat(local_acc[3])
+        //     let mut v_prefix_max = {
+        //         let shifted = start.shift_elements_right::<1>(-2000.0f32);
+        //         self.max(start, shifted)
+        //     };
+        //
+        //     v_prefix_max = {
+        //         let shifted = v_prefix_max.shift_elements_right::<2>(-2000.0f32);
+        //         self.max(v_prefix_max, shifted)
+        //     };
+        //
+        //     *prefix = v_prefix_max;
+        // }
+        //
+        // let mut local_acc = acc;
+        //
+        // // accumulate the prefix maxes for blocks, re-computing all prefix maxes
+        // // to include the accumulated value
+        // for prefix in prefix_max {
+        //     let cur_prefix: f32x4 = *prefix;
+        //     let cur_max: f32x4 = Simd::splat(cur_prefix[3]);
+        //
+        //     *prefix = self.max(local_acc, cur_prefix);
+        //     local_acc = self.max(local_acc, cur_max);
+        // }
+        //
+        // local_acc
     }
 }
+//
+// #[cfg(all(target_feature = "avx2", target_feature = "avx"))]
+// impl Viewshed<8> for Vectorized {
+//     #[inline]
+//     fn gte(&self, angle: f32x8, prefix: f32x8) -> Mask<i32, 8> {
+//         // safety: the caller of Viewshed<8> guarantees that -0.0 or NaN are not in the input
+//         // thus allowing this to be non IEEE754 compliant
+//         unsafe {
+//             let mask =
+//                 _mm256_castps_si256(_mm256_cmp_ps::<_CMP_GT_OS>(angle.into(), prefix.into()));
+//             Mask::<i32, 8>::from_int_unchecked(mask.into())
+//         }
+//     }
+//
+//     #[inline]
+//     fn max(&self, lhs: f32x8, rhs: f32x8) -> Simd<f32, 8> {
+//         // safety: the caller of Viewshed<8> guarantees that -0.0 or NaN are not in the input
+//         // thus allowing this to be non IEEE754 compliant
+//         unsafe { _mm256_max_ps(lhs.into(), rhs.into()).into() }
+//     }
+//
+//     #[inline]
+//     fn prefix_max(&self, angles: &[f32x8], prefix_max: &mut [f32x8], acc: f32x8) -> f32x8 {
+//         // Calculate the 4-wide block prefix max two at a time
+//         for (prefix, &angle) in zip(prefix_max.iter_mut(), angles.iter()) {
+//             // safety: all mm256 operations are avx2, and Viewshed<8> has feature guards for both
+//             let mut v_prefix_max = unsafe {
+//                 let shifted = _mm256_slli_si256::<4>(_mm256_castps_si256(angle.into()));
+//                 let blended = _mm256_blend_ps::<0b1000_1000>(
+//                     _mm256_castsi256_ps(shifted),
+//                     Simd::splat(-2000.0f32).into(),
+//                 );
+//                 self.max(angle, blended.into())
+//             };
+//
+//             // safety: all mm256 operations are avx2, and Viewshed<8> has feature guards for both
+//             v_prefix_max = unsafe {
+//                 let shifted = _mm256_slli_si256::<8>(_mm256_castps_si256(v_prefix_max.into()));
+//                 let blended = _mm256_blend_ps::<0b1100_1100>(
+//                     _mm256_castsi256_ps(shifted),
+//                     Simd::splat(-2000.0f32).into(),
+//                 );
+//
+//                 self.max(v_prefix_max, blended.into())
+//             };
+//
+//             *prefix = v_prefix_max;
+//         }
+//
+//         let mut local_acc = f32x4::splat(acc[3]);
+//
+//         // safety: because f32x8s are aligned to exactly sizeof(f32x4) * 2
+//         // this is well aligned, so the cast is valid
+//         //
+//         // This is SUPER MEGA UBER VERY sketchy, and shouldn't be copied
+//         // unless you _really_, _truly_ understand what the compiler will do
+//         let single_wide_prefx: &mut [f32x4] = unsafe {
+//             let ptr = prefix_max.as_mut_ptr();
+//             slice::from_raw_parts_mut(ptr.cast::<f32x4>(), prefix_max.len() * 2)
+//         };
+//
+//         // accumulate the prefix maxes for blocks, re-computing all prefix maxes
+//         // to include the accumulated value
+//         for prefix in single_wide_prefx {
+//             let cur_prefix: f32x4 = *prefix;
+//             let cur_max: f32x4 = Simd::splat(cur_prefix[3]);
+//
+//             *prefix = self.max(local_acc, cur_prefix);
+//             local_acc = self.max(local_acc, cur_max);
+//         }
+//
+//         f32x8::splat(local_acc[3])
+//     }
+// }
 
-#[cfg(target_feature = "avx512f")]
-fn _mm512_slli_si512<const K: usize>(elem: __m512) -> __m512
-where
-    [(); { (16 - K) as i32 } as usize]:,
-{
-    unsafe {
-        let zero = f32x16::splat(-2000.0f32);
-        _mm512_castsi512_ps(_mm512_alignr_epi32::<{ (16 - K) as i32 }>(
-            _mm512_castps_si512(elem),
-            _mm512_castps_si512(zero.into()),
-        ))
-    }
-}
-
-#[cfg(target_feature = "avx512f")]
-impl Viewshed<16> for Vectorized {
-    #[inline]
-    fn gte(&self, angle: f32x16, prefix: f32x16) -> Mask<i32, 16> {
-        // safety: the caller of Viewshed<8> guarantees that -0.0 or NaN are not in the input
-        // thus allowing this to be non IEEE754 compliant
-        unsafe {
-            let mask = _mm512_cmple_ps_mask(prefix.into(), angle.into());
-            Mask::<i32, 16>::from_bitmask(mask.into())
-        }
-    }
-
-    #[inline]
-    fn max(&self, lhs: f32x16, rhs: f32x16) -> f32x16 {
-        // safety: the caller of Viewshed<8> guarantees that -0.0 or NaN are not in the input
-        // thus allowing this to be non IEEE754 compliant
-        unsafe { _mm512_max_ps(lhs.into(), rhs.into()).into() }
-    }
-
-    #[inline]
-    fn prefix_max(&self, angles: &[f32x16], prefix_max: &mut [f32x16], acc: f32x16) -> f32x16 {
-        // Calculate the 4-wide block prefix max two at a time
-        for (prefix, &angle) in zip(prefix_max.iter_mut(), angles.iter()) {
-            unsafe {
-                let mut v_prefix_max =
-                    _mm512_max_ps(angle.into(), _mm512_slli_si512::<1>(angle.into()).into());
-                v_prefix_max = _mm512_max_ps(
-                    v_prefix_max.into(),
-                    _mm512_slli_si512::<2>(v_prefix_max).into(),
-                );
-                v_prefix_max = _mm512_max_ps(
-                    v_prefix_max.into(),
-                    _mm512_slli_si512::<4>(v_prefix_max).into(),
-                );
-                v_prefix_max = _mm512_max_ps(
-                    v_prefix_max.into(),
-                    _mm512_slli_si512::<8>(v_prefix_max).into(),
-                );
-                *prefix = v_prefix_max.into();
-            }
-        }
-
-        let mut local_acc = f32x16::splat(acc[0]);
-
-        // accumulate the prefix maxes for blocks, re-computing all prefix maxes
-        // to include the accumulated value
-        for prefix in prefix_max {
-            let cur_prefix: f32x16 = *prefix;
-            let cur_max: f32x16 = Simd::splat(cur_prefix[15]);
-
-            *prefix = self.max(local_acc, cur_prefix);
-            local_acc = self.max(local_acc, cur_max);
-        }
-
-        f32x16::splat(local_acc[0])
-    }
-}
+// #[cfg(target_feature = "avx512f")]
+// fn _mm512_slli_si512<const K: usize>(elem: __m512) -> __m512
+// where
+//     [(); { (16 - K) as i32 } as usize]:,
+// {
+//     unsafe {
+//         let zero = f32x16::splat(-2000.0f32);
+//         _mm512_castsi512_ps(_mm512_alignr_epi32::<{ (16 - K) as i32 }>(
+//             _mm512_castps_si512(elem),
+//             _mm512_castps_si512(zero.into()),
+//         ))
+//     }
+// }
+//
+// #[cfg(target_feature = "avx512f")]
+// impl Viewshed<16> for Vectorized {
+//     #[inline]
+//     fn gte(&self, angle: f32x16, prefix: f32x16) -> Mask<i32, 16> {
+//         // safety: the caller of Viewshed<8> guarantees that -0.0 or NaN are not in the input
+//         // thus allowing this to be non IEEE754 compliant
+//         unsafe {
+//             let mask = _mm512_cmple_ps_mask(prefix.into(), angle.into());
+//             Mask::<i32, 16>::from_bitmask(mask.into())
+//         }
+//     }
+//
+//     #[inline]
+//     fn max(&self, lhs: f32x16, rhs: f32x16) -> f32x16 {
+//         // safety: the caller of Viewshed<8> guarantees that -0.0 or NaN are not in the input
+//         // thus allowing this to be non IEEE754 compliant
+//         unsafe { _mm512_max_ps(lhs.into(), rhs.into()).into() }
+//     }
+//
+//     #[inline]
+//     fn prefix_max(&self, angles: &[f32x16], prefix_max: &mut [f32x16], acc: f32x16) -> f32x16 {
+//         // Calculate the 4-wide block prefix max two at a time
+//         for (prefix, &angle) in zip(prefix_max.iter_mut(), angles.iter()) {
+//             unsafe {
+//                 let mut v_prefix_max =
+//                     _mm512_max_ps(angle.into(), _mm512_slli_si512::<1>(angle.into()).into());
+//                 v_prefix_max = _mm512_max_ps(
+//                     v_prefix_max.into(),
+//                     _mm512_slli_si512::<2>(v_prefix_max).into(),
+//                 );
+//                 v_prefix_max = _mm512_max_ps(
+//                     v_prefix_max.into(),
+//                     _mm512_slli_si512::<4>(v_prefix_max).into(),
+//                 );
+//                 v_prefix_max = _mm512_max_ps(
+//                     v_prefix_max.into(),
+//                     _mm512_slli_si512::<8>(v_prefix_max).into(),
+//                 );
+//                 *prefix = v_prefix_max.into();
+//             }
+//         }
+//
+//         let mut local_acc = f32x16::splat(acc[0]);
+//
+//         // accumulate the prefix maxes for blocks, re-computing all prefix maxes
+//         // to include the accumulated value
+//         for prefix in prefix_max {
+//             let cur_prefix: f32x16 = *prefix;
+//             let cur_max: f32x16 = Simd::splat(cur_prefix[15]);
+//
+//             *prefix = self.max(local_acc, cur_prefix);
+//             local_acc = self.max(local_acc, cur_max);
+//         }
+//
+//         f32x16::splat(local_acc[0])
+//     }
+// }
 
 #[inline]
 /// `load_elevations` converts an array of i16 elevations into a height adjusted
@@ -304,10 +324,10 @@ fn line_of_sight<const N: usize, const UNROLL: usize, VS>(
     elevations: &[[i16; N]],
     distances: &[Simd<f32, N>],
     adjustments: &[Simd<f32, N>],
-    prefix_in: Simd<f32, N>,
+    prefix_in: f32,
     indexes: Option<IndexSIMD<N>>,
     pov_height: f32,
-) -> ([Simd<f32, N>; UNROLL], [Simd<f32, N>; UNROLL], Simd<f32, N>)
+) -> ([Simd<f32, N>; UNROLL], [Simd<f32, N>; UNROLL], f32)
 where
     LaneCount<N>: SupportedLaneCount,
     VS: Viewshed<N>,
@@ -325,15 +345,15 @@ where
         distances,
         adjustments
     )
-    .for_each(|(angle, elev, dist, adjust)| {
-        *angle = elev / dist - adjust;
-    });
+        .for_each(|(angle, elev, dist, adjust)| {
+            *angle = elev / dist - adjust;
+        });
 
     #[expect(
         clippy::float_cmp,
         reason = "-2000.0f32 is a sentinel value for the first time this accumlative function is run"
     )]
-    if prefix_in[0] == -2000.0f32 {
+    if prefix_in == -2000.0f32 {
         angle_buf[0][0] = -2000.1f32;
     }
 
@@ -355,19 +375,19 @@ where
         distances.iter(),
         OptionIter::new(index_iter)
     )
-    .for_each(|(next_sum, longest_line, &angle, &pref, &dists, inds)| {
-        let mask = vs.gte(angle, pref);
+        .for_each(|(next_sum, longest_line, &angle, &pref, &dists, inds)| {
+            let mask = vs.gte(angle, pref);
 
-        if let Some((inds_in, inds_out)) = inds {
-            inds_in.store_select(inds_out, mask);
-        }
+            if let Some((inds_in, inds_out)) = inds {
+                inds_in.store_select(inds_out, mask);
+            }
 
-        let selected_distances = mask.select(dists, Simd::splat(0.0));
-        *longest_line = vs.max(*longest_line, selected_distances);
+            let selected_distances = mask.select(dists, Simd::splat(0.0));
+            *longest_line = vs.max(*longest_line, selected_distances);
 
-        let selected_tans = mask.select(Simd::splat(TAN_ONE_RAD), Simd::splat(0.0));
-        *next_sum = selected_distances * selected_tans;
-    });
+            let selected_tans = mask.select(Simd::splat(TAN_ONE_RAD), Simd::splat(0.0));
+            *next_sum = selected_distances * selected_tans;
+        });
 
     (sum_buf, longest_line_buf, prefix_out)
 }
@@ -403,7 +423,7 @@ struct Indexes<'index> {
 /// when working with `izip!`
 struct OptionIter<T, Iter>
 where
-    Iter: Iterator<Item = T>,
+    Iter: Iterator<Item=T>,
 {
     /// `iter` holds an optional iterator state which will
     /// call `next()`
@@ -412,7 +432,7 @@ where
 
 impl<T, Iter> OptionIter<T, Iter>
 where
-    Iter: Iterator<Item = T>,
+    Iter: Iterator<Item=T>,
 {
     /// `new` creates a new iter from an Option of the Iter
     const fn new(iter: Option<Iter>) -> Self {
@@ -422,7 +442,7 @@ where
 
 impl<T, Iter> Iterator for OptionIter<T, Iter>
 where
-    Iter: Iterator<Item = T>,
+    Iter: Iterator<Item=T>,
 {
     type Item = Option<T>;
 
@@ -537,34 +557,35 @@ fn viewshed<const WIDTH: usize, const UNROLL: usize, VS>(
         chunked_adjustments,
         OptionIter::new(iter),
     )
-    .fold(
-        (
-            [Simd::splat(0.0); UNROLL],
-            [Simd::splat(0.0); UNROLL],
-            Simd::splat(-2000.0),
-        ),
-        |(sum, longest, prefix), (elevs, dists, adjusts, inds)| {
-            let (next_sum, next_longest, acc) = line_of_sight::<WIDTH, UNROLL, VS>(
-                vs,      // elevs: &[[i16; N]],
-                elevs,   // distances: &[Simd<f32, N>],
-                dists,   // adjustments: &[Simd<f32, N>],
-                adjusts, // prefix_in: Simd<f32, N>,
-                prefix, inds, pov_height, // pov_height: f32,
-            );
+        .fold(
+            (
+                [Simd::splat(0.0); UNROLL],
+                [Simd::splat(0.0); UNROLL],
+                -2000.0f32,
+            ),
+            |(sum, longest, prefix), (elevs, dists, adjusts, inds)| {
+                let (next_sum, next_longest, acc) = line_of_sight::<WIDTH, UNROLL, VS>(
+                    vs,      // elevs: &[[i16; N]],
+                    elevs,   // distances: &[Simd<f32, N>],
+                    dists,   // adjustments: &[Simd<f32, N>],
+                    adjusts, // prefix_in: Simd<f32, N>,
+                    prefix, inds,
+                    pov_height, // pov_height: f32,
+                );
 
-            let mut copied_sum = sum;
-            zip(copied_sum.iter_mut(), next_sum).for_each(|(old, new)| {
-                *old += new;
-            });
+                let mut copied_sum = sum;
+                zip(copied_sum.iter_mut(), next_sum).for_each(|(old, new)| {
+                    *old += new;
+                });
 
-            let mut copied_longest_line = longest;
-            zip(copied_longest_line.iter_mut(), next_longest).for_each(|(old, new)| {
-                *old = old.simd_max(new);
-            });
+                let mut copied_longest_line = longest;
+                zip(copied_longest_line.iter_mut(), next_longest).for_each(|(old, new)| {
+                    *old = old.simd_max(new);
+                });
 
-            (copied_sum, copied_longest_line, acc)
-        },
-    );
+                (copied_sum, copied_longest_line, acc)
+            },
+        );
 
     let mut sum = local_sums
         .iter()
@@ -602,10 +623,20 @@ fn viewshed<const WIDTH: usize, const UNROLL: usize, VS>(
     unsafe {
         *heatmap.get_unchecked_mut(result_tvs_id as usize) += sum;
 
-        let old_longest: *mut f32 = longest_line.get_unchecked_mut(result_tvs_id as usize);
-        *old_longest = (*old_longest).max(longest);
+        // let old_longest: *mut f32 = longest_line.get_unchecked_mut(result_tvs_id as usize);
+        // *old_longest = (*old_longest).max(longest);
     }
 }
+
+
+
+
+
+// chunk: [-2000, .1, .2, .3, .4, .5, .6, .7]
+//        [-2000, .1, .2, .3][.4, .5, .6, .7]
+//        [.1,    .2, .3, .4][.5, .6, .7, .]
+//
+
 
 /// `precalculate_distances` precalculates earth curvature adjustments and
 /// the distance from a particular point (which is just linear)
@@ -710,7 +741,7 @@ where
             line_indexes.iter().take(max_los),
             OptionIter::new(sector_chunk.map(|chunk| chunk.chunks_exact_mut(max_los)))
         )
-        .enumerate()
+            .enumerate()
         {
             viewshed(
                 vs,
@@ -883,31 +914,31 @@ fn kernel(elevations: &[i16], max_los_points: usize, angle: usize) -> ViewshedAn
 
     let vectorized = Vectorized {};
 
-    #[cfg(target_feature = "avx512f")]
-    {
-        let result = total_viewshed::<16, 8, Vectorized>(
-            &vectorized,
-            &rotated_elevations,
-            &indexes,
-            max_los_points,
-            false,
-        );
-        tracing::info!("kernel for {} run in: {:?}", angle, start.elapsed());
-        return result;
-    };
-
-    #[cfg(all(target_feature = "avx2", target_feature = "avx"))]
-    {
-        let result = total_viewshed::<8, 8, Vectorized>(
-            &vectorized,
-            &rotated_elevations,
-            &indexes,
-            max_los_points,
-            false,
-        );
-        tracing::info!("kernel for {} run in: {:?}", angle, start.elapsed());
-        return result;
-    };
+    // #[cfg(target_feature = "avx512f")]
+    // {
+    //     let result = total_viewshed::<16, 8, Vectorized>(
+    //         &vectorized,
+    //         &rotated_elevations,
+    //         &indexes,
+    //         max_los_points,
+    //         false,
+    //     );
+    //     tracing::info!("kernel for {} run in: {:?}", angle, start.elapsed());
+    //     return result;
+    // };
+    //
+    // #[cfg(all(target_feature = "avx2", target_feature = "avx"))]
+    // {
+    //     let result = total_viewshed::<8, 8, Vectorized>(
+    //         &vectorized,
+    //         &rotated_elevations,
+    //         &indexes,
+    //         max_los_points,
+    //         false,
+    //     );
+    //     tracing::info!("kernel for {} run in: {:?}", angle, start.elapsed());
+    //     return result;
+    // };
 
     #[expect(
         unreachable_code,
@@ -984,4 +1015,37 @@ pub fn multithreaded_kernel(
     );
 
     (heatmap, longest_line, sector)
+}
+
+#[cfg(test)]
+mod test {
+    use std::simd::Simd;
+    use itertools::fold;
+    use crate::cpu::{line_of_sight, Vectorized};
+
+    #[test]
+    fn viewshed() {
+        let vs = Vectorized {};
+        let (sums, distances, fold_out) = line_of_sight::<4, 1, Vectorized>(
+            &vs,
+            &[[1, 4, -9, 16]],
+            &[Simd::from_array([1.0, 2.0, 3.0, 4.0])],
+            &[Simd::splat(0.0)],
+            -2000.0,
+            None,
+            0.0f32,
+        );
+        println!("{:?}", (sums, distances, fold_out));
+
+        let (sums, distances, fold_out) = line_of_sight::<4, 1, Vectorized>(
+            &vs,
+            &[[20, 24, 28, 32]],
+            &[Simd::from_array([5.0, 6.0, 7.0, 8.0])],
+            &[Simd::splat(0.0)],
+            fold_out,
+            None,
+            0.0f32,
+        );
+        println!("{:?}", (sums, distances, fold_out));
+    }
 }

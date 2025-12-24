@@ -1,5 +1,7 @@
 //! The main entrypoint for running computations.
 
+use std::iter::zip;
+use std::time::Instant;
 use color_eyre::Result;
 
 /// The number of angles we rotate through. The other half are done via "backwards" lines of sight.
@@ -264,23 +266,31 @@ impl<'compute> Compute<'compute> {
             .map(|&x| x as i16)
             .collect::<Vec<i16>>();
 
-        #[expect(clippy::as_conversions, reason = "u32 -> usize is valid")]
-        // TODO: third param is ring data which needs to be saved
-        let (surfaces, _longest, _) = crate::cpu::multithreaded_kernel(
-            &elevations,
-            self.dem.max_los_as_points as usize,
-            360,
-            NUM_CORES,
-            false,
-        );
 
-        self.add_sector_surfaces_to_running_total(&surfaces);
+        let max_los = self.dem.max_los_as_points as usize;
+        let mut surfaces = vec![0.0; max_los*max_los];
+
+
+        for angle in 0..360 {
+            let start = Instant::now();
+            println!("starting angle: {angle}");
+            let (heatmap, sector) = crate::cpu_two::kernel(&elevations, max_los, angle as f32);
+            zip(&mut surfaces, heatmap)
+                .for_each(|(to, from)| {
+                    *to += from;
+                });
+            println!("finished angle in {:?}", start.elapsed());
+        }
+
+        self.total_surfaces = surfaces;
+
+        // self.add_sector_surfaces_to_running_total(&surfaces);
 
         // TODO: Pack longest lines
         // self.longest_lines = longest;
 
         self.render_total_surfaces()?;
-        self.render_longest_lines()?;
+        // self.render_longest_lines()?;
 
         Ok(())
     }

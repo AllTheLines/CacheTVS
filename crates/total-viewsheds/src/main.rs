@@ -49,6 +49,7 @@ mod output {
 }
 mod cpu;
 mod projection;
+mod cpu_two;
 
 fn main() -> Result<()> {
     color_eyre::install()?;
