@@ -29,8 +29,7 @@ use std::time::Instant;
 use std::{array, f32, mem, slice};
 
 #[cfg(all(target_feature = "sse", target_feature = "sse2"))]
-use std::arch::x86_64::{_mm_castps_si128, _mm_cmpge_ps, _mm_max_ps};
-use std::arch::x86_64::_mm_cmpgt_ps;
+use std::arch::x86_64::{_mm_castps_si128, _mm_cmpge_ps, _mm_max_ps, _mm_cmpgt_ps};
 
 /// `EARTH_RADIUS_SQUARED` is the earth's radius squared in meters
 const EARTH_RADIUS_SQUARED: f32 = 12_742_000.0;
@@ -97,7 +96,7 @@ impl Viewshed<4> for Vectorized {
     #[inline]
     #[cfg(not(all(target_feature = "sse", target_feature = "sse2")))]
     fn max(&self, lhs: f32x4, rhs: f32x4) -> Simd<f32, 4> {
-        lhs.simd_max(r)
+        lhs.simd_max(rhs)
     }
 
     #[inline]
