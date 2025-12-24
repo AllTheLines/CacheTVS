@@ -1,6 +1,13 @@
 //! The main entrypoint for running computations.
 
+use crate::los_pack::LineOfSightPacked;
 use color_eyre::Result;
+use rayon::iter::IntoParallelIterator as _;
+use rayon::iter::ParallelIterator as _;
+use rayon::ThreadPoolBuilder;
+use std::path::Path;
+use std::sync::Mutex;
+use std::time::Instant;
 
 /// The number of angles we rotate through. The other half are done via "backwards" lines of sight.
 pub const SECTOR_STEPS: u16 = 180;
@@ -27,10 +34,6 @@ pub struct Compute<'compute> {
     pub longest_lines: Vec<crate::los_pack::LineOfSightPacked>,
 }
 
-/// `NUM_CORES` is the physical number of cores on a machine. Currently hardcoded to 8
-/// as that is what an i9900k has, and is a common configuration.
-/// TODO find a good syscall for this
-const NUM_CORES: usize = 8;
 /// Configuration for computing.
 pub struct ComputeConfig {
     /// The height of the observer that views viewsheds.
@@ -271,20 +274,65 @@ impl<'compute> Compute<'compute> {
             .map(|&x| x as i16)
             .collect::<Vec<i16>>();
 
-        #[expect(clippy::as_conversions, reason = "u32 -> usize is valid")]
-        // TODO: third param is ring data which needs to be saved
-        let (surfaces, _longest, _) = crate::cpu::multithreaded_kernel(
-            &elevations,
-            self.dem.max_los_as_points as usize,
-            360,
-            NUM_CORES,
-            false,
-        );
+        let max_los = usize::try_from(self.dem.max_los_as_points)?;
+        let mut surfaces = vec![0.0f32; max_los * max_los];
+        let mut longest = vec![(0u16, 0.0f32); max_los * max_los];
 
-        self.add_sector_surfaces_to_running_total(&surfaces);
+        let pool = ThreadPoolBuilder::new().num_threads(8).build()?;
+
+        {
+            let angle_mu = &Mutex::new(&mut surfaces);
+            let longest_mu = &Mutex::new(&mut longest);
+
+            pool.install(move || {
+                (0u16..360u16)
+                    .into_par_iter()
+                    .map(|angle| {
+                        let start = Instant::now();
+                        tracing::info!("starting angle: {angle}");
+                        let (heatmap, long, _) =
+                            crate::cpu::kernel(&elevations, max_los, f32::from(angle), false);
+                        tracing::info!("finished angle in {:?}", start.elapsed());
+                        (angle, heatmap, long)
+                    })
+                    .for_each(|(angle, heatmap, long)| {
+                        #[expect(clippy::expect_used, reason = "a poisoned mutex should crash")]
+                        angle_mu
+                            .lock()
+                            .expect("mutex poisoned")
+                            .iter_mut()
+                            .zip(heatmap)
+                            .for_each(|(to, from)| {
+                                *to += from;
+                            });
+
+                        #[expect(clippy::expect_used, reason = "a poisoned mutex should crash")]
+                        longest_mu
+                            .lock()
+                            .expect("mutex poisoned")
+                            .iter_mut()
+                            .zip(long)
+                            .for_each(|(to, from)| {
+                                if from > to.1 {
+                                    *to = (angle, from)
+                                }
+                            });
+                    });
+            });
+        };
+
+        self.total_surfaces = surfaces;
+
+        // self.add_sector_surfaces_to_running_total(&surfaces);
 
         // TODO: Pack longest lines
-        // self.longest_lines = longest;
+
+        self.longest_lines = longest
+            .iter()
+            .map(|&(angle, distance): &(u16, f32)| {
+                LineOfSightPacked::new(distance as u32, angle).expect("shouldn't fail to construct")
+            })
+            .collect();
 
         self.render_total_surfaces()?;
         self.render_longest_lines()?;

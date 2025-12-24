@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.88"
 
+
 [dependencies]
 bytemuck = "1.22.0"
 clap = { version = "4.5.42", features = ["derive"] }
@@ -29,5 +30,3 @@ googletest = "0.14.2"
 
 [lints]
 workspace = true
-
-
