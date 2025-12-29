@@ -436,7 +436,10 @@ impl<'compute> Compute<'compute> {
                 self.constants.sine,
                 self.constants.cosine,
             );
-            chocolate.rotate_value_nearest_neighbour(&self.dem.elevations, &mut rotated_elevations);
+            // Note that we _anti_ rotate because anti-rotating the DEM grid has the effect of normally
+            // rotating the line of sight. Which is just more intuitive to work with when debugging.
+            chocolate
+                .anti_rotate_value_nearest_neighbour(&self.dem.elevations, &mut rotated_elevations);
         }
 
         let mut buffers = kernel::kernel::Buffers {
@@ -502,10 +505,10 @@ pub mod test {
         assert_eq!(
             compute.total_surfaces,
             [
-                0.0, 0.0,       0.0,      0.0,
-                0.0, 568.6271,  3430.8115,  0.0,
-                0.0, 6453.858, 8529.429, 0.0,
-                0.0, 0.0,       0.0,      0.0
+                0.0, 0.0,      0.0,       0.0,
+                0.0, 568.6271, 3996.5193, 0.0,
+                0.0, 6310.845, 8529.429,  0.0,
+                0.0, 0.0,      0.0,       0.0
             ]
         );
     }

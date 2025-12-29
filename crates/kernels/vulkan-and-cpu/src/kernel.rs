@@ -101,7 +101,7 @@ impl Kernel {
         let chocolate_id =
             crate::chocolate_box::chocolate_id_from_tvs_id(rotated_tvs_id, buffers.constants);
 
-        let original_tvs_id = crate::rotation::Rotator::rotate_index_from_cached_trig(
+        let original_tvs_id = crate::rotation::Rotator::anti_rotate_index_from_cached_trig(
             rotated_tvs_id,
             buffers.constants.tvs_width,
             buffers.constants.sine,
@@ -264,7 +264,7 @@ impl Kernel {
             buffers.constants.sine,
             buffers.constants.cosine,
         )
-        .rotate_chocolate_id_to_dem_id();
+        .anti_rotate_chocolate_id_to_dem_id();
         angle_to_debug.to_radians().cos() == buffers.constants.cosine
             && angle_to_debug.to_radians().sin() == buffers.constants.sine
             && original_pov_id == pov_id
@@ -318,7 +318,7 @@ mod test {
                 constants.sine,
                 constants.cosine,
             );
-            rotator.rotate_value_nearest_neighbour(&elevations, &mut rotated_elevations);
+            rotator.anti_rotate_value_nearest_neighbour(&elevations, &mut rotated_elevations);
         }
 
         let tvs_size = constants.tvs_width.pow(2) as usize;
@@ -327,7 +327,7 @@ mod test {
         let mut longest_lines = vec![0.0; tvs_size];
 
         let rotated_tvs_id =
-            crate::rotation::Rotator::anti_rotate_index(*tvs_id, constants.tvs_width, angle);
+            crate::rotation::Rotator::rotate_index(*tvs_id, constants.tvs_width, angle);
 
         let offset = match directed_tvs_id {
             TvsId::Forward(_) => 0,
@@ -404,7 +404,7 @@ mod test {
         };
         let tvs_size = constants.tvs_width.pow(2) as usize;
         let rotated_tvs_id =
-            crate::rotation::Rotator::anti_rotate_index(*tvs_id, constants.tvs_width, angle);
+            crate::rotation::Rotator::rotate_index(*tvs_id, constants.tvs_width, angle);
         let mut ring_expected = empty_ring_data();
         let offset = match directed_tvs_id {
             TvsId::Forward(_) => 0,
@@ -538,8 +538,8 @@ mod test {
         constants.refraction = -EARTH_DIAMETER;
         let (surfaces, rings, lines) = invoke(&tvs_id, angle, Some(constants));
 
-        expect_tvs(&tvs_id, &surfaces, 0.1047198);
-        expect_ring_data(&tvs_id, angle, &rings, vec![3]);
-        expect_tvs(&tvs_id, &lines, -3.0);
+        expect_tvs(&tvs_id, &surfaces, 0.17453301);
+        expect_ring_data(&tvs_id, angle, &rings, vec![4]);
+        expect_tvs(&tvs_id, &lines, -4.0);
     }
 }
