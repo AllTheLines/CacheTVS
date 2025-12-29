@@ -13,7 +13,7 @@ pub const NOOP_DEM_ID: usize = usize::MAX;
 /// For example at 45° some coordinates rotate to .5, which rounds to the same
 /// coordinate it came from. Adding a little shift ensures that the desired
 /// rounding occurs and that rasterisation is correct.
-pub const ANGLE_SHIFT: f32 = 0.0001;
+pub const ANGLE_SHIFT: f32 = -0.0001;
 
 /// Cached data for rotating points.
 pub struct Rotator {
@@ -113,9 +113,17 @@ impl Rotator {
     #[inline]
     #[must_use]
     /// Rotate or anti rotate an index.
-    fn private_rotate_index(&self, index: u32, anti_rotate: bool) -> usize {
+    fn private_rotate_index(&self, index: u32, is_anti_rotate: bool) -> usize {
         let coordinate = self.index_to_coord(index);
-        self.rotate_coordinate_to_index(coordinate, anti_rotate)
+        self.rotate_coordinate_to_index(coordinate, is_anti_rotate)
+    }
+
+    #[inline]
+    #[must_use]
+    /// Rotate an index.
+    pub fn rotate_index(index: u32, width: u32, angle: f32) -> usize {
+        let rotator = Self::new_from_angle(index, width, angle);
+        rotator.private_rotate_index(index, false)
     }
 
     #[inline]
@@ -129,16 +137,25 @@ impl Rotator {
     #[inline]
     #[must_use]
     /// Rotate an index.
-    pub fn rotate_index_from_cached_trig(index: u32, width: u32, sine: f32, cosine: f32) -> usize {
+    pub fn anti_rotate_index_from_cached_trig(
+        index: u32,
+        width: u32,
+        sine: f32,
+        cosine: f32,
+    ) -> usize {
         let rotator = Self::new_from_cached_trig(index, width, sine, cosine);
-        rotator.private_rotate_index(index, false)
+        rotator.private_rotate_index(index, true)
     }
 
     #[inline]
     #[must_use]
     /// Rotate or anti rotate a coordinate to its scalar index.
-    pub fn rotate_coordinate_to_index(&self, coordinate: glam::UVec2, anti_rotate: bool) -> usize {
-        let rotated_coord = if anti_rotate {
+    pub fn rotate_coordinate_to_index(
+        &self,
+        coordinate: glam::UVec2,
+        is_anti_rotate: bool,
+    ) -> usize {
+        let rotated_coord = if is_anti_rotate {
             self.anti_rotate_coordinate(coordinate)
         } else {
             self.rotate_coordinate(coordinate)
@@ -249,7 +266,7 @@ mod test {
         expect_eq!(
             rotator.rotate_coordinate(glam::UVec2 { x: 2, y: 2 }),
             glam::Vec2 {
-                x: 1.4999988,
+                x: 1.5000012,
                 y: 2.2071068,
             }
         );

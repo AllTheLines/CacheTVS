@@ -162,7 +162,7 @@ impl<'viewshed> Reconstructor<'viewshed> {
         mut viewshed_so_far: geo::MultiPolygon,
     ) -> Result<geo::MultiPolygon> {
         let tvs_id = self.viewshed.dem.pov_id_to_tvs_id(u64::from(self.pov_id));
-        let rotated_tvs_id = kernel::rotation::Rotator::anti_rotate_index(
+        let rotated_tvs_id = kernel::rotation::Rotator::rotate_index(
             u32::try_from(tvs_id)?,
             self.viewshed.dem.tvs_width,
             self.current_angle,
@@ -306,7 +306,7 @@ impl<'viewshed> Reconstructor<'viewshed> {
                     let projected = projector
                         .to_degrees(geo::Coord {
                             x: coordinate.x,
-                            y: -coordinate.y,
+                            y: coordinate.y,
                         })
                         .unwrap_or_else(|_| {
                             panic!(
@@ -323,7 +323,7 @@ impl<'viewshed> Reconstructor<'viewshed> {
                         let projected = projector
                             .to_degrees(geo::Coord {
                                 x: coordinate.x,
-                                y: -coordinate.y,
+                                y: coordinate.y,
                             })
                             .unwrap_or_else(|_| {
                                 panic!(

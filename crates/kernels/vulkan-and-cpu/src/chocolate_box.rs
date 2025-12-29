@@ -65,12 +65,12 @@ impl Rotator {
 
     #[inline]
     /// Rotate a single point using nearest neighbour.
-    pub fn rotate_value_nearest_neighbour(
+    pub fn anti_rotate_value_nearest_neighbour(
         &self,
         elevations_in: &[i16],
         elevations_out: &mut [f32],
     ) {
-        let rotated_dem_id = self.rotate_chocolate_id_to_dem_id();
+        let rotated_dem_id = self.anti_rotate_chocolate_id_to_dem_id();
         let elevation = if rotated_dem_id == crate::rotation::NOOP_DEM_ID {
             f32::NAN
         } else {
@@ -85,9 +85,9 @@ impl Rotator {
 
     #[inline]
     /// Rotate a single point using sampled interpolation
-    pub fn rotate_value_bilinear(&self, elevations_in: &[i16], elevations_out: &mut [f32]) {
+    pub fn anti_rotate_value_bilinear(&self, elevations_in: &[i16], elevations_out: &mut [f32]) {
         let coordinate = self.chocolate_id_to_coord();
-        let rotated = self.rotator.rotate_coordinate(coordinate);
+        let rotated = self.rotator.anti_rotate_coordinate(coordinate);
         let interpolated = if rotated == crate::rotation::NOOP_COORDINATE {
             f32::NAN
         } else {
@@ -171,8 +171,8 @@ impl Rotator {
     #[inline]
     #[must_use]
     /// Rotate a DEM ID.
-    pub fn rotate_chocolate_id_to_dem_id(&self) -> usize {
-        self.private_rotate_chocolate_id_to_dem_id(false)
+    pub fn anti_rotate_chocolate_id_to_dem_id(&self) -> usize {
+        self.private_rotate_chocolate_id_to_dem_id(true)
     }
 
     #[inline]
@@ -249,7 +249,7 @@ mod test {
         let mut rotated = [0.0; 3];
         for chocolate_id in 0..super::size(dem_width, tvs_width) {
             let rotator = Rotator::new_from_angle(chocolate_id, dem_width, tvs_width, angle);
-            rotator.rotate_value_nearest_neighbour(&DEM3, &mut rotated);
+            rotator.anti_rotate_value_nearest_neighbour(&DEM3, &mut rotated);
         }
 
         rotated
@@ -261,7 +261,7 @@ mod test {
         let mut rotated = [0.0; 12];
         for chocolate_id in 0..super::size(dem_width, tvs_width) {
             let rotator = Rotator::new_from_angle(chocolate_id, dem_width, tvs_width, angle);
-            rotator.rotate_value_nearest_neighbour(&DEM6, &mut rotated);
+            rotator.anti_rotate_value_nearest_neighbour(&DEM6, &mut rotated);
         }
 
         rotated
@@ -310,7 +310,7 @@ mod test {
     fn rotate_by_45_dem3() {
         #[rustfmt::skip]
         let expected = [
-            0.0, 4.0, 8.0,
+            6.0, 4.0, 2.0,
         ];
 
         assert_dem(&run_dem3(45.0), &expected);
@@ -320,8 +320,8 @@ mod test {
     fn rotate_by_45_dem6() {
         #[rustfmt::skip]
         let expected = [
-            NAN, 8.0, 15.0, 21.0, 22.0, NAN,
-            NAN, 13.0,14.0, 20.0, 27.0, NAN
+            NAN, 19.0, 20.0, 15.0, 9.0,  NAN,
+            NAN, 26.0, 21.0, 21.0, 16.0, NAN
         ];
         assert_dem(&run_dem6(45.0001), &expected);
     }
@@ -330,7 +330,7 @@ mod test {
     fn rotate_by_90_dem3() {
         #[rustfmt::skip]
         let expected = [
-            1.0, 4.0, 7.0,
+            7.0, 4.0, 1.0,
         ];
 
         assert_dem(&run_dem3(90.0), &expected);
@@ -340,7 +340,7 @@ mod test {
     fn rotate_by_135_dem3() {
         #[rustfmt::skip]
         let expected = [
-            2.0, 4.0, 6.0,
+            8.0, 4.0, 0.0,
         ];
 
         assert_dem(&run_dem3(135.0), &expected);
@@ -352,26 +352,26 @@ mod test {
         let tvs_width = dem_width.div_euclid(3);
 
         let mut chocolate = Rotator::new_from_angle(0, dem_width, tvs_width, 0.0);
-        assert_eq!(chocolate.rotate_chocolate_id_to_dem_id(), 3);
+        assert_eq!(chocolate.anti_rotate_chocolate_id_to_dem_id(), 3);
 
         chocolate = Rotator::new_from_angle(1, dem_width, tvs_width, 0.0);
-        assert_eq!(chocolate.rotate_chocolate_id_to_dem_id(), 4);
+        assert_eq!(chocolate.anti_rotate_chocolate_id_to_dem_id(), 4);
 
         chocolate = Rotator::new_from_angle(1, dem_width, tvs_width, 45.0);
-        assert_eq!(chocolate.rotate_chocolate_id_to_dem_id(), 4);
+        assert_eq!(chocolate.anti_rotate_chocolate_id_to_dem_id(), 4);
 
         chocolate = Rotator::new_from_angle(4, dem_width, tvs_width, 90.0);
-        assert_eq!(chocolate.rotate_chocolate_id_to_dem_id(), 3);
+        assert_eq!(chocolate.anti_rotate_chocolate_id_to_dem_id(), 5);
 
         chocolate = Rotator::new_from_angle(0, dem_width, tvs_width, 135.0);
-        assert_eq!(chocolate.rotate_chocolate_id_to_dem_id(), 2);
+        assert_eq!(chocolate.anti_rotate_chocolate_id_to_dem_id(), 8);
 
         chocolate = Rotator::new_from_angle(1, dem_width, tvs_width, 135.0);
-        assert_eq!(chocolate.rotate_chocolate_id_to_dem_id(), 4);
+        assert_eq!(chocolate.anti_rotate_chocolate_id_to_dem_id(), 4);
 
         chocolate = Rotator::new_from_angle(5, dem_width, tvs_width, 90.0);
         assert_eq!(
-            chocolate.rotate_chocolate_id_to_dem_id(),
+            chocolate.anti_rotate_chocolate_id_to_dem_id(),
             crate::rotation::NOOP_DEM_ID
         );
     }
@@ -382,17 +382,17 @@ mod test {
         let tvs_width = dem_width.div_euclid(3);
         let mut chocolate = Rotator::new_from_angle(0, dem_width, tvs_width, 0.0);
         assert_eq!(
-            chocolate.rotate_chocolate_id_to_dem_id(),
+            chocolate.anti_rotate_chocolate_id_to_dem_id(),
             crate::rotation::NOOP_DEM_ID
         );
 
         chocolate = Rotator::new_from_angle(10, dem_width, tvs_width, 0.0);
-        assert_eq!(chocolate.rotate_chocolate_id_to_dem_id(), 22);
+        assert_eq!(chocolate.anti_rotate_chocolate_id_to_dem_id(), 22);
 
         chocolate = Rotator::new_from_angle(1, dem_width, tvs_width, 0.0);
-        assert_eq!(chocolate.rotate_chocolate_id_to_dem_id(), 13);
+        assert_eq!(chocolate.anti_rotate_chocolate_id_to_dem_id(), 13);
 
         chocolate = Rotator::new_from_angle(2, dem_width, tvs_width, 45.0);
-        assert_eq!(chocolate.rotate_chocolate_id_to_dem_id(), 15);
+        assert_eq!(chocolate.anti_rotate_chocolate_id_to_dem_id(), 14);
     }
 }

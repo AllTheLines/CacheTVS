@@ -20,7 +20,7 @@ time cargo run --release -- \
 
 ls -alh output/viewsheds
 
+# We allow it to fail because CI uses a software GPU which gives different results.
 diff \
 	"$PROJECT_ROOT/output/viewsheds/-3.122999906539917-51.48979949951172.json" \
-	"$PROJECT_ROOT/benchmarks/cardiff.json" ||
-	true
+	"$PROJECT_ROOT/benchmarks/cardiff.json" || true

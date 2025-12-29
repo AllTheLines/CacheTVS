@@ -98,5 +98,7 @@ pub fn rotate(
         constants.sine,
         constants.cosine,
     );
-    rotator.rotate_value_bilinear(elevations_in, elevations_out);
+    // Note that we _anti_ rotate because anti-rotating the DEM grid has the effect of normally
+    // rotating the line of sight. Which is just more intuitive to work with when debugging.
+    rotator.anti_rotate_value_bilinear(elevations_in, elevations_out);
 }
