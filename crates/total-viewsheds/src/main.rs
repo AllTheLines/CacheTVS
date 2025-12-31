@@ -1,5 +1,6 @@
 //! Total Viewshed Calculator
 #![feature(portable_simd)]
+#![feature(specialization)]
 #![expect(
     incomplete_features,
     reason = "our usage isn't crazy and unlikely to break"
@@ -47,7 +48,10 @@ mod output {
     pub mod ring_data;
     pub mod viewshed;
 }
+
+/// cpu implements a CPU kernel for the longest line of sight
 mod cpu;
+
 mod projection;
 
 fn main() -> Result<()> {
