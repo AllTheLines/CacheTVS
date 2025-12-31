@@ -96,7 +96,16 @@ const fn dem_to_pov(dem_id: i32, width: usize, max_los: usize) -> i32 {
     let dem_x = (dem_id / width as i32) - max_los as i32;
     let dem_y = (dem_id % width as i32) - max_los as i32;
 
-    dem_x * (max_los as i32) + dem_y
+    let radius = max_los as i32 / 2i32;
+    let circ_x = dem_x - radius;
+    let circ_y = dem_y - radius;
+
+    let dist = (circ_x.pow(2) + circ_y.pow(2)).isqrt();
+    if dist < radius {
+        dem_x * (max_los as i32) + dem_y
+    } else {
+        -1
+    }
 }
 
 /// `kernel` will calculate the longest line of sight heatmap for a given angle and elevation map
