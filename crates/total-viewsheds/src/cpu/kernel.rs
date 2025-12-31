@@ -2,6 +2,24 @@ use crate::cpu::los::{LineOfSight as _, UnrolledLOS};
 use crate::cpu::vector::{VectorLos, DEFAULT_VECTOR_LENGTH};
 use itertools::izip;
 
+/// `fill_in_elevations` will fill in "blank" elevations from NASA data with the last seen elevation
+/// in the line of sight
+fn fill_in_elevations(elevs: &[i16], max_los: usize) -> Vec<i16> {
+    elevs
+        .chunks_exact(2 * max_los)
+        .flat_map(|line| {
+            line.iter()
+                .scan(0, |last_seen, &elevation| match elevation {
+                    i16::MIN => Some(*last_seen),
+                    _ => {
+                        *last_seen = elevation;
+                        Some(elevation)
+                    }
+                })
+        })
+        .collect::<Vec<i16>>()
+}
+
 /// `generate_rotation` generates a rotation "map" for a given elevation list
 /// Adapted from [this stack overflow answer](https://stackoverflow.com/a/71901621)
 #[expect(
@@ -78,7 +96,7 @@ fn generate_rotation(elevs: &[i16], angle: f64, max_los: usize) -> (Vec<i32>, Ve
         })
         .collect::<Vec<i16>>();
 
-    (rotation, elevations)
+    (rotation, fill_in_elevations(&elevations, max_los))
 }
 
 #[expect(
@@ -109,7 +127,7 @@ const fn dem_to_pov(dem_id: i32, width: usize, max_los: usize) -> i32 {
 }
 
 /// `kernel` will calculate the longest line of sight heatmap for a given angle and elevation map
-/// assuming that the maximum line of sight mis `max_los`
+/// assuming that the maximum line of sight is `max_los`
 #[expect(
     clippy::inline_always,
     reason = "I am become Death, destroyer of compilers"
@@ -149,7 +167,7 @@ pub fn kernel(
         indexes.chunks_exact(width),
     ) {
         for (pov, (&pov_height, &result_dem_id)) in
-            izip!(line.iter().take(max_los), line_indexes.iter().take(max_los),).enumerate()
+            izip!(line.iter().take(max_los), line_indexes.iter().take(max_los)).enumerate()
         {
             let result_tvs_id = dem_to_pov(result_dem_id, 3 * max_los, max_los);
 
