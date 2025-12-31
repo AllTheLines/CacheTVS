@@ -126,6 +126,22 @@ const fn dem_to_pov(dem_id: i32, width: usize, max_los: usize) -> i32 {
     }
 }
 
+/// `DEFAULT_UNROLL` is the default loop unrolling constant, which is based
+/// off of the default vector length. 8-way unrolling for both the 4 and 8 wide
+/// vectors, and 10-way unrolling for the 16-wide vector as it is optimal for Turins
+const DEFAULT_UNROLL: usize = const {
+    match DEFAULT_VECTOR_LENGTH {
+        4 => 32,
+        8 => 64,
+        16 => 160,
+        #[expect(
+            clippy::unreachable,
+            reason = "no one should be setting any other constants"
+        )]
+        _ => unreachable!(),
+    }
+};
+
 /// `kernel` will calculate the longest line of sight heatmap for a given angle and elevation map
 /// assuming that the maximum line of sight is `max_los`
 #[expect(
@@ -161,7 +177,7 @@ pub fn kernel(
 
     let width = 2 * max_los;
 
-    let mut vs = UnrolledLOS::<64>::new(max_los);
+    let mut vs = UnrolledLOS::<DEFAULT_UNROLL>::new(max_los);
     for (line, line_indexes) in izip!(
         rotated_elevations.chunks_exact(width),
         indexes.chunks_exact(width),
