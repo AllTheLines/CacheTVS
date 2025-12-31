@@ -484,6 +484,8 @@ where
 pub const DEFAULT_VECTOR_LENGTH: usize = const {
     if cfg!(target_feature = "avx512f") {
         16
+    } else if cfg!(test) {
+        4
     } else if cfg!(target_feature = "sse") && cfg!(target_feature = "sse2") {
         8
     } else {
