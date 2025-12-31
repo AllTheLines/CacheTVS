@@ -22,5 +22,4 @@ ls -alh output/viewsheds
 
 diff \
 	"$PROJECT_ROOT/output/viewsheds/-3.122999906539917-51.48979949951172.json" \
-	"$PROJECT_ROOT/benchmarks/cardiff.json" ||
-	true
+	"$PROJECT_ROOT/benchmarks/cardiff.json" || true

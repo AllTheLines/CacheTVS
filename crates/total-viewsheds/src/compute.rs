@@ -1,8 +1,9 @@
 //! The main entrypoint for running computations.
 
+use color_eyre::eyre::ContextCompat;
+use color_eyre::Result;
 use std::iter::zip;
 use std::time::Instant;
-use color_eyre::Result;
 
 /// The number of angles we rotate through. The other half are done via "backwards" lines of sight.
 pub const SECTOR_STEPS: u16 = 180;
@@ -33,6 +34,7 @@ pub struct Compute<'compute> {
 /// as that is what an i9900k has, and is a common configuration.
 /// TODO find a good syscall for this
 const NUM_CORES: usize = 8;
+
 /// Configuration for computing.
 pub struct ComputeConfig {
     /// The height of the observer that views viewsheds.
@@ -178,6 +180,12 @@ impl<'compute> Compute<'compute> {
 
     /// Do all computations.
     pub fn run(&mut self) -> Result<()> {
+        if Self::is_process_viewsheds(&self.config.process)
+            && self.config.output_directory.is_some()
+        {
+            self.save_ring_metadata()?;
+        }
+
         if matches!(self.config.backend, crate::config::Backend::CPU) {
             self.run_parallel()?;
         } else {
@@ -197,12 +205,6 @@ impl<'compute> Compute<'compute> {
             Vec::new()
         };
 
-        if Self::is_process_viewsheds(&self.config.process)
-            && self.config.output_directory.is_some()
-        {
-            self.save_ring_metadata()?;
-        }
-
         let mut longest_lines = if Self::is_process_longest_lines(&self.config.process) {
             self.longest_lines = vec![
                 crate::los_pack::LineOfSightPacked::default();
@@ -213,13 +215,13 @@ impl<'compute> Compute<'compute> {
             Vec::new()
         };
 
-        for angle in 0..SECTOR_STEPS {
+        for sector in 0..SECTOR_STEPS {
             let mut sector_ring_data = vec![0; self.total_reserved_rings];
-            let trig = kernel::rotation::Rotator::calculate_trig(f32::from(angle));
+            let trig = kernel::rotation::Rotator::calculate_trig(f32::from(sector));
             self.constants.sine = trig.0;
             self.constants.cosine = trig.1;
             self.compute_sector(
-                angle,
+                sector,
                 &mut sector_surfaces,
                 &mut sector_ring_data,
                 &mut longest_lines,
@@ -228,7 +230,7 @@ impl<'compute> Compute<'compute> {
             if Self::is_process_viewsheds(&self.config.process) {
                 match &self.config.output_directory {
                     Some(_) => {
-                        self.save_sector_ring_data(angle, &sector_ring_data)?;
+                        self.save_sector_ring_data(sector, &sector_ring_data)?;
                     }
                     None => self.ring_data.push(sector_ring_data.clone()),
                 }
@@ -236,14 +238,14 @@ impl<'compute> Compute<'compute> {
 
             if Self::is_process_surfaces(&self.config.process) {
                 self.add_sector_surfaces_to_running_total(&sector_surfaces);
-                if angle == SECTOR_STEPS - 1 {
+                if sector == SECTOR_STEPS - 1 {
                     self.render_total_surfaces()?;
                 }
             }
 
             if Self::is_process_longest_lines(&self.config.process) {
-                self.increment_longest_lines(&longest_lines, angle)?;
-                if angle == SECTOR_STEPS - 1 {
+                self.increment_longest_lines(&longest_lines, sector)?;
+                if sector == SECTOR_STEPS - 1 {
                     self.render_longest_lines()?;
                 }
             }
@@ -266,31 +268,59 @@ impl<'compute> Compute<'compute> {
             .map(|&x| x as i16)
             .collect::<Vec<i16>>();
 
+        let max_los = usize::try_from(self.dem.max_los_as_points)?;
+        let mut surfaces = vec![0.0; max_los * max_los];
 
-        let max_los = self.dem.max_los_as_points as usize;
-        let mut surfaces = vec![0.0; max_los*max_los];
+        self.ring_data = vec![vec![]; usize::from(SECTOR_STEPS)];
 
-
-        for angle in 0..360 {
+        for angle in 0..360usize {
             let start = Instant::now();
-            println!("starting angle: {angle}");
-            let (heatmap, sector) = crate::cpu_two::kernel(&elevations, max_los, angle as f32);
-            zip(&mut surfaces, heatmap)
-                .for_each(|(to, from)| {
-                    *to += from;
-                });
-            println!("finished angle in {:?}", start.elapsed());
+            tracing::info!("starting angle: {angle}");
+            let (heatmap, bitmap) = crate::cpu::kernel::kernel(&elevations, max_los, angle as f32);
+            zip(&mut surfaces, heatmap).for_each(|(to, from)| {
+                *to += from;
+            });
+
+            if Self::is_process_viewsheds(&self.config.process) {
+                self.convert_bitmap_to_ids(&bitmap, angle)?;
+            }
+
+            tracing::info!("finished angle in {:?}", start.elapsed());
         }
-
-        self.total_surfaces = surfaces;
-
-        // self.add_sector_surfaces_to_running_total(&surfaces);
 
         // TODO: Pack longest lines
         // self.longest_lines = longest;
-
-        self.render_total_surfaces()?;
         // self.render_longest_lines()?;
+
+        self.total_surfaces = surfaces;
+        self.render_total_surfaces()?;
+
+        if Self::is_process_viewsheds(&self.config.process)
+            && self.config.output_directory.is_some()
+        {
+            for sector in 0..SECTOR_STEPS {
+                self.save_sector_ring_data(sector, &self.ring_data[sector as usize])?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Convert CPU visibilty bitmap to GPU sector ring data.
+    fn convert_bitmap_to_ids(&mut self, bitmap: &[Vec<bool>], angle: usize) -> Result<()> {
+        let sector = angle.rem_euclid(usize::from(SECTOR_STEPS));
+        let angle_ring_data = crate::output::ring_data::convert_bitmap_to_ids(
+            bitmap,
+            usize::try_from(self.constants.reserved_rings_per_band)?,
+            sector,
+            self.constants.max_los_as_points,
+        )?;
+
+        if angle < 180 {
+            self.ring_data[sector] = angle_ring_data;
+        } else {
+            self.ring_data[sector].extend(angle_ring_data);
+        }
 
         Ok(())
     }
@@ -435,7 +465,7 @@ impl<'compute> Compute<'compute> {
         tracing::info!("Running kernel for {angle}°");
         match self.config.backend {
             crate::config::Backend::VulkanCPU => {
-                self.compute_sector_cpu(cumulative_surfaces, ring_data, longest_lines)?;
+                self.compute_sector_vulkan_cpu(cumulative_surfaces, ring_data, longest_lines)?;
             }
             crate::config::Backend::Vulkan => {
                 self.compute_sector_vulkan(cumulative_surfaces, ring_data, longest_lines)?;
@@ -477,7 +507,7 @@ impl<'compute> Compute<'compute> {
     }
 
     /// Do a whole sector calculation on the CPU.
-    fn compute_sector_cpu(
+    fn compute_sector_vulkan_cpu(
         &self,
         cumulative_surfaces: &mut [f32],
         ring_data: &mut [u32],
@@ -528,18 +558,18 @@ pub mod test {
         dem
     }
 
-    pub fn compute(dem: &mut crate::dem::DEM) -> Compute<'_> {
+    pub fn compute(dem: &mut crate::dem::DEM, backend: crate::config::Backend) -> Compute<'_> {
         let config = ComputeConfig {
             observer_height: 0.8,
             scale: 1.0,
-            backend: crate::config::Backend::VulkanCPU,
+            backend,
             process: vec![
                 crate::config::Process::TotalSurfaces,
                 crate::config::Process::Viewsheds,
                 crate::config::Process::LongestLines,
             ],
             output_directory: None,
-            rings_per_km: 5000.0,
+            rings_per_km: 2000.0,
             heatmap: crate::config::HeatmapNormalisation::UnitScale,
             refraction: 0.13,
         };
@@ -549,18 +579,17 @@ pub mod test {
         compute
     }
 
-    #[test]
-    fn total_surfaces() {
+    fn total_surfaces(backend: crate::config::Backend) {
         let mut dem = make_dem(&kernel::tests::dems::bigger_dem());
-        let compute = compute(&mut dem);
+        let compute = compute(&mut dem, backend);
         #[rustfmt::skip]
         assert_eq!(
             compute.total_surfaces,
             [
-                0.0, 0.0,       0.0,      0.0,
-                0.0, 568.6271,  3463.1523,  0.0,
-                0.0, 6475.4287, 8529.429, 0.0,
-                0.0, 0.0,       0.0,      0.0
+                0.0, 0.0,       0.0,       0.0,
+                0.0, 568.6271,  3463.1523, 0.0,
+                0.0, 6475.4287, 8529.429,  0.0,
+                0.0, 0.0,       0.0,       0.0
             ]
         );
     }
@@ -570,10 +599,9 @@ pub mod test {
         clippy::cast_precision_loss,
         reason = "Distances always fit in u32"
     )]
-    #[gtest]
-    fn longest_lines() {
+    fn longest_lines(backend: crate::config::Backend) {
         let mut dem = make_dem(&kernel::tests::dems::bigger_dem());
-        let compute = compute(&mut dem);
+        let compute = compute(&mut dem, backend);
 
         #[rustfmt::skip]
         expect_eq!(
@@ -600,5 +628,30 @@ pub mod test {
                 0, 0,   0,   0
             ]
         );
+    }
+
+    mod gpu {
+        #[test]
+        fn total_surfaces() {
+            super::total_surfaces(crate::config::Backend::VulkanCPU);
+        }
+
+        #[test]
+        fn longest_lines() {
+            super::longest_lines(crate::config::Backend::VulkanCPU);
+        }
+    }
+
+    mod cpu {
+        #[test]
+        fn total_surfaces() {
+            super::total_surfaces(crate::config::Backend::CPU);
+        }
+
+        #[test]
+        fn longest_lines() {
+            // TODO: implement longest lines bitpacking for CPU kernel.
+            // super::longest_lines(crate::config::Backend::CPU);
+        }
     }
 }

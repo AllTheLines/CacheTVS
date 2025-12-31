@@ -75,7 +75,11 @@ impl super::BinaryTerrain {
                     )]
                     {
                         let value = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-                        values[Self::flip_from(index, header.width, header.height)?] = value;
+                        values[crate::dem::flip_index_horizontally(
+                            index,
+                            header.width,
+                            header.height,
+                        )?] = value;
                     }
                 }
                 super::header::Data::Float32(values)
@@ -99,7 +103,11 @@ impl super::BinaryTerrain {
                     )]
                     {
                         let value = i16::from_le_bytes([chunk[0], chunk[1]]);
-                        values[Self::flip_from(index, header.width, header.height)?] = value;
+                        values[crate::dem::flip_index_horizontally(
+                            index,
+                            header.width,
+                            header.height,
+                        )?] = value;
                     }
                 }
                 super::header::Data::Int16(values)
@@ -108,17 +116,6 @@ impl super::BinaryTerrain {
 
         tracing::info!("Dem file loaded.");
         Ok(Self { header, data })
-    }
-
-    /// Flip data so that it starts in the top-left and ends at the bottom-right.
-    fn flip_from(index: usize, width_u32: u32, height_u32: u32) -> Result<usize> {
-        let width = usize::try_from(width_u32)?;
-        let height = usize::try_from(height_u32)?;
-        let x = index.div_euclid(height);
-        let y = index.rem_euclid(height);
-        let y_flipped = (width - 1) - y;
-
-        Ok((y_flipped * height) + x)
     }
 
     /// Derive the scale of the DEM. Units are in meters.
@@ -170,37 +167,4 @@ fn read_f64_le(file: &mut std::fs::File) -> std::io::Result<f64> {
     let mut buffer = [0u8; 8];
     file.read_exact(&mut buffer)?;
     Ok(f64::from_le_bytes(buffer))
-}
-
-#[expect(
-    clippy::default_numeric_fallback,
-    clippy::needless_range_loop,
-    clippy::indexing_slicing,
-    reason = "These are just tests"
-)]
-#[cfg(test)]
-mod test {
-
-    #[test]
-    fn flip_from() {
-        #[rustfmt::skip]
-        let original = [
-            0, 1, 2,
-            3, 4, 5,
-            6, 7, 8
-        ];
-
-        let mut flipped = vec![0; original.len()];
-        for index in 0..original.len() {
-            let flipped_index = crate::bt::header::BinaryTerrain::flip_from(index, 3, 3).unwrap();
-            flipped[flipped_index] = original[index];
-        }
-
-        #[rustfmt::skip]
-        assert_eq!(flipped, [
-            2, 5, 8,
-            1, 4, 7,
-            0, 3, 6
-        ]);
-    }
 }

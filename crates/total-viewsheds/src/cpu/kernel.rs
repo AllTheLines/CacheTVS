@@ -14,85 +14,6 @@ const EARTH_RADIUS_SQUARED: f32 = 12_742_000.0;
 
 const TAN_ONE_RAD: f32 = 0.017_453_3;
 
-/// `generate_rotation` generates a rotation "map" for a given elevation list
-/// Adapted from [this stack overflow answer](https://stackoverflow.com/a/71901621)
-#[expect(
-    clippy::as_conversions,
-    clippy::cast_possible_truncation,
-    clippy::cast_possible_wrap,
-    clippy::cast_precision_loss,
-    reason = "so long as max_los^2 < 2^24, the following `as` conversions are entirely safe"
-)]
-fn generate_rotation(elevs: &[i16], angle: f64, max_los: usize) -> (Vec<i32>, Vec<i16>) {
-    let width = (max_los * 3) as isize;
-
-    #[expect(clippy::integer_division, reason = "we don't need precision here")]
-    {
-        assert_eq!(
-            elevs.len() as isize % width,
-            0,
-            "Elevations array must be square {}%{width} != 0",
-            elevs.len(),
-        );
-        let elevations_div_width = elevs.len() as isize / width;
-        assert_eq!(
-            elevations_div_width,
-            width,
-            "Elevations array must be square {}/{width} (={elevations_div_width}) != {width}",
-            elevs.len() as isize
-        );
-    };
-
-    let (sin, cos) = (f64::sin(angle.to_radians()), f64::cos(angle.to_radians()));
-
-    #[expect(clippy::integer_division, reason = "we don't need precision here")]
-    let (x_center, y_center) = (width / 2, width / 2);
-
-    let mut rotation: Vec<i32> = Vec::with_capacity(2 * max_los * max_los);
-
-    for x in (max_los as isize)..(max_los as isize) * 2 {
-        let x_sin = (x - x_center) as f64 * sin;
-        let x_cos = (x - x_center) as f64 * cos;
-        for y in (max_los as isize)..width {
-            let y_sin = (y - y_center) as f64 * sin;
-            let y_cos = (y - y_center) as f64 * cos;
-
-            let x_rot = (x_cos - y_sin).round() as isize + y_center;
-            let y_rot = (y_cos + x_sin).round() as isize + x_center;
-
-            let new_idx = x_rot.clamp(0, width - 1) * width + y_rot.clamp(0, width - 1);
-
-            rotation.push(new_idx as i32);
-        }
-    }
-
-    debug_assert_eq!(
-        rotation.len() as isize,
-        max_los as isize * (2 * max_los as isize),
-        "the rotation should be 2 * max_los wide, max_los tall"
-    );
-
-    // map the indexes to their elevations
-    let elevations = rotation
-        .iter()
-        .map(|&idx| {
-            if idx < 0i32 {
-                i16::MIN
-            } else {
-                #[expect(
-                    clippy::as_conversions,
-                    reason = "elevations start out as i16s, and i16 -> f32 -> i16 is lossless"
-                )]
-                #[expect(clippy::cast_sign_loss, reason = "idx < 2^31, idx >= 0")]
-                // safety: idx is clamped so a get will always be in-bounds
-                *unsafe { elevs.get_unchecked(idx as usize) }
-            }
-        })
-        .collect::<Vec<i16>>();
-
-    (rotation, elevations)
-}
-
 /// `generate_distances` generates the distance from
 fn generate_distances(max_los: usize) -> (Vec<f32>, Vec<f32>) {
     (1..=max_los)
@@ -213,11 +134,15 @@ impl ViewShed {
             .iter()
             .zip(distances)
             .fold(Simd::splat(0.0f32), |acc, (mask, &dists)| {
-                acc + (mask.select(Simd::from_array(dists), Simd::splat(0.0f32)) * Simd::splat(TAN_ONE_RAD))
+                acc + (mask.select(Simd::from_array(dists), Simd::splat(0.0f32))
+                    * Simd::splat(TAN_ONE_RAD))
             })
             .reduce_sum();
 
-        (heatmap, masks.iter().flat_map(|mask| mask.to_array()).collect())
+        (
+            heatmap,
+            masks.iter().flat_map(|mask| mask.to_array()).collect(),
+        )
     }
 }
 
@@ -232,11 +157,14 @@ impl ViewShed {
     reason = "i32 is constructed from (i32, i32) converting back should succeed"
 )]
 /// `dem_to_pov` turns the `dem_id` to the `pov_id` so that the result can be stored in a heatmap
-const fn dem_to_pov(dem_id: i32, width: usize, max_los: usize) -> i32 {
-    let dem_x = (dem_id / width as i32) - max_los as i32;
-    let dem_y = (dem_id % width as i32) - max_los as i32;
+const fn dem_to_pov(dem_id: i32, width: usize, max_los: usize) -> Option<i32> {
+    let dem_x = (dem_id % width as i32) - max_los as i32;
+    let dem_y = (dem_id / width as i32) - max_los as i32;
+    if dem_x >= max_los as i32 || dem_y >= max_los as i32 {
+        return None;
+    }
 
-    dem_x * (max_los as i32) + dem_y
+    Some(dem_y * (max_los as i32) + dem_x)
 }
 
 /// `kernel` will calculate the longest line of sight heatmap for a given angle and elevation map
@@ -245,7 +173,8 @@ pub fn kernel(elevation_map: &[i16], max_los: usize, angle: f32) -> (Vec<f32>, V
     let mut heatmap = vec![0.0f32; max_los * max_los];
     let mut sector_data: Vec<Vec<bool>> = vec![vec![]; max_los * max_los];
 
-    let (indexes, rotated_elevations) = generate_rotation(elevation_map, angle as f64, max_los);
+    let (indexes, rotated_elevations) =
+        super::rotation::generate_rotation(elevation_map, angle as f64, max_los);
 
     assert_eq!(
         rotated_elevations.len(),
@@ -253,17 +182,30 @@ pub fn kernel(elevation_map: &[i16], max_los: usize, angle: f32) -> (Vec<f32>, V
         "elevations should be 2 * max_los wide, and max_los tall"
     );
 
-    let width = 2 * max_los;
+    let chocolate_width = 2 * max_los;
 
     let mut vs = ViewShed::new(max_los);
-    for (line, line_indexes) in izip!(
-        rotated_elevations.chunks_exact(width),
-        indexes.chunks_exact(width),
+    for (line_elevations, line_indexes) in izip!(
+        rotated_elevations.chunks_exact(chocolate_width),
+        indexes.chunks_exact(chocolate_width),
     ) {
-        for (pov, (&pov_height, &result_dem_id)) in
-            izip!(line.iter().take(max_los), line_indexes.iter().take(max_los),).enumerate()
+        for (pov, (&pov_height, &result_dem_id)) in izip!(
+            line_elevations.iter().take(max_los),
+            line_indexes.iter().take(max_los),
+        )
+        .enumerate()
         {
-            let result_tvs_id = dem_to_pov(result_dem_id, 3 * max_los, max_los);
+            // TODO@ryan:
+            //   I made this `Option` just because I'm overriding the save location of the
+            //   ring data by rotating the TVS ID (or rather unrotating the already rotated
+            //   TVS ID). And of course some IDs can't be rotated and remain in the TVS grid,
+            //   hence the `Option`. I don't know if you really want this to be returning
+            //   `Option`. What we actually need is just the indexes of each TVS point you
+            //   compute in order, ie from 0 to TVS size. See the next TODO for more
+            //   explanation.
+            let Some(result_tvs_id) = dem_to_pov(result_dem_id, 3 * max_los, max_los) else {
+                continue;
+            };
 
             // if the line of sight is not within our computable points, do not consider it
             #[expect(
@@ -276,25 +218,67 @@ pub fn kernel(elevation_map: &[i16], max_los: usize, angle: f32) -> (Vec<f32>, V
                 continue;
             }
 
-            let neighbor = pov+1;
-            let (pixel, sector) = vs.line_of_sight(pov_height, &line[neighbor..neighbor + max_los]);
+            let neighbor = pov + 1;
+            let line_of_sight = &line_elevations[neighbor..neighbor + max_los];
+            let (pixel, visibility_bitmap) = vs.line_of_sight(pov_height + 2, line_of_sight);
 
             heatmap[result_tvs_id as usize] = pixel;
-            sector_data[result_tvs_id as usize] = sector;
+
+            // TODO@ryan:
+            //   This (anti-)rotation of the `result_tvs_id` is just a hack to get the ring data
+            //   into the right format for rendering. Ideally we would just fill up the ring data
+            //   in the order that each point is processed. Though without skipping any points. The
+            //   sector data is just a snapshot of the already rotated TVS grid. The reason for this
+            //   is mainly fidelity. We don't want to have to both rotate and unrotate data. Just
+            //   the rotation already has all the data we need to reconstruct viewsheds.
+            //
+            //   In short: either keep the hack or better, just fill the sector data as you process
+            //   it, but make sure that any skipped points are also filled with empty bitmaps.
+            {
+                let sector = angle.rem_euclid(crate::compute::SECTOR_STEPS as f32);
+                let rotated_tvs_id = kernel::rotation::Rotator::new_from_angle(
+                    result_tvs_id as u32,
+                    max_los as u32,
+                    sector,
+                )
+                .anti_rotate_dem_id();
+
+                if rotated_tvs_id != kernel::rotation::NOOP_DEM_ID {
+                    sector_data[rotated_tvs_id] = visibility_bitmap;
+                }
+            }
         }
     }
 
     (heatmap, sector_data)
 }
 
+#[expect(clippy::indexing_slicing, reason = "These are just tests")]
 #[cfg(test)]
 mod test {
-    use crate::cpu_two::ViewShed;
+    use googletest::prelude::*;
 
-    #[test]
-    fn line_of_sight() {
-        let mut vs = ViewShed::new(8);
-        let visibility = vs.line_of_sight(0, &[1000, 4000, 9000, 12000, 3000, 30000, 3000, 3000]);
-        println!("{:?}", visibility);
+    use super::*;
+
+    fn run(elevations: &[i16]) -> (f32, Vec<bool>) {
+        let mut viewshed = ViewShed::new(elevations.len() - 1);
+        let pov = elevations[0];
+        viewshed.line_of_sight(pov, &elevations[1..])
+    }
+
+    #[gtest]
+    fn lines_of_sight() {
+        expect_eq!(
+            run(&[0, 1000, 4000, 9000, 12000, 3000, 30000, 3000, 3000]),
+            (
+                20.94396,
+                vec![true, true, true, false, false, true, false, false]
+            )
+        );
+
+        expect_eq!(
+            run(&[7, 5, 2, 1, 0]),
+            (8.72665, vec![true, false, false, true])
+        );
     }
 }

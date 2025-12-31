@@ -542,6 +542,7 @@ mod test {
         expect_tvs(&tvs_id, &lines, -5.0);
     }
 
+    // TODO: Run on Ryan's kernel too.
     #[gtest]
     fn refraction_affects_visibility() {
         let tvs_id = TvsId::Backward(10);

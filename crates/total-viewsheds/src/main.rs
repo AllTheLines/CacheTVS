@@ -34,6 +34,10 @@ mod bt {
 }
 mod compute;
 mod config;
+mod cpu {
+    pub mod kernel;
+    mod rotation;
+}
 mod dem;
 mod dump_usage;
 mod los_pack;
@@ -47,9 +51,7 @@ mod output {
     pub mod ring_data;
     pub mod viewshed;
 }
-mod cpu;
 mod projection;
-mod cpu_two;
 
 fn main() -> Result<()> {
     color_eyre::install()?;

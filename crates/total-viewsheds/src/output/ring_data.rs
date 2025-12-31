@@ -161,9 +161,118 @@ impl Storage {
     }
 }
 
+#[expect(
+    clippy::indexing_slicing,
+    reason = "Not sure of the best approach right now."
+)]
+/// Convert a bitmap of visibilities to an array of opening/closing IDs. Or in other words
+/// converting the ring data of the CPU kernel to the same format of the ring data of the GPU
+/// kernel. There is no inherent reason that the formats should be different, so we should decide
+/// on one over the other, likely the bitmap.
+///
+/// The CPU algorithm handles one angle at a time, so this will be called 360 times. But the GPU
+/// algorighm handles one _sector_ at a time, so is only called 180 times. It combines opposite
+/// angles into forward and backward lines of sight.
+///
+/// # Input CPU format
+///   * Array shape: `[ [boolean visibility; max_line_of_sight]; tvs_points_count ]`.
+///
+/// [
+///   // Point 0,0:
+///   [
+///     true, true, false, false, true, false,
+///   ],
+///
+///   // Point 1,0:
+///   [
+///     true, true, true, true, true, false,
+///   ],
+///
+///   ...
+/// ]
+///
+///
+/// # Output GPU format
+///   * Array is of length `tvs_points_count * reserved_ring_data_size`.
+///   * Ring data size in this example is 10.
+///
+/// Note how the first ID is always a closing ID because we can always assume that the point from
+/// where the observer stands is always visible.
+///
+///   | Size of used reserved ring data | closing | opening | closing ...
+/// [
+///
+///     // Point 0,0:
+///     4,                                2,        4,        5,        0,0,0,0,0,0,
+///     // Point 1,0:
+///     2,                                5,                            0,0,0,0,0,0,0,0
+///
+///   ...
+///
+///   // Then the whole thing is repeated for "backward" lines of sight.
+/// ]
+pub fn convert_bitmap_to_ids(
+    bitmap: &[Vec<bool>],
+    reserved_ring_data_size: usize,
+    sector: usize,
+    width: u32,
+) -> Result<Vec<u32>> {
+    let total_points = usize::try_from(width * width)?;
+    let mut ring_data = vec![0; total_points * reserved_ring_data_size];
+    let mut start = 0;
+
+    for (rotated_tvs_id, line_of_sight) in bitmap.iter().enumerate() {
+        let mut is_currently_visible = true;
+        let mut is_previously_visible = true;
+        let mut closing = false;
+        let mut cursor = 1;
+
+        if width != 0 {
+            let tvs_id = kernel::rotation::Rotator::new_from_angle(
+                rotated_tvs_id as u32,
+                width,
+                sector as f32,
+            )
+            .rotate_dem_id();
+
+            if tvs_id == 5 {
+                // dbg!(rotated_tvs_id, line_of_sight);
+            }
+        }
+        for (index, visibility) in line_of_sight
+            .iter()
+            // Skip the first visibility because we assume the PoV is always visibile
+            .skip(1)
+            .enumerate()
+        {
+            is_currently_visible = *visibility;
+            let opening = is_currently_visible && !is_previously_visible;
+            closing = is_previously_visible && !is_currently_visible;
+
+            if opening || closing {
+                ring_data[start + cursor] = u32::try_from(index + 1)?;
+                cursor += 1;
+            }
+
+            is_previously_visible = is_currently_visible;
+        }
+
+        if is_currently_visible && !closing {
+            ring_data[start + cursor] = u32::try_from(width)?;
+            cursor += 1;
+        }
+
+        ring_data[start] = u32::try_from(cursor)?;
+        start += reserved_ring_data_size;
+    }
+
+    Ok(ring_data)
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
+    use googletest::prelude::*;
 
     #[test]
     fn save_and_load() {
@@ -184,5 +293,29 @@ mod test {
                 assert_eq!(ring_data.load_sector(0).unwrap(), vec![42]);
             }
         }
+    }
+
+    #[gtest]
+    fn convert_bitmap() {
+        fn run(bitmap: &[Vec<bool>]) -> Vec<u32> {
+            let reserved_ring_size = 3;
+            let result = convert_bitmap_to_ids(bitmap, reserved_ring_size, 0, 4).unwrap();
+            let size = bitmap.len() * reserved_ring_size;
+            result[0..size].to_vec()
+        }
+
+        expect_eq!(run(&[vec![true, true, true, false]]), vec![2, 3, 0]);
+
+        expect_eq!(run(&[vec![true, false, false, false]]), vec![2, 1, 0]);
+
+        expect_eq!(
+            run(&[
+                vec![true, true, true, false],
+                vec![true, false, false, false]
+            ]),
+            vec![2, 3, 0, 2, 1, 0]
+        );
+
+        expect_eq!(run(&[vec![true, true, true, true]]), vec![2, 4, 0]);
     }
 }

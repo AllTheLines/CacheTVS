@@ -35,6 +35,8 @@ pub struct DEM {
     pub max_line_of_sight: u32,
     /// The maximum distance in terms of points to search.
     pub max_los_as_points: u32,
+    // TODO: Since starting to use circles instead of squares, this either needs a different name
+    // or a more informative comment.
     /// The total number of points that can have full viewsheds calculated for them.
     pub computable_points_count: u32,
 }
@@ -176,6 +178,24 @@ impl std::fmt::Debug for DEM {
     }
 }
 
+/// Flip an 1D index on the y-axis of its 2D representation. When called for a whole DEM, this
+/// has the effect of flipping the data about its horizontal axis.
+pub fn flip_index_horizontally(index: usize, width_u32: u32, height_u32: u32) -> Result<usize> {
+    let width = usize::try_from(width_u32)?;
+    let height = usize::try_from(height_u32)?;
+    let x = index.div_euclid(height);
+    let y = index.rem_euclid(height);
+    let y_flipped = (width - 1) - y;
+
+    Ok((y_flipped * height) + x)
+}
+
+#[expect(
+    clippy::default_numeric_fallback,
+    clippy::needless_range_loop,
+    clippy::indexing_slicing,
+    reason = "These are just tests"
+)]
 #[cfg(test)]
 mod test {
     use super::*;
@@ -189,5 +209,28 @@ mod test {
             dem.latlon_to_dem_coord(centre).unwrap(),
             Coordinate((50.0f64, 50.0f64).into())
         );
+    }
+
+    #[test]
+    fn flip_horizontally() {
+        #[rustfmt::skip]
+        let original = [
+            0, 1, 2,
+            3, 4, 5,
+            6, 7, 8
+        ];
+
+        let mut flipped = vec![0; original.len()];
+        for index in 0..original.len() {
+            let flipped_index = flip_index_horizontally(index, 3, 3).unwrap();
+            flipped[flipped_index] = original[index];
+        }
+
+        #[rustfmt::skip]
+        assert_eq!(flipped, [
+            2, 5, 8,
+            1, 4, 7,
+            0, 3, 6
+        ]);
     }
 }

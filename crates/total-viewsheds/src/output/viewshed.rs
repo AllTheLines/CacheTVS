@@ -52,11 +52,11 @@ impl Viewshed<'_> {
             pov_coord: pov_dem_coord,
         };
 
-        for angle_integer in 0..crate::compute::SECTOR_STEPS {
-            let angle = f32::from(angle_integer);
+        for sector_integer in 0..crate::compute::SECTOR_STEPS {
+            let sector = f32::from(sector_integer);
             let mut reconstructor =
-                Reconstructor::new(&viewshed, ring_data.metadata.reserved_ring_size, angle)?;
-            reconstructor.sector_ring_data = ring_data.get_sector(angle_integer)?;
+                Reconstructor::new(&viewshed, ring_data.metadata.reserved_ring_size, sector)?;
+            reconstructor.sector_ring_data = ring_data.get_sector(sector_integer)?;
             polygon = reconstructor.reconstruct_sector(polygon)?;
         }
 
@@ -102,7 +102,7 @@ pub struct Reconstructor<'viewshed> {
     /// The DEM id of the observer.
     pov_id: u32,
     /// The current sector angle
-    current_angle: f32,
+    current_sector: f32,
 }
 
 impl<'viewshed> Reconstructor<'viewshed> {
@@ -114,7 +114,7 @@ impl<'viewshed> Reconstructor<'viewshed> {
     fn new(
         viewshed: &'viewshed Viewshed<'viewshed>,
         reserved_ring_size: usize,
-        angle: f32,
+        sector: f32,
     ) -> Result<Self> {
         let pov_id = viewshed.dem.dem_coord_to_id(viewshed.pov_coord);
         let reconstructor = Self {
@@ -123,7 +123,7 @@ impl<'viewshed> Reconstructor<'viewshed> {
             cursor: 0,
             reserved_ring_size,
             pov_id,
-            current_angle: angle,
+            current_sector: sector,
         };
 
         if !viewshed.dem.is_point_computable(pov_id) {
@@ -140,7 +140,7 @@ impl<'viewshed> Reconstructor<'viewshed> {
     pub fn reconstruct_sector(&mut self, viewshed: geo::MultiPolygon) -> Result<geo::MultiPolygon> {
         tracing::debug!(
             "Building viewshed for sector {} using ring data of length {}",
-            self.current_angle,
+            self.current_sector,
             self.sector_ring_data.len()
         );
         self.parse_sector(viewshed)
@@ -165,7 +165,7 @@ impl<'viewshed> Reconstructor<'viewshed> {
         let rotated_tvs_id = kernel::rotation::Rotator::new_from_angle(
             u32::try_from(tvs_id)?,
             self.viewshed.dem.tvs_width,
-            self.current_angle,
+            self.current_sector,
         )
         .anti_rotate_dem_id();
         self.cursor = rotated_tvs_id * self.reserved_ring_size;
@@ -224,8 +224,8 @@ impl<'viewshed> Reconstructor<'viewshed> {
         direction: &kernel::elevations::Direction,
     ) -> Coordinate {
         let angle = match direction {
-            kernel::elevations::Direction::Forward => self.current_angle.to_radians(),
-            kernel::elevations::Direction::Backward => (self.current_angle + 180.0).to_radians(),
+            kernel::elevations::Direction::Forward => self.current_sector.to_radians(),
+            kernel::elevations::Direction::Backward => (self.current_sector + 180.0).to_radians(),
         };
         let distance = f64::from(index);
 
@@ -490,11 +490,11 @@ mod test {
         }
     }
 
-    #[test]
-    fn viewshed_in_hole() {
+    fn viewshed_in_hole(backend: crate::config::Backend) {
         let viewshed = crate::output::ascii::make_viewshed(
             &kernel::tests::dems::bigger_dem(),
             geo::Coord { x: 5.0, y: 5.0 },
+            backend,
         );
 
         assert_viewshed(
@@ -516,11 +516,11 @@ mod test {
         );
     }
 
-    #[test]
-    fn viewshed_on_summit() {
+    fn viewshed_on_summit(backend: crate::config::Backend) {
         let viewshed = crate::output::ascii::make_viewshed(
             &kernel::tests::dems::bigger_dem(),
             geo::Coord { x: 6.0, y: 6.0 },
+            backend,
         );
 
         assert_viewshed(
@@ -542,11 +542,11 @@ mod test {
         );
     }
 
-    #[test]
-    fn viewshed_near_summit() {
+    fn viewshed_near_summit(backend: crate::config::Backend) {
         let viewshed = crate::output::ascii::make_viewshed(
             &kernel::tests::dems::bigger_dem(),
             geo::Coord { x: 5.0, y: 6.0 },
+            backend,
         );
 
         assert_viewshed(
@@ -566,5 +566,39 @@ mod test {
                 "████████████████████████",
             ],
         );
+    }
+
+    mod gpu {
+        #[test]
+        fn viewshed_in_hole() {
+            super::viewshed_in_hole(crate::config::Backend::VulkanCPU);
+        }
+
+        #[test]
+        fn viewshed_on_summit() {
+            super::viewshed_on_summit(crate::config::Backend::VulkanCPU);
+        }
+
+        #[test]
+        fn viewshed_near_summit() {
+            super::viewshed_near_summit(crate::config::Backend::VulkanCPU);
+        }
+    }
+
+    mod cpu {
+        #[test]
+        fn viewshed_in_hole() {
+            super::viewshed_in_hole(crate::config::Backend::CPU);
+        }
+
+        #[test]
+        fn viewshed_on_summit() {
+            super::viewshed_on_summit(crate::config::Backend::CPU);
+        }
+
+        #[test]
+        fn viewshed_near_summit() {
+            super::viewshed_near_summit(crate::config::Backend::CPU);
+        }
     }
 }
