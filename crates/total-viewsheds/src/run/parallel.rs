@@ -44,12 +44,23 @@ impl super::compute::Compute<'_> {
                     .map(|angle| {
                         let start = std::time::Instant::now();
                         tracing::info!("starting angle: {angle}");
-                        let output = crate::cpu::kernel(
-                            elevations,
-                            max_los,
-                            f32::from(angle),
-                            is_process_ring_data,
-                        );
+
+                        let output = if is_process_ring_data {
+                            crate::cpu::kernel(
+                                elevations,
+                                max_los,
+                                f32::from(angle),
+                                true,
+                            )
+                        } else {
+                            crate::cpu::kernel(
+                                elevations,
+                                max_los,
+                                f32::from(angle),
+                                false,
+                            )
+                        };
+
                         tracing::info!("finished angle in {:?}", start.elapsed());
                         (angle, output)
                     })
@@ -141,7 +152,9 @@ impl AccumulatingData<'_> {
                 }
             });
 
-        self.convert_bitmap_to_ids(&output.visibility, angle)?;
+        if self.constants.is_ring_data() {
+            self.convert_bitmap_to_ids(&output.visibility, angle)?;
+        }
 
         Ok(())
     }
