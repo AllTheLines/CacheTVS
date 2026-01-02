@@ -10,7 +10,6 @@ pub trait LineOfSight<Output: Into<(f32, f32)>> {
         &mut self,
         pov_height: f32,
         line: &[i16],
-        output_sector: bool,
     ) -> (f32, f32, Vec<bool>)
     where
         LOS: Angle + PrefixMax + Accumulate<Output>;
@@ -43,7 +42,6 @@ pub trait Accumulate<Output: Into<(f32, f32)>> {
         prefix: &[f32],
         distances: &[f32],
         bitmap: &mut Vec<bool>,
-        output_sector: bool,
     ) -> Output;
 }
 
@@ -62,12 +60,15 @@ const EARTH_RADIUS_SQUARED: f32 = 12_742_000.0;
     clippy::cast_precision_loss,
     reason = "max_los is < 2^24"
 )]
-fn generate_distances(max_los: usize) -> (Vec<f32>, Vec<f32>) {
+fn generate_distances(max_los: usize, refraction: f32) -> (Vec<f32>, Vec<f32>) {
     (1..=max_los)
         .map(|step| {
+            let distance = (step * 100) as f32;
+            let adjustment = (distance * distance * refraction) / EARTH_RADIUS_SQUARED;
+
             (
-                (step * 100) as f32,
-                (step * 100) as f32 / EARTH_RADIUS_SQUARED,
+                distance,
+                adjustment
             )
         })
         .unzip()
@@ -91,8 +92,8 @@ pub struct StraightLine {
 impl StraightLine {
     /// new constructs a new `StraightLine` given the maximum line of sight in `max_los`
     #[expect(unused, reason = "this is generally only for testing/benchmarking")]
-    pub fn new(max_los: usize) -> Self {
-        let (distances, adjustments) = generate_distances(max_los);
+    pub fn new(max_los: usize, refraction: f32) -> Self {
+        let (distances, adjustments) = generate_distances(max_los, refraction);
         Self {
             max_los,
             angles: vec![0.0f32; max_los + 1],
@@ -112,7 +113,6 @@ impl LineOfSight<(f32, f32)> for StraightLine {
         &mut self,
         pov_height: f32,
         line: &[i16],
-        output_sector: bool,
     ) -> (f32, f32, Vec<bool>)
     where
         LOS: PrefixMax + Angle + Accumulate<(f32, f32)>,
@@ -141,7 +141,6 @@ impl LineOfSight<(f32, f32)> for StraightLine {
             &self.prefix_max,
             &self.distances,
             &mut output,
-            output_sector,
         );
 
         (heatmap, longest, output)
@@ -185,8 +184,8 @@ where
 {
     /// `new` initializes a new `UnrolledLOS`, and precalculates all the distances
     /// and earth curvature adjustments
-    pub fn new(max_los: usize) -> Self {
-        let (distances, adjustments) = generate_distances(max_los);
+    pub fn new(max_los: usize, refraction: f32) -> Self {
+        let (distances, adjustments) = generate_distances(max_los, refraction);
 
         Self {
             distances,
@@ -207,7 +206,6 @@ where
         &mut self,
         pov_height: f32,
         line: &[i16],
-        output_sector: bool,
     ) -> (f32, f32, Vec<bool>)
     where
         LOS: Angle + PrefixMax + Accumulate<Unroll<UNROLL>>,
@@ -248,7 +246,6 @@ where
                     &prefix_max,
                     distances,
                     &mut output,
-                    output_sector,
                 );
 
                 angles[0] = angles[UNROLL];
@@ -272,7 +269,6 @@ where
             &prefix_max,
             rest_distances,
             &mut output,
-            output_sector,
         );
 
         let (heatmap, longest) = new_acc.into();

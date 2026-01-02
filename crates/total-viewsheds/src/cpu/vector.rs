@@ -349,9 +349,9 @@ where
         ) {
             let float_elevation: Simd<f32, { WIDTH }> = Simd::from(elevation).cast();
 
-            let adjusted = float_elevation - Simd::splat(pov_height);
+            let height_delta = float_elevation - Simd::splat(pov_height);
 
-            let res = (adjusted / Simd::from_array(distance)) - Simd::from_array(adjustment);
+            let res = (height_delta - Simd::from_array(adjustment)) / Simd::from_array(distance);
 
             res.copy_to_slice(angle);
         }
@@ -363,19 +363,12 @@ where
     LaneCount<WIDTH>: SupportedLaneCount,
 {
     #[inline]
-    #[expect(clippy::allow_attributes, reason = "conditional attributes")]
-    #[allow(
-        unused,
-        unused_variables,
-        reason = "conditional compilation causes dead parameters"
-    )]
     fn accumulate(
         init: (f32, f32),
         angles: &[f32],
         prefix: &[f32],
         distances: &[f32],
         bitmap: &mut Vec<bool>,
-        output_sector: bool,
     ) -> (f32, f32) {
         debug_assert!(angles.len().is_multiple_of(WIDTH), "");
         debug_assert!(prefix.len().is_multiple_of(WIDTH), "");
@@ -390,11 +383,8 @@ where
             |acc, (&angle_arr, &prefix_arr, &distances_arr)| {
                 let mask = Self::gt(Simd::from_array(angle_arr), Simd::from_array(prefix_arr));
 
-                #[cfg(any(test, feature = "ring_data"))]
-                {
-                    if output_sector {
-                        bitmap.extend(mask.to_array());
-                    }
+                if cfg!(any(test, feature = "ring_data")) {
+                    bitmap.extend(mask.to_array());
                 }
 
                 if !mask.any() {
@@ -439,7 +429,6 @@ where
         prefix: &[f32],
         distances: &[f32],
         bitmap: &mut Vec<bool>,
-        output_sector: bool,
     ) -> Unroll<SIZE> {
         debug_assert!(
             angles.len().is_multiple_of(WIDTH),
@@ -473,11 +462,8 @@ where
             |(sum_arr, longest_arr, &angle_arr, &prefix_arr, &distances_arr)| {
                 let mask = Self::gt(Simd::from_array(angle_arr), Simd::from_array(prefix_arr));
 
-                #[cfg(any(test, feature = "ring_data"))]
-                {
-                    if output_sector {
-                        bitmap.extend(mask.to_array());
-                    }
+                if cfg!(any(test, feature = "ring_data")) {
+                    bitmap.extend(mask.to_array());
                 }
 
                 if !mask.any() {
@@ -546,14 +532,13 @@ mod test {
 
     #[test]
     fn line_of_sight_four() {
-        let mut vs = UnrolledLOS::<64>::new(16);
+        let mut vs = UnrolledLOS::<64>::new(16, 0.13);
         let (visibility, longest, sector) = vs.line_of_sight::<VectorLos<4>>(
             0.0f32,
             &[
                 1000, 4000, 9000, 12000, 3000, 30000, 3000, 3000, 1000, 4000, 9000, 12000, 3000,
                 30000, 3000, 3000,
             ],
-            true,
         );
         println!("{:?} {:?} {:?}", visibility, longest, sector);
     }
@@ -565,14 +550,13 @@ mod test {
         target_feature = "avx2"
     ))]
     fn line_of_sight_eight() {
-        let mut vs = UnrolledLOS::<64>::new(16);
+        let mut vs = UnrolledLOS::<64>::new(16, 0.13);
         let (visibility, longest, sector) = vs.line_of_sight::<VectorLos<8>>(
             0.0f32,
             &[
                 1000, 4000, 9000, 12000, 3000, 30000, 3000, 3000, 1000, 4000, 9000, 12000, 3000,
                 30000, 3000, 3000,
             ],
-            true,
         );
         println!("{:?} {:?} {:?}", visibility, longest, sector);
     }

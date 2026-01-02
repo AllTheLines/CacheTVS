@@ -66,14 +66,14 @@ pub fn kernel(
     elevation_map: &[i16],
     max_los: usize,
     angle: f32,
-    is_output_sector_data: bool,
+    refraction: f32,
 ) -> OutputData {
     let mut surfaces = vec![0.0f32; max_los * max_los];
     let mut longest = vec![0.0f32; max_los * max_los];
 
     let mut sector_data: Vec<Vec<bool>> = vec![
         vec![];
-        if is_output_sector_data {
+        if cfg!(any(test, target_feature="ring_data")) {
             max_los * max_los
         } else {
             0
@@ -91,7 +91,7 @@ pub fn kernel(
 
     let width = 2 * max_los;
 
-    let mut vs = UnrolledLOS::<DEFAULT_UNROLL>::new(max_los);
+    let mut vs = UnrolledLOS::<DEFAULT_UNROLL>::new(max_los, refraction);
     for (line, line_indexes) in izip!(
         rotated_elevations.chunks_exact(width),
         indexes.chunks_exact(width),
@@ -122,7 +122,6 @@ pub fn kernel(
                 vs.line_of_sight::<VectorLos<{ DEFAULT_VECTOR_LENGTH }>>(
                     f32::from(pov_height) + 1.65,
                     &line[neighbor..neighbor + max_los],
-                    is_output_sector_data,
                 );
 
             #[expect(
@@ -141,7 +140,7 @@ pub fn kernel(
                     *longest.get_unchecked_mut(result_tvs_id as usize) = point_longest;
                 };
 
-                if is_output_sector_data {
+                if cfg!(any(test, target_feature="ring_data"))  {
                     // TODO@ryan:
                     //   This rotation of the `result_tvs_id` is just a hack to get the ring data
                     //   into the right format for rendering. Ideally we would just fill up the ring data

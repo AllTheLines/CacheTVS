@@ -37,6 +37,7 @@ impl super::compute::Compute<'_> {
             };
 
             let elevations = &self.dem.elevations;
+            let refraction = self.config.refraction;
 
             pool.install(move || {
                 (0u16..360u16)
@@ -49,7 +50,7 @@ impl super::compute::Compute<'_> {
                             elevations,
                             max_los,
                             f32::from(angle),
-                            is_process_ring_data,
+                            refraction,
                         );
                         tracing::info!("finished angle in {:?}", start.elapsed());
                         (angle, output)

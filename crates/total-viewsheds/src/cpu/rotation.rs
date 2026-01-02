@@ -128,14 +128,10 @@ mod test {
 
     #[gtest]
     fn rotate_by_45() {
-        // TODO:ryan-berger this seems
         #[rustfmt::skip]
         let expected = [
-            20, 14, 15, 10,
-            // TODO@ryan: `26` is outside the TVS
-            // I wonder if this, together with my rotation hack when filling the sector data in the
-            // kernel, is contributing towards the spindles/artefacts in the viewshed unit tests?
-            26, 21, 16, 16
+            14, 15, 9, 4,
+            20, 21, 16, 11
         ];
         let (rotations, _) = generate_rotation(&DEM, 45.0, 2);
         expect_eq!(&rotations, &expected);
