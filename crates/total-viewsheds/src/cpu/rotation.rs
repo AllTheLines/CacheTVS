@@ -30,14 +30,17 @@ pub fn generate_rotation(elevs: &[i16], angle: f32, max_los: usize) -> (Vec<i32>
         );
     };
 
-    let (sin, cos) = (f32::sin((angle + ANGLE_SHIFT).to_radians()), f32::cos((angle + ANGLE_SHIFT).to_radians()));
+    let (sin, cos) = (
+        f32::sin((angle + ANGLE_SHIFT).to_radians()),
+        f32::cos((angle + ANGLE_SHIFT).to_radians()),
+    );
 
-    let (x_center, y_center) = ((width-1) as f32 / 2.0, (width-1) as f32 / 2.0);
+    let (x_center, y_center) = ((width - 1) as f32 / 2.0, (width - 1) as f32 / 2.0);
 
     let mut rotation: Vec<i32> = Vec::with_capacity(2 * max_los * max_los);
 
     for x in (max_los as isize)..(max_los as isize) * 2 {
-        let x_sin = (x as f32 - x_center)*  sin;
+        let x_sin = (x as f32 - x_center) * sin;
         let x_cos = (x as f32 - x_center) * cos;
         for y in (max_los as isize)..width {
             let y_sin = (y as f32 - y_center) * sin;
