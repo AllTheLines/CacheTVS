@@ -6,7 +6,15 @@ use color_eyre::{
 };
 use rayon::iter::{IntoParallelIterator as _, ParallelIterator as _};
 
+
+#[cfg(any(test, feature = "ring_data"))]
+const PROCESS_RING_DATA: bool = true;
+
+#[cfg(not(any(test, feature = "ring_data")))]
+const PROCESS_RING_DATA: bool = false;
+
 impl super::compute::Compute<'_> {
+
     #[expect(
         clippy::panic_in_result_fn,
         reason = "It's too complicated and of no benefit to get the errors from the threads"
@@ -45,22 +53,12 @@ impl super::compute::Compute<'_> {
                         let start = std::time::Instant::now();
                         tracing::info!("starting angle: {angle}");
 
-                        let output = if is_process_ring_data {
-                            crate::cpu::kernel(
-                                elevations,
-                                max_los,
-                                f32::from(angle),
-                                true,
-                            )
-                        } else {
-                            crate::cpu::kernel(
-                                elevations,
-                                max_los,
-                                f32::from(angle),
-                                false,
-                            )
-                        };
-
+                        let output = crate::cpu::kernel(
+                            elevations,
+                            max_los,
+                            f32::from(angle),
+                            is_process_ring_data,
+                        );
                         tracing::info!("finished angle in {:?}", start.elapsed());
                         (angle, output)
                     })

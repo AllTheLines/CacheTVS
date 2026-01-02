@@ -1,5 +1,7 @@
 //! Rotate the DEM, but just the so-called "chocolate bar" region.
 
+use kernel::rotation::ANGLE_SHIFT;
+
 /// `generate_rotation` generates a rotation "map" for a given elevation list
 /// Adapted from [this stack overflow answer](https://stackoverflow.com/a/71901621)
 #[expect(
@@ -9,9 +11,8 @@
     clippy::cast_precision_loss,
     reason = "so long as max_los^2 < 2^24, the following `as` conversions are entirely safe"
 )]
-pub fn generate_rotation(elevs: &[i16], angle: f64, max_los: usize) -> (Vec<i32>, Vec<i16>) {
+pub fn generate_rotation(elevs: &[i16], angle: f32, max_los: usize) -> (Vec<i32>, Vec<i16>) {
     let width = (max_los * 3) as isize;
-
     #[expect(clippy::integer_division, reason = "we don't need precision here")]
     {
         assert_eq!(
@@ -29,22 +30,21 @@ pub fn generate_rotation(elevs: &[i16], angle: f64, max_los: usize) -> (Vec<i32>
         );
     };
 
-    let (sin, cos) = (f64::sin(angle.to_radians()), f64::cos(angle.to_radians()));
+    let (sin, cos) = (f32::sin((angle + ANGLE_SHIFT).to_radians()), f32::cos((angle + ANGLE_SHIFT).to_radians()));
 
-    #[expect(clippy::integer_division, reason = "we don't need precision here")]
-    let (x_center, y_center) = (width / 2, width / 2);
+    let (x_center, y_center) = ((width-1) as f32 / 2.0, (width-1) as f32 / 2.0);
 
     let mut rotation: Vec<i32> = Vec::with_capacity(2 * max_los * max_los);
 
     for x in (max_los as isize)..(max_los as isize) * 2 {
-        let x_sin = (x - x_center) as f64 * sin;
-        let x_cos = (x - x_center) as f64 * cos;
+        let x_sin = (x as f32 - x_center)*  sin;
+        let x_cos = (x as f32 - x_center) * cos;
         for y in (max_los as isize)..width {
-            let y_sin = (y - y_center) as f64 * sin;
-            let y_cos = (y - y_center) as f64 * cos;
+            let y_sin = (y as f32 - y_center) * sin;
+            let y_cos = (y as f32 - y_center) * cos;
 
-            let x_rot = (x_cos - y_sin).round() as isize + y_center;
-            let y_rot = (y_cos + x_sin).round() as isize + x_center;
+            let x_rot = (x_cos - y_sin + y_center).round() as isize;
+            let y_rot = (y_cos + x_sin + x_center).round() as isize;
 
             let new_idx = x_rot.clamp(0, width - 1) * width + y_rot.clamp(0, width - 1);
 
@@ -125,6 +125,7 @@ mod test {
 
     #[gtest]
     fn rotate_by_45() {
+        // TODO:ryan-berger this seems
         #[rustfmt::skip]
         let expected = [
             20, 14, 15, 10,
@@ -141,10 +142,8 @@ mod test {
     fn rotate_by_90() {
         #[rustfmt::skip]
         let expected = [
-            // TODO@ryan: `26` is outside the TVS
-            26, 20, 14, 8,
-            // TODO@ryan: `27` is outside the TVS
-            27, 21, 15, 9
+            20, 14, 8, 2,
+            21, 15, 9, 3
         ];
         let (rotations, _) = generate_rotation(&DEM, 90.0, 2);
         expect_eq!(&rotations, &expected);

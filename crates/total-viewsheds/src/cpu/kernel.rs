@@ -81,7 +81,7 @@ pub fn kernel(
     ];
 
     let (indexes, rotated_elevations) =
-        super::rotation::generate_rotation(elevation_map, f64::from(angle), max_los);
+        super::rotation::generate_rotation(elevation_map, angle, max_los);
 
     assert_eq!(
         rotated_elevations.len(),
@@ -120,7 +120,7 @@ pub fn kernel(
             )]
             let (point_surface, point_longest, point_visibility) =
                 vs.line_of_sight::<VectorLos<{ DEFAULT_VECTOR_LENGTH }>>(
-                    f32::from(pov_height),
+                    f32::from(pov_height) + 1.65,
                     &line[neighbor..neighbor + max_los],
                     is_output_sector_data,
                 );

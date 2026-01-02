@@ -383,8 +383,12 @@ where
             init,
             |acc, (&angle_arr, &prefix_arr, &distances_arr)| {
                 let mask = Self::gt(Simd::from_array(angle_arr), Simd::from_array(prefix_arr));
-                if output_sector {
-                    bitmap.extend(mask.to_array());
+
+                #[cfg(any(test, feature = "ring_data"))]
+                {
+                    if output_sector {
+                        bitmap.extend(mask.to_array());
+                    }
                 }
 
                 if !mask.any() {
@@ -457,8 +461,11 @@ where
             |(sum_arr, longest_arr, &angle_arr, &prefix_arr, &distances_arr)| {
                 let mask = Self::gt(Simd::from_array(angle_arr), Simd::from_array(prefix_arr));
 
-                if output_sector {
-                    bitmap.extend(mask.to_array());
+                #[cfg(any(test, feature = "ring_data"))]
+                {
+                    if output_sector {
+                        bitmap.extend(mask.to_array());
+                    }
                 }
 
                 if !mask.any() {
@@ -506,7 +513,7 @@ where
             .fold(Simd::splat(0.0f32), |acc, &heat| {
                 acc + Simd::from_array(heat)
             })
-            .reduce_sum();
+            .reduce_sum() * TAN_ONE_RAD;
 
         let long = longest
             .iter()
