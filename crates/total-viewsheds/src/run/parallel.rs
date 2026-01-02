@@ -7,11 +7,6 @@ use color_eyre::{
 use rayon::iter::{IntoParallelIterator as _, ParallelIterator as _};
 
 
-#[cfg(any(test, feature = "ring_data"))]
-const PROCESS_RING_DATA: bool = true;
-
-#[cfg(not(any(test, feature = "ring_data")))]
-const PROCESS_RING_DATA: bool = false;
 
 impl super::compute::Compute<'_> {
 
