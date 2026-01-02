@@ -487,7 +487,7 @@ where
 /// `DEFAULT_VECTOR_LENGTH` determines the CPU Kernel's default vector length based off
 /// the architecture that the binary is built for
 pub const DEFAULT_VECTOR_LENGTH: usize = const {
-    if cfg!(test) {
+    if cfg!(any(test, feature = "ring_data")) {
         4
     } else if cfg!(target_feature = "avx512f") {
         16

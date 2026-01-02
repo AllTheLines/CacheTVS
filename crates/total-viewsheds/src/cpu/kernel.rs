@@ -68,7 +68,7 @@ pub fn kernel(elevation_map: &[i16], max_los: usize, angle: f32, refraction: f32
 
     let mut sector_data: Vec<Vec<bool>> = vec![
         vec![];
-        if cfg!(any(test, target_feature = "ring_data")) {
+        if cfg!(any(test, feature = "ring_data")) {
             max_los * max_los
         } else {
             0
@@ -135,7 +135,7 @@ pub fn kernel(elevation_map: &[i16], max_los: usize, angle: f32, refraction: f32
                     *longest.get_unchecked_mut(result_tvs_id as usize) = point_longest;
                 };
 
-                if cfg!(any(test, target_feature = "ring_data")) {
+                if cfg!(any(test, feature = "ring_data")) {
                     // TODO@ryan:
                     //   This rotation of the `result_tvs_id` is just a hack to get the ring data
                     //   into the right format for rendering. Ideally we would just fill up the ring data
