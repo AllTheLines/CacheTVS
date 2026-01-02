@@ -363,6 +363,12 @@ where
     LaneCount<WIDTH>: SupportedLaneCount,
 {
     #[inline]
+    #[expect(clippy::allow_attributes, reason = "conditional attributes")]
+    #[allow(
+        unused,
+        unused_variables,
+        reason = "conditional compilation causes dead parameters"
+    )]
     fn accumulate(
         init: (f32, f32),
         angles: &[f32],
@@ -421,6 +427,12 @@ where
     GenericExpr<{ SIZE.is_multiple_of(WIDTH) }>: IsTrue,
 {
     #[inline]
+    #[expect(clippy::allow_attributes, reason = "conditional attributes")]
+    #[allow(
+        unused,
+        unused_variables,
+        reason = "conditional compilation causes dead parameters"
+    )]
     fn accumulate(
         mut init: Unroll<SIZE>,
         angles: &[f32],
