@@ -1,3 +1,6 @@
+use std::{array, thread};
+use std::sync::mpsc;
+use std::thread::JoinHandle;
 use itertools::izip;
 
 /// `LineOfSight` abstracts the implementation of line of sight calculations to
@@ -161,6 +164,7 @@ pub struct Unroll<const UNROLL: usize> {
 }
 
 /// `UnrolledLOS` implements an Unrolled `LineOfSight` calculation
+#[derive(Clone)]
 pub struct UnrolledLOS<const UNROLL: usize>
 where
     [(); UNROLL + 1]:,
@@ -194,6 +198,7 @@ where
         }
     }
 }
+
 
 impl<const UNROLL: usize> LineOfSight<Unroll<UNROLL>> for UnrolledLOS<UNROLL>
 where

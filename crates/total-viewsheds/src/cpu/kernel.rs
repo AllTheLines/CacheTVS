@@ -1,6 +1,12 @@
 use crate::cpu::los::{LineOfSight as _, UnrolledLOS};
 use crate::cpu::vector::{VectorLos, DEFAULT_VECTOR_LENGTH};
 use itertools::izip;
+use kernel::rotate;
+use std::cmp::max;
+use std::sync::Arc;
+use std::thread;
+use std::thread::{JoinHandle, Scope, ScopedJoinHandle};
+use std::time::Duration;
 
 /// The data output by a single angle.
 pub struct OutputData {
@@ -179,4 +185,144 @@ pub fn kernel(
         longest,
         visibility: sector_data,
     }
+}
+
+struct Inp {
+    index: usize,
+    pov_height: f32,
+    start_idx: usize,
+}
+
+struct Out {
+    index: usize,
+    surface: f32,
+    longest: f32,
+}
+
+// fn arranger<'scope>(
+//     scope: &'scope Scope<'scope, '_>,
+//     max_los: usize,
+//     receive: flume::Receiver<Out>,
+// ) -> ScopedJoinHandle<'scope, (Vec<f32>, Vec<f32>)> {
+//     scope.spawn(move || {
+//         let mut surfaces = vec![0.0f32; max_los * max_los];
+//         let mut longest = vec![0.0f32; max_los * max_los];
+//
+//         for out in receive {
+//             let Out {
+//                 index: result_tvs_id,
+//                 surface: point_surface,
+//                 longest: point_longest,
+//             } = out;
+//
+//             // safety: result_tvs_id is guaranteed to be within [0..max_los^2)
+//             unsafe {
+//                 *surfaces.get_unchecked_mut(result_tvs_id) = point_surface;
+//             };
+//             // safety: result_tvs_id is guaranteed to be within [0..max_los^2)
+//             unsafe {
+//                 *longest.get_unchecked_mut(result_tvs_id) = point_longest;
+//             };
+//         }
+//
+//         (surfaces, longest)
+//     })
+// }
+
+fn worker<'scope, 'env>(
+    scope: &'scope Scope<'scope, 'env>,
+    max_los: usize,
+    elevations: &'scope [i16],
+    receive: flume::Receiver<Inp>,
+    surfaces: &'scope mut [f32],
+    longest: &'scope mut [f32],
+) {
+    scope.spawn(move || {
+        let mut vs = UnrolledLOS::<DEFAULT_UNROLL>::new(max_los);
+
+        for inp in receive {
+            let neighbor = inp.start_idx + 1;
+            let (surface, long, _) = vs.line_of_sight::<VectorLos<DEFAULT_VECTOR_LENGTH>>(
+                inp.pov_height,
+                &elevations[neighbor..neighbor + max_los],
+                false,
+            );
+
+            unsafe {
+                let surfaces_ptr = surfaces.as_mut_ptr();
+                *surfaces_ptr.add(inp.start_idx) = surface;
+
+                let longest_ptr = longest.as_mut_ptr();
+                *longest_ptr.add(inp.start_idx) = long;
+            }
+        }
+    });
+}
+
+pub fn multithread(
+    elevation_map: &[i16],
+    indexes: &[i32],
+    max_los: usize,
+    surfaces: &mut [f32],
+    longest: &mut [f32],
+)  {
+    thread::scope(move |s| {
+        let (worker_send, worker_receive) = flume::bounded(max_los);
+
+        let width = 2 * max_los;
+
+        for _ in 0..10 {
+            worker(
+                s,
+                max_los,
+                &elevation_map,
+                worker_receive.clone(),
+                surfaces,
+                longest
+            );
+        }
+
+        for start in (0..indexes.len()).step_by(width) {
+            for idx in izip!(start..start + max_los) {
+                let result_dem_id = *unsafe { indexes.get_unchecked(idx) };
+                let result_tvs_id = dem_to_pov(result_dem_id, 3 * max_los, max_los);
+
+                if result_tvs_id < 0i32 || result_tvs_id >= (max_los * max_los) as i32 {
+                    continue;
+                }
+
+                let pov_height = *unsafe { elevation_map.get_unchecked(idx) };
+                worker_send
+                    .send(Inp {
+                        index: result_tvs_id as usize,
+                        pov_height: f32::from(pov_height) + 1.6,
+                        start_idx: idx,
+                    })
+                    .unwrap()
+            }
+        }
+
+        drop(worker_send);
+    })
+}
+
+pub fn multithread_internal(
+    elevation_map: &[i16],
+    max_los: usize,
+    angle: f32,
+    is_output_sector_data: bool,
+) -> (Vec<f32>, Vec<f32>) {
+    let (indexes, rotated_elevations) =
+        super::rotation::generate_rotation(elevation_map, angle, max_los);
+
+    let mut surfaces = vec![0.0f32; max_los * max_los];
+    let mut longest = vec![0.0f32; max_los * max_los];
+
+    multithread(
+        &rotated_elevations,
+        &indexes,
+        max_los,
+        &mut surfaces,
+        &mut longest,
+    )
 }

@@ -1,9 +1,11 @@
 //! For kernels that run each angle in parallel.
 
+use crate::cpu::kernel::multithread_internal;
 use color_eyre::{
     eyre::{eyre, ContextCompat as _},
     Result,
 };
+use itertools::izip;
 use rayon::iter::{IntoParallelIterator as _, ParallelIterator as _};
 
 impl super::compute::Compute<'_> {
@@ -26,46 +28,60 @@ impl super::compute::Compute<'_> {
         let mut longest = vec![(0u16, 0.0f32); tvs_size];
         let mut ring_data = vec![vec![0u32; tvs_size * reserved_ring_data_size]; 360];
 
-        let pool = rayon::ThreadPoolBuilder::new().num_threads(8).build()?;
+        // let pool = rayon::ThreadPoolBuilder::new().num_threads(8).build()?;
+
+        // let mut surfaces = vec![0.0f32; tvs_size];
+        // let mut longest = vec![0.0f32; tvs_size];
 
         {
-            let accumulating = AccumulatingData {
-                constants: self.constants,
-                surfaces: std::sync::Mutex::new(&mut surfaces),
-                longest: std::sync::Mutex::new(&mut longest),
-                visibility: std::sync::Mutex::new(&mut ring_data),
-            };
+            // let accumulating = AccumulatingData {
+            //     constants: self.constants,
+            //     surfaces: std::sync::Mutex::new(&mut surfaces),
+            //     longest: std::sync::Mutex::new(&mut longest),
+            //     visibility: std::sync::Mutex::new(&mut ring_data),
+            // };
 
             let elevations = &self.dem.elevations;
 
-            pool.install(move || {
-                (0u16..360u16)
-                    .into_par_iter()
-                    .map(|angle| {
-                        let start = std::time::Instant::now();
-                        tracing::info!("starting angle: {angle}");
+            for angle in 0u16..16u16 {
+                let start = std::time::Instant::now();
+                tracing::info!("starting angle: {angle}");
+                let (next_surfaces, next_longest) =
+                    multithread_internal(elevations, max_los, f32::from(angle), false);
+                izip!(surfaces.iter_mut(), next_surfaces).for_each(|(s, n)| *s += n);
+                // izip!(longest.iter_mut(), next_surfaces).for_each(|(s, n)| *s += n);
+                tracing::info!("finished angle in {:?}", start.elapsed());
+            }
+        }
 
-                        let output = crate::cpu::kernel(
-                            elevations,
-                            max_los,
-                            f32::from(angle),
-                            is_process_ring_data,
-                        );
-                        tracing::info!("finished angle in {:?}", start.elapsed());
-                        (angle, output)
-                    })
-                    .for_each(|(angle, output)| {
-                        let result = accumulating.handle_parallel_per_angle_output(angle, output);
-                        #[expect(
-                            clippy::panic,
-                            reason = "No point accumulating errors and returning them"
-                        )]
-                        if let Err(error) = result {
-                            panic!("{error:?}");
-                        }
-                    });
-            });
-        };
+        //     pool.install(move || {
+        //         (0u16..360u16)
+        //             .into_par_iter()
+        //             .map(|angle| {
+        //                 let start = std::time::Instant::now();
+        //                 tracing::info!("starting angle: {angle}");
+        //
+        //                 let output = crate::cpu::kernel(
+        //                     elevations,
+        //                     max_los,
+        //                     f32::from(angle),
+        //                     is_process_ring_data,
+        //                 );
+        //                 tracing::info!("finished angle in {:?}", start.elapsed());
+        //                 (angle, output)
+        //             })
+        //             .for_each(|(angle, output)| {
+        //                 let result = accumulating.handle_parallel_per_angle_output(angle, output);
+        //                 #[expect(
+        //                     clippy::panic,
+        //                     reason = "No point accumulating errors and returning them"
+        //                 )]
+        //                 if let Err(error) = result {
+        //                     panic!("{error:?}");
+        //                 }
+        //             });
+        //     });
+        // };
 
         self.total_surfaces = surfaces;
         let packed: Result<Vec<crate::los_pack::LineOfSightPacked>> = longest
