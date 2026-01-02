@@ -6,11 +6,7 @@ pub trait LineOfSight<Output: Into<(f32, f32)>> {
     /// `line_of_sight` calculates a line of sight for the given `pov_height`
     /// and outputs a triple of the surface area, longest line of sight in meters
     /// and a vector of bools of which
-    fn line_of_sight<LOS>(
-        &mut self,
-        pov_height: f32,
-        line: &[i16],
-    ) -> (f32, f32, Vec<bool>)
+    fn line_of_sight<LOS>(&mut self, pov_height: f32, line: &[i16]) -> (f32, f32, Vec<bool>)
     where
         LOS: Angle + PrefixMax + Accumulate<Output>;
 }
@@ -66,10 +62,7 @@ fn generate_distances(max_los: usize, refraction: f32) -> (Vec<f32>, Vec<f32>) {
             let distance = (step * 100) as f32;
             let adjustment = (distance * distance * refraction) / EARTH_RADIUS_SQUARED;
 
-            (
-                distance,
-                adjustment
-            )
+            (distance, adjustment)
         })
         .unzip()
 }
@@ -109,11 +102,7 @@ impl LineOfSight<(f32, f32)> for StraightLine {
         clippy::indexing_slicing,
         reason = "all indexing and slices are guaranteed by construction of a StraightLine"
     )]
-    fn line_of_sight<LOS>(
-        &mut self,
-        pov_height: f32,
-        line: &[i16],
-    ) -> (f32, f32, Vec<bool>)
+    fn line_of_sight<LOS>(&mut self, pov_height: f32, line: &[i16]) -> (f32, f32, Vec<bool>)
     where
         LOS: PrefixMax + Angle + Accumulate<(f32, f32)>,
     {
@@ -202,11 +191,7 @@ where
         clippy::indexing_slicing,
         reason = "all indexing and slices are guaranteed by construction of a UnrolledLOS"
     )]
-    fn line_of_sight<LOS>(
-        &mut self,
-        pov_height: f32,
-        line: &[i16],
-    ) -> (f32, f32, Vec<bool>)
+    fn line_of_sight<LOS>(&mut self, pov_height: f32, line: &[i16]) -> (f32, f32, Vec<bool>)
     where
         LOS: Angle + PrefixMax + Accumulate<Unroll<UNROLL>>,
     {
@@ -240,13 +225,8 @@ where
 
                 LOS::prefix_max(prefix_max[UNROLL - 1], &angles[..UNROLL], &mut prefix_max);
 
-                let new_acc = LOS::accumulate(
-                    acc,
-                    &angles[1..],
-                    &prefix_max,
-                    distances,
-                    &mut output,
-                );
+                let new_acc =
+                    LOS::accumulate(acc, &angles[1..], &prefix_max, distances, &mut output);
 
                 angles[0] = angles[UNROLL];
                 new_acc
@@ -263,13 +243,7 @@ where
 
         LOS::prefix_max(prefix_max[UNROLL - 1], &angles[..UNROLL], &mut prefix_max);
 
-        let new_acc = LOS::accumulate(
-            los,
-            &angles[1..],
-            &prefix_max,
-            rest_distances,
-            &mut output,
-        );
+        let new_acc = LOS::accumulate(los, &angles[1..], &prefix_max, rest_distances, &mut output);
 
         let (heatmap, longest) = new_acc.into();
         (heatmap, longest, output)

@@ -46,12 +46,8 @@ impl super::compute::Compute<'_> {
                         let start = std::time::Instant::now();
                         tracing::info!("starting angle: {angle}");
 
-                        let output = crate::cpu::kernel(
-                            elevations,
-                            max_los,
-                            f32::from(angle),
-                            refraction,
-                        );
+                        let output =
+                            crate::cpu::kernel(elevations, max_los, f32::from(angle), refraction);
                         tracing::info!("finished angle in {:?}", start.elapsed());
                         (angle, output)
                     })
