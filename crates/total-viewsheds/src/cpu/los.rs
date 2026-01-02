@@ -199,7 +199,6 @@ impl<const UNROLL: usize> LineOfSight<Unroll<UNROLL>> for UnrolledLOS<UNROLL>
 where
     [(); UNROLL + 1]:,
 {
-    #[inline]
     #[expect(
         clippy::indexing_slicing,
         reason = "all indexing and slices are guaranteed by construction of a UnrolledLOS"
