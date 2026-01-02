@@ -514,10 +514,9 @@ mod test {
         ];
 
         match backend {
-            crate::config::Backend::VulkanCPU | crate::config::Backend::CPU => assert_viewshed(
-                &viewshed,
-                expected,
-            ),
+            crate::config::Backend::VulkanCPU | crate::config::Backend::CPU => {
+                assert_viewshed(&viewshed, expected)
+            }
             crate::config::Backend::Vulkan | crate::config::Backend::Cuda => {
                 panic!("We're not testing these.")
             }
@@ -573,10 +572,9 @@ mod test {
         ];
 
         match backend {
-            crate::config::Backend::VulkanCPU | crate::config::Backend::CPU => assert_viewshed(
-                &viewshed,
-                expected,
-            ),
+            crate::config::Backend::VulkanCPU | crate::config::Backend::CPU => {
+                assert_viewshed(&viewshed, expected)
+            }
             crate::config::Backend::Vulkan | crate::config::Backend::Cuda => {
                 panic!("We're not testing these.")
             }

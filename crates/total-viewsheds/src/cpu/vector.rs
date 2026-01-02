@@ -513,7 +513,8 @@ where
             .fold(Simd::splat(0.0f32), |acc, &heat| {
                 acc + Simd::from_array(heat)
             })
-            .reduce_sum() * TAN_ONE_RAD;
+            .reduce_sum()
+            * TAN_ONE_RAD;
 
         let long = longest
             .iter()

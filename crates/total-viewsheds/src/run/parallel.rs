@@ -6,10 +6,7 @@ use color_eyre::{
 };
 use rayon::iter::{IntoParallelIterator as _, ParallelIterator as _};
 
-
-
 impl super::compute::Compute<'_> {
-
     #[expect(
         clippy::panic_in_result_fn,
         reason = "It's too complicated and of no benefit to get the errors from the threads"
