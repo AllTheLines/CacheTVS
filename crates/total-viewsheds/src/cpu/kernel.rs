@@ -2,101 +2,14 @@ use crate::cpu::los::{LineOfSight as _, UnrolledLOS};
 use crate::cpu::vector::{VectorLos, DEFAULT_VECTOR_LENGTH};
 use itertools::izip;
 
-/// `fill_in_elevations` will fill in "blank" elevations from NASA data with the last seen elevation
-/// in the line of sight
-fn fill_in_elevations(elevs: &[i16], max_los: usize) -> Vec<i16> {
-    elevs
-        .chunks_exact(2 * max_los)
-        .flat_map(|line| {
-            line.iter()
-                .scan(0, |last_seen, &elevation| match elevation {
-                    i16::MIN => Some(*last_seen),
-                    _ => {
-                        *last_seen = elevation;
-                        Some(elevation)
-                    }
-                })
-        })
-        .collect::<Vec<i16>>()
-}
-
-/// `generate_rotation` generates a rotation "map" for a given elevation list
-/// Adapted from [this stack overflow answer](https://stackoverflow.com/a/71901621)
-#[expect(
-    clippy::as_conversions,
-    clippy::cast_possible_truncation,
-    clippy::cast_possible_wrap,
-    clippy::cast_precision_loss,
-    reason = "so long as max_los^2 < 2^24, the following `as` conversions are entirely safe"
-)]
-fn generate_rotation(elevs: &[i16], angle: f64, max_los: usize) -> (Vec<i32>, Vec<i16>) {
-    let width = (max_los * 3) as isize;
-
-    #[expect(clippy::integer_division, reason = "we don't need precision here")]
-    {
-        assert_eq!(
-            elevs.len() as isize % width,
-            0,
-            "Elevations array must be square {}%{width} != 0",
-            elevs.len(),
-        );
-        let elevations_div_width = elevs.len() as isize / width;
-        assert_eq!(
-            elevations_div_width,
-            width,
-            "Elevations array must be square {}/{width} (={elevations_div_width}) != {width}",
-            elevs.len() as isize
-        );
-    };
-
-    let (sin, cos) = (f64::sin(angle.to_radians()), f64::cos(angle.to_radians()));
-
-    #[expect(clippy::integer_division, reason = "we don't need precision here")]
-    let (x_center, y_center) = (width / 2, width / 2);
-
-    let mut rotation: Vec<i32> = Vec::with_capacity(2 * max_los * max_los);
-
-    for x in (max_los as isize)..(max_los as isize) * 2 {
-        let x_sin = (x - x_center) as f64 * sin;
-        let x_cos = (x - x_center) as f64 * cos;
-        for y in (max_los as isize)..width {
-            let y_sin = (y - y_center) as f64 * sin;
-            let y_cos = (y - y_center) as f64 * cos;
-
-            let x_rot = (x_cos - y_sin).round() as isize + y_center;
-            let y_rot = (y_cos + x_sin).round() as isize + x_center;
-
-            let new_idx = x_rot.clamp(0, width - 1) * width + y_rot.clamp(0, width - 1);
-
-            rotation.push(new_idx as i32);
-        }
-    }
-
-    debug_assert_eq!(
-        rotation.len() as isize,
-        max_los as isize * (2 * max_los as isize),
-        "the rotation should be 2 * max_los wide, max_los tall"
-    );
-
-    // map the indexes to their elevations
-    let elevations = rotation
-        .iter()
-        .map(|&idx| {
-            if idx < 0i32 {
-                i16::MIN
-            } else {
-                #[expect(
-                    clippy::as_conversions,
-                    reason = "elevations start out as i16s, and i16 -> f32 -> i16 is lossless"
-                )]
-                #[expect(clippy::cast_sign_loss, reason = "idx < 2^31, idx >= 0")]
-                // safety: idx is clamped so a get will always be in-bounds
-                *unsafe { elevs.get_unchecked(idx as usize) }
-            }
-        })
-        .collect::<Vec<i16>>();
-
-    (rotation, fill_in_elevations(&elevations, max_los))
+/// The data output by a single angle.
+pub struct OutputData {
+    /// The visibile surface area.
+    pub surfaces: Vec<f32>,
+    /// The longest lines of sight.
+    pub longest: Vec<f32>,
+    /// The raw ring data used to reconstruct viewsheds.
+    pub visibility: Vec<Vec<bool>>,
 }
 
 #[expect(
@@ -149,25 +62,21 @@ const DEFAULT_UNROLL: usize = const {
     reason = "I am become Death, destroyer of compilers"
 )] // the real reason is that I need output_sector_data to be constant propagated
 #[inline(always)]
-pub fn kernel(
-    elevation_map: &[i16],
-    max_los: usize,
-    angle: f32,
-    output_sector_data: bool,
-) -> (Vec<f32>, Vec<f32>, Vec<Vec<bool>>) {
-    let mut heatmap = vec![0.0f32; max_los * max_los];
+pub fn kernel(elevation_map: &[i16], max_los: usize, angle: f32, refraction: f32) -> OutputData {
+    let mut surfaces = vec![0.0f32; max_los * max_los];
     let mut longest = vec![0.0f32; max_los * max_los];
 
     let mut sector_data: Vec<Vec<bool>> = vec![
         vec![];
-        if output_sector_data {
+        if cfg!(any(test, feature = "ring_data")) {
             max_los * max_los
         } else {
             0
         }
     ];
 
-    let (indexes, rotated_elevations) = generate_rotation(elevation_map, f64::from(angle), max_los);
+    let (indexes, rotated_elevations) =
+        super::rotation::generate_rotation(elevation_map, angle, max_los);
 
     assert_eq!(
         rotated_elevations.len(),
@@ -177,7 +86,7 @@ pub fn kernel(
 
     let width = 2 * max_los;
 
-    let mut vs = UnrolledLOS::<DEFAULT_UNROLL>::new(max_los);
+    let mut vs = UnrolledLOS::<DEFAULT_UNROLL>::new(max_los, refraction);
     for (line, line_indexes) in izip!(
         rotated_elevations.chunks_exact(width),
         indexes.chunks_exact(width),
@@ -204,11 +113,11 @@ pub fn kernel(
                 clippy::indexing_slicing,
                 reason = "if slicing is out of bounds, it should panic"
             )]
-            let (pixel, long, sector) = vs.line_of_sight::<VectorLos<{ DEFAULT_VECTOR_LENGTH }>>(
-                f32::from(pov_height),
-                &line[neighbor..neighbor + max_los],
-                output_sector_data,
-            );
+            let (point_surface, point_longest, point_visibility) =
+                vs.line_of_sight::<VectorLos<{ DEFAULT_VECTOR_LENGTH }>>(
+                    f32::from(pov_height) + 1.65,
+                    &line[neighbor..neighbor + max_los],
+                );
 
             #[expect(
                 clippy::as_conversions,
@@ -219,19 +128,49 @@ pub fn kernel(
             {
                 // safety: result_tvs_id is guaranteed to be within [0..max_los^2)
                 unsafe {
-                    *heatmap.get_unchecked_mut(result_tvs_id as usize) = pixel;
+                    *surfaces.get_unchecked_mut(result_tvs_id as usize) = point_surface;
                 };
                 // safety: result_tvs_id is guaranteed to be within [0..max_los^2)
                 unsafe {
-                    *longest.get_unchecked_mut(result_tvs_id as usize) = long;
+                    *longest.get_unchecked_mut(result_tvs_id as usize) = point_longest;
                 };
 
-                if output_sector_data {
-                    sector_data[result_tvs_id as usize] = sector;
+                if cfg!(any(test, feature = "ring_data")) {
+                    // TODO@ryan:
+                    //   This rotation of the `result_tvs_id` is just a hack to get the ring data
+                    //   into the right format for rendering. Ideally we would just fill up the ring data
+                    //   in the order that each point is processed. Though without skipping any points. The
+                    //   sector data is just a snapshot of the already rotated TVS grid. The reason for this
+                    //   is mainly fidelity. We don't want to have to both rotate the DEM and then rotate the
+                    //   sector data. Just the DEM rotation already has all the data we need to reconstruct
+                    //   viewsheds.
+                    //
+                    //   In short: either keep this hack or better, just fill the sector data as you process
+                    //   it, but make sure that any skipped points are also filled with empty bitmaps.
+                    {
+                        let sector = angle.rem_euclid(f32::from(crate::run::compute::SECTOR_STEPS));
+                        #[expect(
+                            clippy::cast_possible_truncation,
+                            reason = "max_los is always within u32"
+                        )]
+                        let rotated_tvs_id = kernel::rotation::Rotator::rotate_index(
+                            result_tvs_id as u32,
+                            max_los as u32,
+                            sector,
+                        );
+
+                        if rotated_tvs_id != kernel::rotation::NOOP_DEM_ID {
+                            sector_data[rotated_tvs_id] = point_visibility;
+                        }
+                    }
                 }
             }
         }
     }
 
-    (heatmap, longest, sector_data)
+    OutputData {
+        surfaces,
+        longest,
+        visibility: sector_data,
+    }
 }

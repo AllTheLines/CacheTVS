@@ -1,4 +1,4 @@
-name: Rust
+name: CI
 
 on:
   push:
@@ -22,6 +22,7 @@ jobs:
   build-test:
     name: Build and Test 🔬
     strategy:
+      fail-fast: false
       matrix:
         arch: [x86_64, aarch64]
         runner: [ubuntu-latest]
@@ -66,6 +67,10 @@ jobs:
 
   e2e:
     name: End to end tests
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [cpu, vulkan-cpu, vulkan]
     runs-on: ubuntu-latest
     
     steps:
@@ -83,10 +88,11 @@ jobs:
             mesa-vulkan-drivers \
             libvulkan1 \
             vulkan-tools \
-            vulkan-validationlayers
+            vulkan-validationlayers \
+            gdal-bin
           vulkaninfo
       - name: Run end to end tests
-        run: ./benchmarks/run.sh
+        run: ./benchmarks/run.sh ${{ matrix.backend }}
 
   lints:
     name: "Lints 💅"
