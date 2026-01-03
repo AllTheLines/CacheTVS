@@ -159,7 +159,7 @@ where
                 let new_acc =
                     LOS::accumulate(acc, &angles[1..], &prefix_max, distances, &mut output);
 
-                angles[0] = prefix_max[UNROLL-1];
+                angles[0] = prefix_max[UNROLL - 1];
                 new_acc
             },
         );

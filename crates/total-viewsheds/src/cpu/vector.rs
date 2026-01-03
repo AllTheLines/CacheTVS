@@ -472,7 +472,8 @@ where
             .fold(Simd::splat(0.0f32), |acc, &long| {
                 VectorLos::<DEFAULT_VECTOR_LENGTH>::max(acc, Simd::from_array(long))
             })
-            .reduce_max() / 100.0;
+            .reduce_max()
+            / 100.0;
 
         (heat, long)
     }
