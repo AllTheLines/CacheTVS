@@ -445,7 +445,11 @@ pub const DEFAULT_VECTOR_LENGTH: usize = const {
         4
     } else if cfg!(target_feature = "avx512f") {
         16
-    } else if cfg!(target_feature = "sse") && cfg!(target_feature = "sse2") {
+    } else if cfg!(all(
+        target_feature = "sse",
+        target_feature = "avx",
+        target_feature = "avx2"
+    )) {
         8
     } else {
         4
@@ -494,17 +498,23 @@ mod test {
             ],
         );
 
-        let mut vs = UnrolledLOS::<64>::new(16, 0.13);
-        let (visibility_eight, longest_eight, sector_eight) = vs.line_of_sight::<VectorLos<8>>(
-            0.0f32,
-            &[
-                100, 0, 300, 400, 500, 0, 300, 0, 100, 0, 300, 0, 100, 0, 300, 0,
-            ],
-        );
+        #[cfg(all(
+            target_feature = "sse",
+            target_feature = "avx",
+            target_feature = "avx2"
+        ))]
+        {
+            let (visibility_eight, longest_eight, sector_eight) = vs.line_of_sight::<VectorLos<8>>(
+                0.0f32,
+                &[
+                    100, 0, 300, 400, 500, 0, 300, 0, 100, 0, 300, 0, 100, 0, 300, 0,
+                ],
+            );
 
-        assert_eq!(visibility_four, visibility_eight);
-        assert_eq!(longest_four, longest_eight);
-        assert_eq!(sector_four, sector_eight);
+            assert_eq!(visibility_four, visibility_eight);
+            assert_eq!(longest_four, longest_eight);
+            assert_eq!(sector_four, sector_eight);
+        }
     }
 
     #[test]
