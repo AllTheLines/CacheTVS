@@ -376,19 +376,19 @@ pub mod test {
         use googletest::prelude::*;
 
         #[test]
-        #[ignore = "TODO@ryan: Enable once viewshed tests are settled"]
+        // #[ignore = "TODO@ryan: Enable once viewshed tests are settled"]
         fn total_surfaces() {
             super::total_surfaces(crate::config::Backend::CPU);
         }
 
         #[gtest]
-        #[ignore = "TODO@ryan: Enable once viewshed tests are settled"]
+        // #[ignore = "TODO@ryan: Enable once viewshed tests are settled"]
         fn longest_lines() {
             super::longest_lines(crate::config::Backend::CPU);
         }
 
         #[gtest]
-        #[ignore = "TODO@ryan: Enable once you've added refraction"]
+        // #[ignore = "TODO@ryan: Enable once you've added refraction"]
         fn refraction_affects_visibility() {
             // Set your refraction constant to this so that the effect is so dramatic that it shows
             // up in our tiny test DEMS.

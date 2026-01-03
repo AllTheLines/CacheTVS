@@ -67,75 +67,6 @@ fn generate_distances(max_los: usize, refraction: f32) -> (Vec<f32>, Vec<f32>) {
         .unzip()
 }
 
-/// `StraightLine` contains the distances and round-earth adjustments needed to compute
-/// the longest line of sight.
-pub struct StraightLine {
-    /// `max_los` is the longest possible line of sight in 100ms
-    max_los: usize,
-    /// `angles` is a buffer of size `max_los` to store all angle calculations in
-    angles: Vec<f32>,
-    /// `prefix_max` is a buffer of size `max_los` to store the inclusive prefix max calculation in
-    prefix_max: Vec<f32>,
-    /// `distances` holds the distances in meters for every step between 100m and
-    distances: Vec<f32>,
-    /// `adjustments` holds earth curvature adjustments in meters for every step between 100m and
-    adjustments: Vec<f32>,
-}
-
-impl StraightLine {
-    /// new constructs a new `StraightLine` given the maximum line of sight in `max_los`
-    #[expect(unused, reason = "this is generally only for testing/benchmarking")]
-    pub fn new(max_los: usize, refraction: f32) -> Self {
-        let (distances, adjustments) = generate_distances(max_los, refraction);
-        Self {
-            max_los,
-            angles: vec![0.0f32; max_los + 1],
-            prefix_max: vec![0.0f32; max_los],
-            distances,
-            adjustments,
-        }
-    }
-}
-
-impl LineOfSight<(f32, f32)> for StraightLine {
-    #[expect(
-        clippy::indexing_slicing,
-        reason = "all indexing and slices are guaranteed by construction of a StraightLine"
-    )]
-    fn line_of_sight<LOS>(&mut self, pov_height: f32, line: &[i16]) -> (f32, f32, Vec<bool>)
-    where
-        LOS: PrefixMax + Angle + Accumulate<(f32, f32)>,
-    {
-        let mut output: Vec<bool> = vec![];
-
-        self.angles[0] = -2000.0;
-
-        LOS::calculate_angles(
-            pov_height,
-            line,
-            &self.distances,
-            &self.adjustments,
-            &mut self.angles[1..],
-        );
-
-        LOS::prefix_max(
-            -2000.0f32,
-            &self.angles[..self.max_los],
-            &mut self.prefix_max,
-        );
-
-        let (heatmap, longest) = LOS::accumulate(
-            (0.0, 0.0),
-            &self.angles[1..],
-            &self.prefix_max,
-            &self.distances,
-            &mut output,
-        );
-
-        (heatmap, longest, output)
-    }
-}
-
 /// Unroll holds an unrolled heatmap and unrolled longest line of sight calculation
 /// Since in Line of Sight-land max/addition are commutative, then Unroll will be materialized
 /// into (f32, f32)
@@ -228,7 +159,7 @@ where
                 let new_acc =
                     LOS::accumulate(acc, &angles[1..], &prefix_max, distances, &mut output);
 
-                angles[0] = angles[UNROLL];
+                angles[0] = prefix_max[UNROLL-1];
                 new_acc
             },
         );

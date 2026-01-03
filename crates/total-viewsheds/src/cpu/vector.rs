@@ -347,57 +347,11 @@ where
             vector_distances.iter(),
             vector_adjustments.iter()
         ) {
-            let float_elevation: Simd<f32, { WIDTH }> = Simd::from(elevation).cast();
-
-            let height_delta = float_elevation - Simd::splat(pov_height);
-
-            let res = (height_delta - Simd::from_array(adjustment)) / Simd::from_array(distance);
-
+            let elevation_f32: Simd<f32, { WIDTH }> = Simd::from(elevation).cast();
+            let height_delta = elevation_f32 - Simd::splat(pov_height);
+            let res = (height_delta + Simd::from_array(adjustment)) / Simd::from_array(distance);
             res.copy_to_slice(angle);
         }
-    }
-}
-
-impl<const WIDTH: usize> Accumulate<(f32, f32)> for VectorLos<WIDTH>
-where
-    LaneCount<WIDTH>: SupportedLaneCount,
-{
-    #[inline]
-    fn accumulate(
-        init: (f32, f32),
-        angles: &[f32],
-        prefix: &[f32],
-        distances: &[f32],
-        bitmap: &mut Vec<bool>,
-    ) -> (f32, f32) {
-        debug_assert!(angles.len().is_multiple_of(WIDTH), "");
-        debug_assert!(prefix.len().is_multiple_of(WIDTH), "");
-        debug_assert!(distances.len().is_multiple_of(WIDTH), "");
-
-        let (vector_angles, _) = angles.as_chunks::<{ WIDTH }>();
-        let (vector_prefix, _) = prefix.as_chunks::<{ WIDTH }>();
-        let (vector_dists, _) = distances.as_chunks::<{ WIDTH }>();
-
-        izip!(vector_angles, vector_prefix, vector_dists,).fold(
-            init,
-            |acc, (&angle_arr, &prefix_arr, &distances_arr)| {
-                let mask = Self::gt(Simd::from_array(angle_arr), Simd::from_array(prefix_arr));
-
-                if cfg!(any(test, feature = "ring_data")) {
-                    bitmap.extend(mask.to_array());
-                }
-
-                if !mask.any() {
-                    return acc;
-                }
-
-                let dist = mask.select(Simd::from_array(distances_arr), Simd::splat(0.0f32));
-                (
-                    acc.0 + (dist * Simd::<f32, { WIDTH }>::splat(TAN_ONE_RAD)).reduce_sum(),
-                    acc.1.max(dist.reduce_max()),
-                )
-            },
-        )
     }
 }
 
@@ -474,7 +428,7 @@ where
 
                 Self::max(Simd::from_array(*longest_arr), dist).copy_to_slice(longest_arr);
 
-                let acc = Simd::from(*sum_arr) + dist;
+                let acc = Simd::from(*sum_arr) + (dist * Simd::splat(TAN_ONE_RAD));
 
                 acc.copy_to_slice(sum_arr);
             },
@@ -511,15 +465,14 @@ where
             .fold(Simd::splat(0.0f32), |acc, &heat| {
                 acc + Simd::from_array(heat)
             })
-            .reduce_sum()
-            * TAN_ONE_RAD;
+            .reduce_sum();
 
         let long = longest
             .iter()
             .fold(Simd::splat(0.0f32), |acc, &long| {
                 VectorLos::<DEFAULT_VECTOR_LENGTH>::max(acc, Simd::from_array(long))
             })
-            .reduce_max();
+            .reduce_max() / 100.0;
 
         (heat, long)
     }
@@ -533,14 +486,24 @@ mod test {
     #[test]
     fn line_of_sight_four() {
         let mut vs = UnrolledLOS::<64>::new(16, 0.13);
-        let (visibility, longest, sector) = vs.line_of_sight::<VectorLos<4>>(
+        let (visibility_four, longest_four, sector_four) = vs.line_of_sight::<VectorLos<4>>(
             0.0f32,
             &[
-                1000, 4000, 9000, 12000, 3000, 30000, 3000, 3000, 1000, 4000, 9000, 12000, 3000,
-                30000, 3000, 3000,
+                100, 0, 300, 400, 500, 0, 300, 0, 100, 0, 300, 0, 100, 0, 300, 0,
             ],
         );
-        println!("{:?} {:?} {:?}", visibility, longest, sector);
+
+        let mut vs = UnrolledLOS::<64>::new(16, 0.13);
+        let (visibility_eight, longest_eight, sector_eight) = vs.line_of_sight::<VectorLos<8>>(
+            0.0f32,
+            &[
+                100, 0, 300, 400, 500, 0, 300, 0, 100, 0, 300, 0, 100, 0, 300, 0,
+            ],
+        );
+
+        assert_eq!(visibility_four, visibility_eight);
+        assert_eq!(longest_four, longest_eight);
+        assert_eq!(sector_four, sector_eight);
     }
 
     #[test]
