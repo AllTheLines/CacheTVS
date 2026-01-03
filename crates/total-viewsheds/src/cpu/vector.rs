@@ -86,7 +86,7 @@ impl VectorGreater<4> for VectorLos<4> {
 
 impl PrefixMax for VectorLos<4> {
     #[inline]
-    fn prefix_max(highest: f32, angles_in: &[f32], angles_out: &mut [f32]) {
+    fn prefix_max(angles_in: &[f32], angles_out: &mut [f32]) {
         let (vector_angles, _) = angles_in.as_chunks::<4>();
         let (vector_prefix, _) = angles_out.as_chunks_mut::<4>();
 
@@ -106,7 +106,7 @@ impl PrefixMax for VectorLos<4> {
             v_prefix_max.copy_to_slice(prefix);
         }
 
-        let mut local_acc = Simd::splat(highest);
+        let mut local_acc = Simd::splat(-2000.0);
 
         // accumulate the prefix maxes for blocks, re-computing all prefix maxes
         // to include the accumulated value
@@ -138,7 +138,7 @@ impl VectorMax<8> for VectorLos<8> {
 ))]
 impl PrefixMax for VectorLos<8> {
     #[inline]
-    fn prefix_max(highest: f32, angles_in: &[f32], angles_out: &mut [f32]) {
+    fn prefix_max(angles_in: &[f32], angles_out: &mut [f32]) {
         use std::arch::x86_64::{
             _mm256_blend_ps, _mm256_castps_si256, _mm256_castsi256_ps, _mm256_slli_si256,
             _mm_max_ps,
@@ -180,7 +180,7 @@ impl PrefixMax for VectorLos<8> {
         };
 
         {
-            let mut acc: f32x4 = Simd::splat(highest);
+            let mut acc: f32x4 = Simd::splat(-2000.0f32);
             let (vector_prefix, _) = angles_out.as_chunks_mut::<4>();
             for prefix in vector_prefix.iter_mut() {
                 // safety: PrefixMax for VectorLos<8> is guarded by a cfg block for all SIMD instructions
@@ -241,7 +241,7 @@ impl VectorGreater<16> for VectorLos<16> {
 #[cfg(target_feature = "avx512f")]
 impl PrefixMax for VectorLos<16> {
     #[inline]
-    fn prefix_max(highest: f32, angles_in: &[f32], angles_out: &mut [f32]) {
+    fn prefix_max(angles_in: &[f32], angles_out: &mut [f32]) {
         use std::arch::x86_64::{
             __m512, _mm512_alignr_epi32, _mm512_castps_si512, _mm512_castsi512_ps, _mm512_max_ps,
         };
