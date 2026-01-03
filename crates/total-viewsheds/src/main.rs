@@ -1,6 +1,7 @@
 //! Total Viewshed Calculator
 #![feature(portable_simd)]
 #![feature(specialization)]
+#![feature(likely_unlikely)]
 #![expect(
     incomplete_features,
     reason = "our usage isn't crazy and unlikely to break"
@@ -33,7 +34,12 @@ mod bt {
     pub mod read;
     pub mod write;
 }
-mod compute;
+/// Handling the running of computations.
+mod run {
+    pub mod compute;
+    pub mod parallel;
+    pub mod serial;
+}
 mod config;
 mod dem;
 mod dump_usage;
@@ -126,7 +132,7 @@ fn compute(config: &config::Compute) -> Result<()> {
     tracing::debug!("Created DEM: {dem:?}");
 
     tracing::info!("Starting computations");
-    let compute_config = compute::ComputeConfig {
+    let compute_config = run::compute::Config {
         observer_height: config.observer_height,
         scale: config.scale.unwrap_or(1.0),
         backend: config.backend.clone(),
@@ -136,7 +142,7 @@ fn compute(config: &config::Compute) -> Result<()> {
         heatmap: config.heatmap,
         refraction: config.refraction,
     };
-    let mut compute = crate::compute::Compute::new(compute_config, &mut dem)?;
+    let mut compute = run::compute::Compute::new(compute_config, &mut dem)?;
     compute.run()?;
     Ok(())
 }
