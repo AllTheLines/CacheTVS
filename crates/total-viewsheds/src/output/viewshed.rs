@@ -52,7 +52,7 @@ impl Viewshed<'_> {
             pov_coord: pov_dem_coord,
         };
 
-        for angle_integer in 0..crate::compute::SECTOR_STEPS {
+        for angle_integer in 0..crate::run::compute::SECTOR_STEPS {
             let angle = f32::from(angle_integer);
             let mut reconstructor =
                 Reconstructor::new(&viewshed, ring_data.metadata.reserved_ring_size, angle)?;
@@ -179,6 +179,7 @@ impl<'viewshed> Reconstructor<'viewshed> {
             kernel::elevations::Direction::Backward,
         ] {
             // We divide by 2 because every ring must have both an opening and a closing.
+            // dbg!(&self.sector_ring_data[self.cursor..(self.cursor + self.reserved_ring_size)]);
             let mut no_of_ring_values = self.read_next_value()?.div_euclid(2);
 
             if no_of_ring_values == 0 {
@@ -348,7 +349,7 @@ mod test {
 
     use super::*;
 
-    const RESERVED_RING_SIZE: usize = crate::compute::Compute::ring_count_per_band(5000.0, 3);
+    const RESERVED_RING_SIZE: usize = crate::run::compute::Compute::ring_count_per_band(5000.0, 3);
 
     fn builder<'viewshed>(viewshed: &'viewshed Viewshed, angle: f32) -> Reconstructor<'viewshed> {
         Reconstructor::new(viewshed, RESERVED_RING_SIZE, angle).unwrap()
@@ -363,7 +364,7 @@ mod test {
     }
 
     fn make_visible_polygon_for(setup: &VisiblePolygonFor) -> Vec<geo::Coord> {
-        let dem = crate::compute::test::make_dem(&kernel::tests::dems::single_peak_dem());
+        let dem = crate::run::compute::test::make_dem(&kernel::tests::dems::single_peak_dem());
         let viewshed = Viewshed {
             dem: &dem,
             pov_coord: crate::dem::Coordinate(setup.pov),
@@ -490,37 +491,43 @@ mod test {
         }
     }
 
-    #[test]
-    fn viewshed_in_hole() {
+    fn viewshed_in_hole(backend: &crate::config::Backend) {
         let viewshed = crate::output::ascii::make_viewshed(
             &kernel::tests::dems::bigger_dem(),
             geo::Coord { x: 5.0, y: 5.0 },
+            backend.clone(),
         );
 
-        assert_viewshed(
-            &viewshed,
-            &[
-                "████████████████████████",
-                "████████████████████████",
-                "████████████████████████",
-                "████████████████████████",
-                "████████▀ ▄ ▀███████████",
-                "████████ ▀█▀ ███████████",
-                "█████████▄▄▄████████████",
-                "████████████████████████",
-                "████████████████████████",
-                "████████████████████████",
-                "████████████████████████",
-                "████████████████████████",
-            ],
-        );
+        let expected = &[
+            "████████████████████████",
+            "████████████████████████",
+            "████████████████████████",
+            "████████████████████████",
+            "████████▀ ▄ ▀███████████",
+            "████████ ▀█▀ ███████████",
+            "█████████▄▄▄████████████",
+            "████████████████████████",
+            "████████████████████████",
+            "████████████████████████",
+            "████████████████████████",
+            "████████████████████████",
+        ];
+
+        match backend {
+            crate::config::Backend::VulkanCPU | crate::config::Backend::CPU => {
+                assert_viewshed(&viewshed, expected)
+            }
+            crate::config::Backend::Vulkan | crate::config::Backend::Cuda => {
+                panic!("We're not testing these.")
+            }
+        }
     }
 
-    #[test]
-    fn viewshed_on_summit() {
+    fn viewshed_on_summit(backend: crate::config::Backend) {
         let viewshed = crate::output::ascii::make_viewshed(
             &kernel::tests::dems::bigger_dem(),
             geo::Coord { x: 6.0, y: 6.0 },
+            backend,
         );
 
         assert_viewshed(
@@ -542,29 +549,69 @@ mod test {
         );
     }
 
-    #[test]
-    fn viewshed_near_summit() {
+    fn viewshed_near_summit(backend: &crate::config::Backend) {
         let viewshed = crate::output::ascii::make_viewshed(
             &kernel::tests::dems::bigger_dem(),
             geo::Coord { x: 5.0, y: 6.0 },
+            backend.clone(),
         );
 
-        assert_viewshed(
-            &viewshed,
-            &[
-                "████████████████████████",
-                "████████████████████████",
-                "█████▀▀ ▄▄▄▄▄ ▀▀████████",
-                "███▀ ▄█████████ ▄███████",
-                "██▀ █████████▀▄█████████",
-                "██ ████████▀ ███████████",
-                "██ ████████▀ ███████████",
-                "██ ▀████████▄▀██████████",
-                "███ ▀█████████▄▀████████",
-                "████▄ ▀▀█████▀▀ ▄███████",
-                "███████▄▄▄▄▄▄▄██████████",
-                "████████████████████████",
-            ],
-        );
+        let expected = &[
+            "████████████████████████",
+            "████████████████████████",
+            "█████▀▀ ▄▄▄▄▄ ▀▀████████",
+            "███▀ ▄█████████ ▄███████",
+            "██▀ █████████▀▄█████████",
+            "██ ████████▀ ███████████",
+            "██ ████████▀ ███████████",
+            "██ ▀████████▄▀██████████",
+            "███ ▀█████████▄▀████████",
+            "████▄ ▀▀█████▀▀ ▄███████",
+            "███████▄▄▄▄▄▄▄██████████",
+            "████████████████████████",
+        ];
+
+        match backend {
+            crate::config::Backend::VulkanCPU | crate::config::Backend::CPU => {
+                assert_viewshed(&viewshed, expected)
+            }
+            crate::config::Backend::Vulkan | crate::config::Backend::Cuda => {
+                panic!("We're not testing these.")
+            }
+        }
+    }
+
+    mod gpu {
+        #[test]
+        fn viewshed_in_hole() {
+            super::viewshed_in_hole(&crate::config::Backend::VulkanCPU);
+        }
+
+        #[test]
+        fn viewshed_on_summit() {
+            super::viewshed_on_summit(crate::config::Backend::VulkanCPU);
+        }
+
+        #[test]
+        fn viewshed_near_summit() {
+            super::viewshed_near_summit(&crate::config::Backend::VulkanCPU);
+        }
+    }
+
+    mod cpu {
+        #[test]
+        fn viewshed_in_hole() {
+            super::viewshed_in_hole(&crate::config::Backend::CPU);
+        }
+
+        #[test]
+        fn viewshed_on_summit() {
+            super::viewshed_on_summit(crate::config::Backend::CPU);
+        }
+
+        #[test]
+        fn viewshed_near_summit() {
+            super::viewshed_near_summit(&crate::config::Backend::CPU);
+        }
     }
 }

@@ -31,7 +31,7 @@ const TAN_ONE_RADIAN: f32 = 0.017_453_3;
 
 /// Diameter of the Earth in meters. So that some points are not visible simply
 /// by virtue of the earth's spherical shape.
-const EARTH_DIAMETER: f32 = 12_742_000.0;
+pub const EARTH_DIAMETER: f32 = 12_742_000.0;
 
 #[expect(
     clippy::exhaustive_structs,
