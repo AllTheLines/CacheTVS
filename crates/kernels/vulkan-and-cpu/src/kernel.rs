@@ -136,7 +136,7 @@ impl Kernel {
             return;
         }
 
-        for index in 0..=buffers.constants.max_los_as_points {
+        for index in 0..buffers.constants.max_los_as_points {
             runner.kernel(buffers, index);
         }
 
@@ -435,9 +435,9 @@ mod test {
         let angle = 0.0;
         let (surfaces, rings, lines) = invoke_default(&tvs_id, angle);
 
-        expect_tvs(&tvs_id, &surfaces, 0.2617995);
+        expect_tvs(&tvs_id, &surfaces, 0.17453301);
         expect_ring_data(&tvs_id, angle, &rings, vec![4]);
-        expect_tvs(&tvs_id, &lines, 5.0);
+        expect_tvs(&tvs_id, &lines, 4.0);
     }
 
     #[gtest]
@@ -457,9 +457,9 @@ mod test {
         let angle = 90.0;
         let (surfaces, rings, lines) = invoke_default(&tvs_id, angle);
 
-        expect_tvs(&tvs_id, &surfaces, 0.2617995);
+        expect_tvs(&tvs_id, &surfaces, 0.17453301);
         expect_ring_data(&tvs_id, angle, &rings, vec![4]);
-        expect_tvs(&tvs_id, &lines, 5.0);
+        expect_tvs(&tvs_id, &lines, 4.0);
     }
 
     #[gtest]
@@ -490,11 +490,11 @@ mod test {
         let angle = 0.0;
         let (surfaces, rings, lines) = invoke_default(&tvs_id, angle);
 
-        expect_tvs(&tvs_id, &surfaces, 0.2617995);
+        expect_tvs(&tvs_id, &surfaces, 0.17453301);
         // TODO: I think this result clearly shows that we should be closing the ring sector for
         // the _previous_ DEM ID?
         expect_ring_data(&tvs_id, angle, &rings, vec![4]);
-        expect_tvs(&tvs_id, &lines, -5.0);
+        expect_tvs(&tvs_id, &lines, -4.0);
     }
 
     #[gtest]
@@ -503,9 +503,9 @@ mod test {
         let angle = 45.0;
         let (surfaces, rings, lines) = invoke_default(&tvs_id, angle);
 
-        expect_tvs(&tvs_id, &surfaces, 0.2617995);
+        expect_tvs(&tvs_id, &surfaces, 0.17453301);
         expect_ring_data(&tvs_id, angle, &rings, vec![4]);
-        expect_tvs(&tvs_id, &lines, -5.0);
+        expect_tvs(&tvs_id, &lines, -4.0);
     }
 
     #[gtest]
@@ -525,9 +525,9 @@ mod test {
         let angle = 135.0;
         let (surfaces, rings, lines) = invoke_default(&tvs_id, angle);
 
-        expect_tvs(&tvs_id, &surfaces, 0.2617995);
+        expect_tvs(&tvs_id, &surfaces, 0.17453301);
         expect_ring_data(&tvs_id, angle, &rings, vec![4]);
-        expect_tvs(&tvs_id, &lines, -5.0);
+        expect_tvs(&tvs_id, &lines, -4.0);
     }
 
     #[gtest]
