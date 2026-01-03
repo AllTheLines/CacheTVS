@@ -6,12 +6,7 @@ pub trait LineOfSight<Output: Into<(f32, f32)>> {
     /// `line_of_sight` calculates a line of sight for the given `pov_height`
     /// and outputs a triple of the surface area, longest line of sight in meters
     /// and a vector of bools of which
-    fn line_of_sight<LOS>(
-        &mut self,
-        pov_height: f32,
-        line: &[i16],
-        output_sector: bool,
-    ) -> (f32, f32, Vec<bool>)
+    fn line_of_sight<LOS>(&mut self, pov_height: f32, line: &[i16]) -> (f32, f32, Vec<bool>)
     where
         LOS: Angle + PrefixMax + Accumulate<Output>;
 }
@@ -43,14 +38,13 @@ pub trait Accumulate<Output: Into<(f32, f32)>> {
         prefix: &[f32],
         distances: &[f32],
         bitmap: &mut Vec<bool>,
-        output_sector: bool,
     ) -> Output;
 }
 
 /// `PrefixMax` calculates the prefix maximum of the given angles
 pub trait PrefixMax {
     /// `prefix_max` calculates the prefix max of the
-    fn prefix_max(highest: f32, angles_in: &[f32], angles_out: &mut [f32]);
+    fn prefix_max(angles_in: &[f32], angles_out: &mut [f32]);
 }
 
 /// `EARTH_RADIUS_SQUARED` is the radius of the earth in meters
@@ -62,90 +56,15 @@ const EARTH_RADIUS_SQUARED: f32 = 12_742_000.0;
     clippy::cast_precision_loss,
     reason = "max_los is < 2^24"
 )]
-fn generate_distances(max_los: usize) -> (Vec<f32>, Vec<f32>) {
+fn generate_distances(max_los: usize, refraction: f32) -> (Vec<f32>, Vec<f32>) {
     (1..=max_los)
         .map(|step| {
-            (
-                (step * 100) as f32,
-                (step * 100) as f32 / EARTH_RADIUS_SQUARED,
-            )
+            let distance = (step * 100) as f32;
+            let adjustment = (distance * distance * refraction) / EARTH_RADIUS_SQUARED;
+
+            (distance, adjustment)
         })
         .unzip()
-}
-
-/// `StraightLine` contains the distances and round-earth adjustments needed to compute
-/// the longest line of sight.
-pub struct StraightLine {
-    /// `max_los` is the longest possible line of sight in 100ms
-    max_los: usize,
-    /// `angles` is a buffer of size `max_los` to store all angle calculations in
-    angles: Vec<f32>,
-    /// `prefix_max` is a buffer of size `max_los` to store the inclusive prefix max calculation in
-    prefix_max: Vec<f32>,
-    /// `distances` holds the distances in meters for every step between 100m and
-    distances: Vec<f32>,
-    /// `adjustments` holds earth curvature adjustments in meters for every step between 100m and
-    adjustments: Vec<f32>,
-}
-
-impl StraightLine {
-    /// new constructs a new `StraightLine` given the maximum line of sight in `max_los`
-    #[expect(unused, reason = "this is generally only for testing/benchmarking")]
-    pub fn new(max_los: usize) -> Self {
-        let (distances, adjustments) = generate_distances(max_los);
-        Self {
-            max_los,
-            angles: vec![0.0f32; max_los + 1],
-            prefix_max: vec![0.0f32; max_los],
-            distances,
-            adjustments,
-        }
-    }
-}
-
-impl LineOfSight<(f32, f32)> for StraightLine {
-    #[expect(
-        clippy::indexing_slicing,
-        reason = "all indexing and slices are guaranteed by construction of a StraightLine"
-    )]
-    fn line_of_sight<LOS>(
-        &mut self,
-        pov_height: f32,
-        line: &[i16],
-        output_sector: bool,
-    ) -> (f32, f32, Vec<bool>)
-    where
-        LOS: PrefixMax + Angle + Accumulate<(f32, f32)>,
-    {
-        let mut output: Vec<bool> = vec![];
-
-        self.angles[0] = -2000.0;
-
-        LOS::calculate_angles(
-            pov_height,
-            line,
-            &self.distances,
-            &self.adjustments,
-            &mut self.angles[1..],
-        );
-
-        LOS::prefix_max(
-            -2000.0f32,
-            &self.angles[..self.max_los],
-            &mut self.prefix_max,
-        );
-
-        let (heatmap, longest) = LOS::accumulate(
-            (0.0, 0.0),
-            &self.angles[1..],
-            &self.prefix_max,
-            &self.distances,
-            &mut output,
-            output_sector,
-        );
-
-        (heatmap, longest, output)
-    }
 }
 
 /// Unroll holds an unrolled heatmap and unrolled longest line of sight calculation
@@ -185,8 +104,8 @@ where
 {
     /// `new` initializes a new `UnrolledLOS`, and precalculates all the distances
     /// and earth curvature adjustments
-    pub fn new(max_los: usize) -> Self {
-        let (distances, adjustments) = generate_distances(max_los);
+    pub fn new(max_los: usize, refraction: f32) -> Self {
+        let (distances, adjustments) = generate_distances(max_los, refraction);
 
         Self {
             distances,
@@ -199,17 +118,11 @@ impl<const UNROLL: usize> LineOfSight<Unroll<UNROLL>> for UnrolledLOS<UNROLL>
 where
     [(); UNROLL + 1]:,
 {
-    #[inline]
     #[expect(
         clippy::indexing_slicing,
         reason = "all indexing and slices are guaranteed by construction of a UnrolledLOS"
     )]
-    fn line_of_sight<LOS>(
-        &mut self,
-        pov_height: f32,
-        line: &[i16],
-        output_sector: bool,
-    ) -> (f32, f32, Vec<bool>)
+    fn line_of_sight<LOS>(&mut self, pov_height: f32, line: &[i16]) -> (f32, f32, Vec<bool>)
     where
         LOS: Angle + PrefixMax + Accumulate<Unroll<UNROLL>>,
     {
@@ -241,18 +154,12 @@ where
                     &mut angles[1..],
                 );
 
-                LOS::prefix_max(prefix_max[UNROLL - 1], &angles[..UNROLL], &mut prefix_max);
+                LOS::prefix_max(&angles[..UNROLL], &mut prefix_max);
 
-                let new_acc = LOS::accumulate(
-                    acc,
-                    &angles[1..],
-                    &prefix_max,
-                    distances,
-                    &mut output,
-                    output_sector,
-                );
+                let new_acc =
+                    LOS::accumulate(acc, &angles[1..], &prefix_max, distances, &mut output);
 
-                angles[0] = angles[UNROLL];
+                angles[0] = angles[UNROLL].max(prefix_max[UNROLL - 1]);
                 new_acc
             },
         );
@@ -265,16 +172,9 @@ where
             &mut angles[1..],
         );
 
-        LOS::prefix_max(prefix_max[UNROLL - 1], &angles[..UNROLL], &mut prefix_max);
+        LOS::prefix_max(&angles[..UNROLL], &mut prefix_max);
 
-        let new_acc = LOS::accumulate(
-            los,
-            &angles[1..],
-            &prefix_max,
-            rest_distances,
-            &mut output,
-            output_sector,
-        );
+        let new_acc = LOS::accumulate(los, &angles[1..], &prefix_max, rest_distances, &mut output);
 
         let (heatmap, longest) = new_acc.into();
         (heatmap, longest, output)

@@ -30,3 +30,6 @@ googletest = "0.14.2"
 
 [lints]
 workspace = true
+
+[features]
+ring_data = []

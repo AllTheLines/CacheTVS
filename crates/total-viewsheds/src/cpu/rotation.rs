@@ -1,0 +1,150 @@
+//! Rotate the DEM, but just the so-called "chocolate bar" region.
+
+use kernel::rotation::ANGLE_SHIFT;
+
+/// `generate_rotation` generates a rotation "map" for a given elevation list
+/// Adapted from [this stack overflow answer](https://stackoverflow.com/a/71901621)
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    reason = "so long as max_los^2 < 2^24, the following `as` conversions are entirely safe"
+)]
+pub fn generate_rotation(elevs: &[i16], angle: f32, max_los: usize) -> (Vec<i32>, Vec<i16>) {
+    let width = (max_los * 3) as isize;
+    #[expect(clippy::integer_division, reason = "we don't need precision here")]
+    {
+        assert_eq!(
+            elevs.len() as isize % width,
+            0,
+            "Elevations array must be square {}%{width} != 0",
+            elevs.len(),
+        );
+        let elevations_div_width = elevs.len() as isize / width;
+        assert_eq!(
+            elevations_div_width,
+            width,
+            "Elevations array must be square {}/{width} (={elevations_div_width}) != {width}",
+            elevs.len() as isize
+        );
+    };
+
+    let (sin, cos) = (
+        f32::sin((angle + ANGLE_SHIFT).to_radians()),
+        f32::cos((angle + ANGLE_SHIFT).to_radians()),
+    );
+
+    let (x_center, y_center) = ((width - 1) as f32 / 2.0, (width - 1) as f32 / 2.0);
+
+    let mut rotation: Vec<i32> = Vec::with_capacity(2 * max_los * max_los);
+
+    for x in (max_los as isize)..(max_los as isize) * 2 {
+        let x_sin = (x as f32 - x_center) * sin;
+        let x_cos = (x as f32 - x_center) * cos;
+        for y in (max_los as isize)..width {
+            let y_sin = (y as f32 - y_center) * sin;
+            let y_cos = (y as f32 - y_center) * cos;
+
+            let x_rot = (x_cos - y_sin + y_center).round() as isize;
+            let y_rot = (y_cos + x_sin + x_center).round() as isize;
+
+            let new_idx = x_rot.clamp(0, width - 1) * width + y_rot.clamp(0, width - 1);
+
+            rotation.push(new_idx as i32);
+        }
+    }
+
+    debug_assert_eq!(
+        rotation.len() as isize,
+        max_los as isize * (2 * max_los as isize),
+        "the rotation should be 2 * max_los wide, max_los tall"
+    );
+
+    // map the indexes to their elevations
+    let elevations = rotation
+        .iter()
+        .map(|&idx| {
+            if idx < 0i32 {
+                i16::MIN
+            } else {
+                #[expect(
+                    clippy::as_conversions,
+                    reason = "elevations start out as i16s, and i16 -> f32 -> i16 is lossless"
+                )]
+                #[expect(clippy::cast_sign_loss, reason = "idx < 2^31, idx >= 0")]
+                // safety: idx is clamped so a get will always be in-bounds
+                *unsafe { elevs.get_unchecked(idx as usize) }
+            }
+        })
+        .collect::<Vec<i16>>();
+
+    (rotation, fill_in_elevations(&elevations, max_los))
+}
+
+/// `fill_in_elevations` will fill in "blank" elevations from NASA data with the last seen elevation
+/// in the line of sight
+fn fill_in_elevations(elevs: &[i16], max_los: usize) -> Vec<i16> {
+    elevs
+        .chunks_exact(2 * max_los)
+        .flat_map(|line| {
+            line.iter()
+                .scan(0, |last_seen, &elevation| match elevation {
+                    i16::MIN => Some(*last_seen),
+                    _ => {
+                        *last_seen = elevation;
+                        Some(elevation)
+                    }
+                })
+        })
+        .collect::<Vec<i16>>()
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use googletest::prelude::*;
+
+    #[rustfmt::skip]
+    const DEM: [i16; 36] = [
+        0, 1, 2, 3, 4, 5,
+        6, 7, 8, 9, 10,11,
+        12,13,14,15,16,17,
+        18,19,20,21,22,23,
+        24,25,26,27,28,29,
+        30,31,32,33,34,35,
+    ];
+
+    #[gtest]
+    fn rotate_by_0() {
+        #[rustfmt::skip]
+        let expected = [
+            14, 15, 16, 17,
+            20, 21, 22, 23
+        ];
+        let (rotations, _) = generate_rotation(&DEM, 0.0, 2);
+        expect_eq!(&rotations, &expected);
+    }
+
+    #[gtest]
+    fn rotate_by_45() {
+        #[rustfmt::skip]
+        let expected = [
+            14, 15, 9, 4,
+            20, 21, 16, 11
+        ];
+        let (rotations, _) = generate_rotation(&DEM, 45.0, 2);
+        expect_eq!(&rotations, &expected);
+    }
+
+    #[gtest]
+    fn rotate_by_90() {
+        #[rustfmt::skip]
+        let expected = [
+            20, 14, 8, 2,
+            21, 15, 9, 3
+        ];
+        let (rotations, _) = generate_rotation(&DEM, 90.0, 2);
+        expect_eq!(&rotations, &expected);
+    }
+}

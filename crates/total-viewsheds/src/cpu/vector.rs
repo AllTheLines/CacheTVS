@@ -86,7 +86,7 @@ impl VectorGreater<4> for VectorLos<4> {
 
 impl PrefixMax for VectorLos<4> {
     #[inline]
-    fn prefix_max(highest: f32, angles_in: &[f32], angles_out: &mut [f32]) {
+    fn prefix_max(angles_in: &[f32], angles_out: &mut [f32]) {
         let (vector_angles, _) = angles_in.as_chunks::<4>();
         let (vector_prefix, _) = angles_out.as_chunks_mut::<4>();
 
@@ -106,7 +106,7 @@ impl PrefixMax for VectorLos<4> {
             v_prefix_max.copy_to_slice(prefix);
         }
 
-        let mut local_acc = Simd::splat(highest);
+        let mut local_acc = Simd::splat(-2000.0);
 
         // accumulate the prefix maxes for blocks, re-computing all prefix maxes
         // to include the accumulated value
@@ -138,7 +138,7 @@ impl VectorMax<8> for VectorLos<8> {
 ))]
 impl PrefixMax for VectorLos<8> {
     #[inline]
-    fn prefix_max(highest: f32, angles_in: &[f32], angles_out: &mut [f32]) {
+    fn prefix_max(angles_in: &[f32], angles_out: &mut [f32]) {
         use std::arch::x86_64::{
             _mm256_blend_ps, _mm256_castps_si256, _mm256_castsi256_ps, _mm256_slli_si256,
             _mm_max_ps,
@@ -180,7 +180,7 @@ impl PrefixMax for VectorLos<8> {
         };
 
         {
-            let mut acc: f32x4 = Simd::splat(highest);
+            let mut acc: f32x4 = Simd::splat(-2000.0f32);
             let (vector_prefix, _) = angles_out.as_chunks_mut::<4>();
             for prefix in vector_prefix.iter_mut() {
                 // safety: PrefixMax for VectorLos<8> is guarded by a cfg block for all SIMD instructions
@@ -241,7 +241,7 @@ impl VectorGreater<16> for VectorLos<16> {
 #[cfg(target_feature = "avx512f")]
 impl PrefixMax for VectorLos<16> {
     #[inline]
-    fn prefix_max(highest: f32, angles_in: &[f32], angles_out: &mut [f32]) {
+    fn prefix_max(angles_in: &[f32], angles_out: &mut [f32]) {
         use std::arch::x86_64::{
             __m512, _mm512_alignr_epi32, _mm512_castps_si512, _mm512_castsi512_ps, _mm512_max_ps,
         };
@@ -347,57 +347,11 @@ where
             vector_distances.iter(),
             vector_adjustments.iter()
         ) {
-            let float_elevation: Simd<f32, { WIDTH }> = Simd::from(elevation).cast();
-
-            let adjusted = float_elevation - Simd::splat(pov_height);
-
-            let res = (adjusted / Simd::from_array(distance)) - Simd::from_array(adjustment);
-
+            let elevation_f32: Simd<f32, { WIDTH }> = Simd::from(elevation).cast();
+            let height_delta = elevation_f32 - Simd::splat(pov_height);
+            let res = (height_delta + Simd::from_array(adjustment)) / Simd::from_array(distance);
             res.copy_to_slice(angle);
         }
-    }
-}
-
-impl<const WIDTH: usize> Accumulate<(f32, f32)> for VectorLos<WIDTH>
-where
-    LaneCount<WIDTH>: SupportedLaneCount,
-{
-    #[inline]
-    fn accumulate(
-        init: (f32, f32),
-        angles: &[f32],
-        prefix: &[f32],
-        distances: &[f32],
-        bitmap: &mut Vec<bool>,
-        output_sector: bool,
-    ) -> (f32, f32) {
-        debug_assert!(angles.len().is_multiple_of(WIDTH), "");
-        debug_assert!(prefix.len().is_multiple_of(WIDTH), "");
-        debug_assert!(distances.len().is_multiple_of(WIDTH), "");
-
-        let (vector_angles, _) = angles.as_chunks::<{ WIDTH }>();
-        let (vector_prefix, _) = prefix.as_chunks::<{ WIDTH }>();
-        let (vector_dists, _) = distances.as_chunks::<{ WIDTH }>();
-
-        izip!(vector_angles, vector_prefix, vector_dists,).fold(
-            init,
-            |acc, (&angle_arr, &prefix_arr, &distances_arr)| {
-                let mask = Self::gt(Simd::from_array(angle_arr), Simd::from_array(prefix_arr));
-                if output_sector {
-                    bitmap.extend(mask.to_array());
-                }
-
-                if !mask.any() {
-                    return acc;
-                }
-
-                let dist = mask.select(Simd::from_array(distances_arr), Simd::splat(0.0f32));
-                (
-                    acc.0 + (dist * Simd::<f32, { WIDTH }>::splat(TAN_ONE_RAD)).reduce_sum(),
-                    acc.1.max(dist.reduce_max()),
-                )
-            },
-        )
     }
 }
 
@@ -417,13 +371,18 @@ where
     GenericExpr<{ SIZE.is_multiple_of(WIDTH) }>: IsTrue,
 {
     #[inline]
+    #[expect(clippy::allow_attributes, reason = "conditional attributes")]
+    #[allow(
+        unused,
+        unused_variables,
+        reason = "conditional compilation causes dead parameters"
+    )]
     fn accumulate(
         mut init: Unroll<SIZE>,
         angles: &[f32],
         prefix: &[f32],
         distances: &[f32],
         bitmap: &mut Vec<bool>,
-        output_sector: bool,
     ) -> Unroll<SIZE> {
         debug_assert!(
             angles.len().is_multiple_of(WIDTH),
@@ -457,7 +416,7 @@ where
             |(sum_arr, longest_arr, &angle_arr, &prefix_arr, &distances_arr)| {
                 let mask = Self::gt(Simd::from_array(angle_arr), Simd::from_array(prefix_arr));
 
-                if output_sector {
+                if cfg!(any(test, feature = "ring_data")) {
                     bitmap.extend(mask.to_array());
                 }
 
@@ -469,7 +428,7 @@ where
 
                 Self::max(Simd::from_array(*longest_arr), dist).copy_to_slice(longest_arr);
 
-                let acc = Simd::from(*sum_arr) + dist;
+                let acc = Simd::from(*sum_arr) + (dist * Simd::splat(TAN_ONE_RAD));
 
                 acc.copy_to_slice(sum_arr);
             },
@@ -482,9 +441,15 @@ where
 /// `DEFAULT_VECTOR_LENGTH` determines the CPU Kernel's default vector length based off
 /// the architecture that the binary is built for
 pub const DEFAULT_VECTOR_LENGTH: usize = const {
-    if cfg!(target_feature = "avx512f") {
+    if cfg!(any(test, feature = "ring_data")) {
+        4
+    } else if cfg!(target_feature = "avx512f") {
         16
-    } else if cfg!(target_feature = "sse") && cfg!(target_feature = "sse2") {
+    } else if cfg!(all(
+        target_feature = "sse",
+        target_feature = "avx",
+        target_feature = "avx2"
+    )) {
         8
     } else {
         4
@@ -511,7 +476,8 @@ where
             .fold(Simd::splat(0.0f32), |acc, &long| {
                 VectorLos::<DEFAULT_VECTOR_LENGTH>::max(acc, Simd::from_array(long))
             })
-            .reduce_max();
+            .reduce_max()
+            / 100.0;
 
         (heat, long)
     }
@@ -524,16 +490,31 @@ mod test {
 
     #[test]
     fn line_of_sight_four() {
-        let mut vs = UnrolledLOS::<64>::new(16);
-        let (visibility, longest, sector) = vs.line_of_sight::<VectorLos<4>>(
+        let mut vs = UnrolledLOS::<64>::new(16, 0.13);
+        let (visibility_four, longest_four, sector_four) = vs.line_of_sight::<VectorLos<4>>(
             0.0f32,
             &[
-                1000, 4000, 9000, 12000, 3000, 30000, 3000, 3000, 1000, 4000, 9000, 12000, 3000,
-                30000, 3000, 3000,
+                100, 0, 300, 400, 500, 0, 300, 0, 100, 0, 300, 0, 100, 0, 300, 0,
             ],
-            true,
         );
-        println!("{:?} {:?} {:?}", visibility, longest, sector);
+
+        #[cfg(all(
+            target_feature = "sse",
+            target_feature = "avx",
+            target_feature = "avx2"
+        ))]
+        {
+            let (visibility_eight, longest_eight, sector_eight) = vs.line_of_sight::<VectorLos<8>>(
+                0.0f32,
+                &[
+                    100, 0, 300, 400, 500, 0, 300, 0, 100, 0, 300, 0, 100, 0, 300, 0,
+                ],
+            );
+
+            assert_eq!(visibility_four, visibility_eight);
+            assert_eq!(longest_four, longest_eight);
+            assert_eq!(sector_four, sector_eight);
+        }
     }
 
     #[test]
@@ -543,14 +524,13 @@ mod test {
         target_feature = "avx2"
     ))]
     fn line_of_sight_eight() {
-        let mut vs = UnrolledLOS::<64>::new(16);
+        let mut vs = UnrolledLOS::<64>::new(16, 0.13);
         let (visibility, longest, sector) = vs.line_of_sight::<VectorLos<8>>(
             0.0f32,
             &[
                 1000, 4000, 9000, 12000, 3000, 30000, 3000, 3000, 1000, 4000, 9000, 12000, 3000,
                 30000, 3000, 3000,
             ],
-            true,
         );
         println!("{:?} {:?} {:?}", visibility, longest, sector);
     }

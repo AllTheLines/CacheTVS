@@ -3,8 +3,12 @@
 #![cfg(test)]
 #![expect(clippy::indexing_slicing, reason = "This code is mostly for tests")]
 
-pub fn make_viewshed(elevations: &[i16], viewshed_pov: geo::Coord) -> Vec<String> {
-    let mut dem = crate::compute::test::make_dem(elevations);
+pub fn make_viewshed(
+    elevations: &[i16],
+    viewshed_pov: geo::Coord,
+    backend: crate::config::Backend,
+) -> Vec<String> {
+    let mut dem = crate::run::compute::test::make_dem(elevations);
     let dem_half_width = f64::from(dem.width - 1) / 2.0f64;
     let viewshed_pov_metric = geo::Coord {
         x: viewshed_pov.x - dem_half_width,
@@ -14,7 +18,7 @@ pub fn make_viewshed(elevations: &[i16], viewshed_pov: geo::Coord) -> Vec<String
         .to_degrees(viewshed_pov_metric)
         .unwrap();
 
-    let compute = crate::compute::test::compute(&mut dem);
+    let compute = crate::run::compute::test::compute(&mut dem, backend);
 
     let mut viewshed = crate::output::viewshed::Viewshed::reconstruct(
         &super::ring_data::Source::RAM(crate::output::ring_data::AllData {
