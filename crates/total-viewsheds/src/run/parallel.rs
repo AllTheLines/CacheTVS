@@ -1,5 +1,6 @@
 //! For kernels that run each angle in parallel.
 
+use crate::los_pack::LineOfSightPacked;
 use color_eyre::{
     eyre::{eyre, ContextCompat as _},
     Result,
@@ -23,10 +24,12 @@ impl super::compute::Compute<'_> {
         };
 
         let mut surfaces = vec![0.0f32; tvs_size];
-        let mut longest = vec![(0u16, 0.0f32); tvs_size];
+        let mut longest = vec![(0u16, 0u32); tvs_size];
         let mut ring_data = vec![vec![0u32; tvs_size * reserved_ring_data_size]; 360];
 
-        let pool = rayon::ThreadPoolBuilder::new().num_threads(8).build()?;
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(self.config.thread_count)
+            .build()?;
 
         {
             let accumulating = AccumulatingData {
@@ -65,17 +68,9 @@ impl super::compute::Compute<'_> {
         };
 
         self.total_surfaces = surfaces;
-        let packed: Result<Vec<crate::los_pack::LineOfSightPacked>> = longest
+        let packed: Result<Vec<LineOfSightPacked>> = longest
             .iter()
-            .map(|&(angle, distance): &(u16, f32)| {
-                #[expect(
-                    clippy::as_conversions,
-                    clippy::cast_possible_truncation,
-                    clippy::cast_sign_loss,
-                    reason = "distances always fit in u32"
-                )]
-                crate::los_pack::LineOfSightPacked::new(distance as u32, angle)
-            })
+            .map(|&(angle, distance): &(u16, u32)| LineOfSightPacked::new(distance, angle))
             .collect();
         self.longest_lines = packed?;
         self.ring_data = ring_data;
@@ -107,7 +102,7 @@ struct AccumulatingData<'accumulating> {
     /// Total surfaces.
     surfaces: std::sync::Mutex<&'accumulating mut Vec<f32>>,
     /// Longest lines.
-    longest: std::sync::Mutex<&'accumulating mut Vec<(u16, f32)>>,
+    longest: std::sync::Mutex<&'accumulating mut Vec<(u16, u32)>>,
     /// Ring data to reconstruct individual viewsheds.
     visibility: std::sync::Mutex<&'accumulating mut Vec<Vec<u32>>>,
 }
@@ -134,8 +129,21 @@ impl AccumulatingData<'_> {
             .iter_mut()
             .zip(output.longest)
             .for_each(|(to, from)| {
-                if from > to.1 {
-                    *to = (angle, from);
+                #[expect(
+                    clippy::as_conversions,
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss,
+                    reason = "distances always fit in u32"
+                )]
+                let converted = from as u32;
+                if converted > to.1 {
+                    *to = (angle, converted);
+                    return;
+                }
+
+                // let the smallest angle win due to keep consistent in a  multithreaded environment
+                if angle < to.0 && converted != 0 && converted == to.1 {
+                    *to = (angle, converted);
                 }
             });
 
