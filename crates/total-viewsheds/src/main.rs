@@ -141,6 +141,7 @@ fn compute(config: &config::Compute) -> Result<()> {
         rings_per_km: config.rings_per_km,
         heatmap: config.heatmap,
         refraction: config.refraction,
+        thread_count: config.thread_count,
     };
     let mut compute = run::compute::Compute::new(compute_config, &mut dem)?;
     compute.run()?;
