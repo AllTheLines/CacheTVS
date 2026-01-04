@@ -290,7 +290,7 @@ impl PrefixMax for VectorLos<16> {
             }
         }
 
-        let mut local_acc = f32x16::splat(highest);
+        let mut local_acc = f32x16::splat(-2000.0f32);
 
         // accumulate the prefix maxes for blocks, re-computing all prefix maxes
         // to include the accumulated value
