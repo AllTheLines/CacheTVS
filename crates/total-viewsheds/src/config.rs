@@ -104,6 +104,10 @@ pub struct Compute {
         default_value = "0.13"
     )]
     pub refraction: f32,
+
+    /// Thread count used for CPU parallelism
+    #[arg(long, value_name = "thread count", default_value = "8")]
+    pub thread_count: usize,
 }
 
 #[derive(clap::Parser, Debug)]

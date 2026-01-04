@@ -489,7 +489,12 @@ mod test {
     use crate::cpu::vector::VectorLos;
 
     #[test]
-    fn line_of_sight_four() {
+    #[cfg(all(
+        target_feature = "sse",
+        target_feature = "avx",
+        target_feature = "avx2"
+    ))]
+    fn line_of_sightsame() {
         let mut vs = UnrolledLOS::<64>::new(16, 0.13);
         let (visibility_four, longest_four, sector_four) = vs.line_of_sight::<VectorLos<4>>(
             0.0f32,
@@ -498,40 +503,15 @@ mod test {
             ],
         );
 
-        #[cfg(all(
-            target_feature = "sse",
-            target_feature = "avx",
-            target_feature = "avx2"
-        ))]
-        {
-            let (visibility_eight, longest_eight, sector_eight) = vs.line_of_sight::<VectorLos<8>>(
-                0.0f32,
-                &[
-                    100, 0, 300, 400, 500, 0, 300, 0, 100, 0, 300, 0, 100, 0, 300, 0,
-                ],
-            );
-
-            assert_eq!(visibility_four, visibility_eight);
-            assert_eq!(longest_four, longest_eight);
-            assert_eq!(sector_four, sector_eight);
-        }
-    }
-
-    #[test]
-    #[cfg(all(
-        target_feature = "sse",
-        target_feature = "avx",
-        target_feature = "avx2"
-    ))]
-    fn line_of_sight_eight() {
-        let mut vs = UnrolledLOS::<64>::new(16, 0.13);
-        let (visibility, longest, sector) = vs.line_of_sight::<VectorLos<8>>(
+        let (visibility_eight, longest_eight, sector_eight) = vs.line_of_sight::<VectorLos<8>>(
             0.0f32,
             &[
-                1000, 4000, 9000, 12000, 3000, 30000, 3000, 3000, 1000, 4000, 9000, 12000, 3000,
-                30000, 3000, 3000,
+                100, 0, 300, 400, 500, 0, 300, 0, 100, 0, 300, 0, 100, 0, 300, 0,
             ],
         );
-        println!("{:?} {:?} {:?}", visibility, longest, sector);
+
+        assert_eq!(visibility_four, visibility_eight);
+        assert_eq!(longest_four, longest_eight);
+        assert_eq!(sector_four, sector_eight);
     }
 }

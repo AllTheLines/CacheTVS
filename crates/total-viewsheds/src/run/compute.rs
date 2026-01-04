@@ -45,6 +45,8 @@ pub struct Config {
     pub heatmap: crate::config::HeatmapNormalisation,
     /// Refractoin coefficient
     pub refraction: f32,
+    /// Number of threads for computation
+    pub thread_count: usize,
 }
 
 impl<'compute> Compute<'compute> {
@@ -300,6 +302,7 @@ pub mod test {
             rings_per_km: 5000.0,
             heatmap: crate::config::HeatmapNormalisation::UnitScale,
             refraction: 0.13,
+            thread_count: 8,
         };
 
         let mut compute = Compute::new(config, dem).unwrap();
@@ -358,7 +361,7 @@ pub mod test {
         );
     }
 
-    mod gpu {
+    mod vulkan_cpu {
         use googletest::prelude::*;
 
         #[test]
@@ -384,6 +387,31 @@ pub mod test {
         #[gtest]
         #[ignore = "TODO@ryan: Enable once viewshed tests are settled"]
         fn longest_lines() {
+            //
+            // Tom's angles
+            // [
+            //     0, 0,   0,   0,
+            //     0, 0,   12,  0,
+            //     0, 180, 0,   0,
+            //     0, 0,   0,   0
+            // ]
+            //
+            // Ryan's angles:
+            // [
+            //     0,  0,   0,   0,
+            //     0,  0,   0,   0,
+            //     0,  46,  0,   0,
+            //     0,  150, 195, 0,
+            // ]
+            //
+            // rberger CPU longest distance:
+            //
+            // [
+            //     0.0, 0.0, 0.0, 0.0,
+            //     0.0, 1.0, 4.0, 4.0,
+            //     0.0, 4.0, 4.0, 4.0,
+            //     0.0, 4.0, 4.0, 4.0,
+            // ],
             super::longest_lines(crate::config::Backend::CPU);
         }
 
