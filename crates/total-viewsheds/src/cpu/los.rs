@@ -44,7 +44,7 @@ pub trait Accumulate<Output: Into<(f32, f32)>> {
 /// `PrefixMax` calculates the prefix maximum of the given angles
 pub trait PrefixMax {
     /// `prefix_max` calculates the prefix max of the
-    fn prefix_max(angles_in: &[f32], angles_out: &mut [f32]);
+    fn prefix_max(highest: f32, angles_in: &[f32], angles_out: &mut [f32]);
 }
 
 /// `EARTH_RADIUS_SQUARED` is the radius of the earth in meters
@@ -154,12 +154,12 @@ where
                     &mut angles[1..],
                 );
 
-                LOS::prefix_max(&angles[..UNROLL], &mut prefix_max);
+                LOS::prefix_max(prefix_max[UNROLL - 1], &angles[..UNROLL], &mut prefix_max);
 
                 let new_acc =
                     LOS::accumulate(acc, &angles[1..], &prefix_max, distances, &mut output);
 
-                angles[0] = angles[UNROLL].max(prefix_max[UNROLL - 1]);
+                angles[0] = angles[UNROLL];
                 new_acc
             },
         );
@@ -172,7 +172,7 @@ where
             &mut angles[1..],
         );
 
-        LOS::prefix_max(&angles[..UNROLL], &mut prefix_max);
+        LOS::prefix_max(prefix_max[UNROLL - 1], &angles[..UNROLL], &mut prefix_max);
 
         let new_acc = LOS::accumulate(los, &angles[1..], &prefix_max, rest_distances, &mut output);
 
