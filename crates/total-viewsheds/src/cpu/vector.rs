@@ -228,11 +228,11 @@ impl VectorMax<16> for VectorLos<16> {
 impl VectorGreater<16> for VectorLos<16> {
     #[inline]
     fn gt(lhs: Simd<f32, 16>, rhs: Simd<f32, 16>) -> Mask<i32, 16> {
-        use std::arch::x86_64::_mm512_cmple_ps_mask;
+        use std::arch::x86_64::{_mm512_cmp_ps_mask, _CMP_GT_OS};
         // safety: the caller of Viewshed<8> guarantees that -0.0 or NaN are not in the input
         // thus allowing this to be non IEEE754 compliant
         unsafe {
-            let mask = _mm512_cmple_ps_mask(lhs.into(), rhs.into());
+            let mask = _mm512_cmp_ps_mask::<_CMP_GT_OS>(lhs.into(), rhs.into());
             Mask::<i32, 16>::from_bitmask(mask.into())
         }
     }
