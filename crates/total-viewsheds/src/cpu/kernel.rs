@@ -23,15 +23,15 @@ pub struct OutputData {
     reason = "i32 is constructed from (i32, i32) converting back should succeed"
 )]
 /// `dem_to_pov` turns the `dem_id` to the `pov_id` so that the result can be stored in a heatmap
-const fn dem_to_pov(dem_id: i32, width: usize, max_los: usize) -> i32 {
+fn dem_to_pov(dem_id: i32, width: usize, max_los: usize) -> i32 {
     let dem_x = (dem_id / width as i32) - max_los as i32;
     let dem_y = (dem_id % width as i32) - max_los as i32;
 
-    let radius = max_los as i32 / 2i32;
-    let circ_x = dem_x - radius;
-    let circ_y = dem_y - radius;
+    let radius = (max_los - 1) as f32 / 2.0;
+    let circ_x = dem_x as f32 - radius;
+    let circ_y = dem_y as f32 - radius;
 
-    let dist = (circ_x.pow(2) + circ_y.pow(2)).isqrt();
+    let dist = circ_x.hypot(circ_y);
     if dist < radius {
         dem_x * (max_los as i32) + dem_y
     } else {
