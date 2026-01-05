@@ -517,10 +517,9 @@ mod test {
     #[test]
     // #[cfg(target_feature = "avx512f")]
     fn prefix_max() {
-        // implicit -2000
         #[rustfmt::skip]
         let data = &[-1.0, -2.0, -1.0, 2.0, 3.0, 2.0, 5.0, 4.0, 7.0, 6.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0];
-        let expected = &[-1.0, -1.0, -1.0, 2.0, 3.0, 3.0, 5.0, 5.0, 7.0, 7.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0].map(|e| e as f32);
+        let expected = &[-1.0, -1.0, -1.0, 2.0, 3.0, 3.0, 5.0, 5.0, 7.0, 7.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0];
 
         {
             let mut out = [0.0f32; 16];
@@ -541,7 +540,7 @@ mod test {
             let mut out = [0.0f32; 16];
             VectorLos::<16>::prefix_max(-2000.0, data, &mut out);
 
-            println!("{:?} {:?}", expected, out);
+            assert_eq!(&out, expected);
         }
 
 

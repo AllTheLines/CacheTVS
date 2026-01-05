@@ -5,4 +5,4 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 source ~/.bashrc
 
 git clone https://github.com/AllTheLines/CacheTVS
-cd CacheTVS && git checkout rberger/cpu-clean
+cd CacheTVS && git checkout prefix-fix
