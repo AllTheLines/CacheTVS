@@ -273,7 +273,7 @@ impl PrefixMax for VectorLos<16> {
 
         for (prefix, &angle) in zip(vector_prefix.iter_mut(), vector_angle.iter()) {
             let simd_angle = Simd::from_array(angle);
-            // safety: all the following operations are guarded by the avx512f build falg
+            // safety: all the following operations are guarded by the avx512f build flag
             unsafe {
                 let mut v_prefix_max =
                     _mm512_max_ps(simd_angle.into(), mm512_slli_si512::<1>(simd_angle.into()));
@@ -484,7 +484,7 @@ where
 
 #[cfg(test)]
 mod test {
-    use crate::cpu::los::{LineOfSight as _, UnrolledLOS};
+    use crate::cpu::los::{LineOfSight as _, PrefixMax, UnrolledLOS};
     use crate::cpu::vector::VectorLos;
 
     #[test]
@@ -512,5 +512,38 @@ mod test {
         assert_eq!(visibility_four, visibility_eight);
         assert_eq!(longest_four, longest_eight);
         assert_eq!(sector_four, sector_eight);
+    }
+
+    #[test]
+    // #[cfg(target_feature = "avx512f")]
+    fn prefix_max() {
+        // implicit -2000
+        #[rustfmt::skip]
+        let data = &[-1.0, -2.0, -1.0, 2.0, 3.0, 2.0, 5.0, 4.0, 7.0, 6.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0];
+        let expected = &[-1.0, -1.0, -1.0, 2.0, 3.0, 3.0, 5.0, 5.0, 7.0, 7.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0].map(|e| e as f32);
+
+        {
+            let mut out = [0.0f32; 16];
+            VectorLos::<4>::prefix_max(-2000.0, data, &mut out);
+
+            assert_eq!(&out, expected);
+        }
+
+        {
+            let mut out = [0.0f32; 16];
+            VectorLos::<8>::prefix_max(-2000.0, data, &mut out);
+
+            assert_eq!(&out, expected);
+        }
+
+        #[cfg(target_feature = "avx512f")]
+        {
+            let mut out = [0.0f32; 16];
+            VectorLos::<16>::prefix_max(-2000.0, data, &mut out);
+
+            println!("{:?} {:?}", expected, out);
+        }
+
+
     }
 }

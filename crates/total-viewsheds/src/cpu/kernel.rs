@@ -16,6 +16,7 @@ pub struct OutputData {
     clippy::as_conversions,
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
     reason = "so long as max_los < 2^24, the following as conversions are entirely safe"
 )]
 #[expect(
@@ -57,11 +58,6 @@ const DEFAULT_UNROLL: usize = const {
 
 /// `kernel` will calculate the longest line of sight heatmap for a given angle and elevation map
 /// assuming that the maximum line of sight is `max_los`
-#[expect(
-    clippy::inline_always,
-    reason = "I am become Death, destroyer of compilers"
-)] // the real reason is that I need output_sector_data to be constant propagated
-#[inline(always)]
 pub fn kernel(elevation_map: &[i16], max_los: usize, angle: f32, refraction: f32) -> OutputData {
     let mut surfaces = vec![0.0f32; max_los * max_los];
     let mut longest = vec![0.0f32; max_los * max_los];
@@ -82,6 +78,12 @@ pub fn kernel(elevation_map: &[i16], max_los: usize, angle: f32, refraction: f32
         rotated_elevations.len(),
         2 * max_los * max_los,
         "elevations should be 2 * max_los wide, and max_los tall"
+    );
+
+    assert_eq!(
+        rotated_elevations.len(),
+        indexes.len(),
+        "elevations should be the same length as indexes"
     );
 
     let width = 2 * max_los;

@@ -1,9 +1,11 @@
 //! Total Viewsheds kernel. The heart of the calculations.
 
+use std::fmt::Debug;
 #[cfg(not(target_arch = "spirv"))]
 use crate::rotation::ANGLE_SHIFT;
 
 use crate::{elevations::Elevations, ring_data::RingData, rotation::NOOP_DEM_ID};
+use crate::tests::dems::print_dem;
 
 /// Ensure that the first point from the point of view is always visible
 const MAX_ANGLE: f32 = -2000.0;

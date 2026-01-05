@@ -1,5 +1,6 @@
 //! For kernels that run each angle in serial.
 
+use std::fmt::Debug;
 use color_eyre::Result;
 
 impl super::compute::Compute<'_> {
@@ -165,6 +166,17 @@ impl super::compute::Compute<'_> {
             longest_lines,
             ring_data,
         };
+
+        fn print_map<T: Debug>(map: &[T], width: usize) {
+            for chunk in map.chunks_exact(width) {
+                println!("{:?}", chunk);
+            }
+        }
+
+        println!("=== angle ===");
+        print_map(&rotated_elevations, 12);
+        println!("=== ===");
+
 
         for tvs_id in 0..self.constants.total_bands {
             kernel::kernel::Kernel::run(tvs_id, &mut buffers);
