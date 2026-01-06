@@ -173,6 +173,8 @@ impl super::compute::Compute<'_> {
         Ok(())
     }
 
+
+
     /// Add the accumulated total surface areas for the current sector to the running total.
     pub fn add_sector_surfaces_to_running_total(&mut self, cumulative_surfaces: &[f32]) {
         for (left, right) in self

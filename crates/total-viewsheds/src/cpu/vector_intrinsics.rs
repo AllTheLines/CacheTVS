@@ -1,18 +1,12 @@
-use itertools::izip;
 use std::iter::zip;
-use std::simd::cmp::SimdPartialOrd as _;
-use std::simd::num::SimdFloat as _;
-use std::simd::prelude::SimdInt as _;
 use std::simd::{f32x4, f32x8, LaneCount, Mask, Simd, SupportedLaneCount};
-
-/// `TAN_ONE_RAD` is used in normalizing the
-const TAN_ONE_RAD: f32 = 0.017_453_3;
-
-use crate::cpu::los::{Accumulate, Angle, PrefixMax, Unroll};
+use std::simd::prelude::{SimdFloat as _, SimdInt, SimdPartialOrd as _};
+use itertools::izip;
+use crate::cpu::los::{Angle, PrefixMax};
 
 /// `VectorMax` performs an element-wise SIMD max of floats, allowing for architecture
 /// specific implementations
-trait VectorMax<const WIDTH: usize>
+pub trait VectorMax<const WIDTH: usize>
 where
     LaneCount<WIDTH>: SupportedLaneCount,
 {
@@ -23,7 +17,7 @@ where
 
 /// `VectorGreater` performs a SIMD greater than of floats, allowing for architecture
 /// specific implementations
-trait VectorGreater<const WIDTH: usize>
+pub trait VectorGreater<const WIDTH: usize>
 where
     LaneCount<WIDTH>: SupportedLaneCount,
 {
@@ -84,6 +78,57 @@ impl VectorGreater<4> for VectorLos<4> {
     }
 }
 
+#[cfg(target_feature = "avx")]
+impl VectorMax<8> for VectorLos<8> {
+    #[inline]
+    fn max(lhs: f32x8, rhs: f32x8) -> f32x8 {
+        use std::arch::x86_64::_mm256_max_ps;
+        // safety: the caller of Viewshed<4> guarantees that -0.0 or NaN are not in the input
+        // thus allowing this to be non IEEE754 compliant
+        unsafe { _mm256_max_ps(lhs.into(), rhs.into()).into() }
+    }
+}
+
+#[cfg(target_feature = "avx")]
+impl VectorGreater<8> for VectorLos<8> {
+    #[inline]
+    fn gt(lhs: f32x8, rhs: f32x8) -> Mask<i32, 8> {
+        use std::arch::x86_64::{_mm256_castps_si256, _mm256_cmp_ps, _CMP_GT_OS};
+
+        // safety: the caller of Viewshed<4> guarantees that -0.0 or NaN are not in the input
+        // thus allowing this to be non IEEE754 compliant
+        unsafe {
+            let mask = _mm256_castps_si256(_mm256_cmp_ps::<_CMP_GT_OS>(lhs.into(), rhs.into()));
+            Mask::<i32, 8>::from_int_unchecked(mask.into())
+        }
+    }
+}
+
+#[cfg(target_feature = "avx512f")]
+impl VectorMax<16> for VectorLos<16> {
+    #[inline]
+    fn max(lhs: Simd<f32, 16>, rhs: Simd<f32, 16>) -> Simd<f32, 16> {
+        use std::arch::x86_64::_mm512_max_ps;
+        // safety: the caller of Viewshed<4> guarantees that -0.0 or NaN are not in the input
+        // thus allowing this to be non IEEE754 compliant
+        unsafe { _mm512_max_ps(lhs.into(), rhs.into()).into() }
+    }
+}
+
+#[cfg(target_feature = "avx512f")]
+impl VectorGreater<16> for VectorLos<16> {
+    #[inline]
+    fn gt(lhs: Simd<f32, 16>, rhs: Simd<f32, 16>) -> Mask<i32, 16> {
+        use std::arch::x86_64::{_mm512_cmp_ps_mask, _CMP_GT_OS};
+        // safety: the caller of Viewshed<8> guarantees that -0.0 or NaN are not in the input
+        // thus allowing this to be non IEEE754 compliant
+        unsafe {
+            let mask = _mm512_cmp_ps_mask::<_CMP_GT_OS>(lhs.into(), rhs.into());
+            Mask::<i32, 16>::from_bitmask(mask.into())
+        }
+    }
+}
+
 impl PrefixMax for VectorLos<4> {
     #[inline]
     fn prefix_max(highest: f32, angles_in: &[f32], angles_out: &mut [f32]) {
@@ -117,17 +162,6 @@ impl PrefixMax for VectorLos<4> {
             Self::max(local_acc, cur_prefix).copy_to_slice(prefix);
             local_acc = Self::max(local_acc, cur_max);
         }
-    }
-}
-
-#[cfg(target_feature = "avx")]
-impl VectorMax<8> for VectorLos<8> {
-    #[inline]
-    fn max(lhs: f32x8, rhs: f32x8) -> f32x8 {
-        use std::arch::x86_64::_mm256_max_ps;
-        // safety: the caller of Viewshed<4> guarantees that -0.0 or NaN are not in the input
-        // thus allowing this to be non IEEE754 compliant
-        unsafe { _mm256_max_ps(lhs.into(), rhs.into()).into() }
     }
 }
 
@@ -194,46 +228,6 @@ impl PrefixMax for VectorLos<8> {
 
                 new_max.copy_to_slice(prefix);
             }
-        }
-    }
-}
-
-#[cfg(target_feature = "avx")]
-impl VectorGreater<8> for VectorLos<8> {
-    #[inline]
-    fn gt(lhs: f32x8, rhs: f32x8) -> Mask<i32, 8> {
-        use std::arch::x86_64::{_mm256_castps_si256, _mm256_cmp_ps, _CMP_GT_OS};
-
-        // safety: the caller of Viewshed<4> guarantees that -0.0 or NaN are not in the input
-        // thus allowing this to be non IEEE754 compliant
-        unsafe {
-            let mask = _mm256_castps_si256(_mm256_cmp_ps::<_CMP_GT_OS>(lhs.into(), rhs.into()));
-            Mask::<i32, 8>::from_int_unchecked(mask.into())
-        }
-    }
-}
-
-#[cfg(target_feature = "avx512f")]
-impl VectorMax<16> for VectorLos<16> {
-    #[inline]
-    fn max(lhs: Simd<f32, 16>, rhs: Simd<f32, 16>) -> Simd<f32, 16> {
-        use std::arch::x86_64::_mm512_max_ps;
-        // safety: the caller of Viewshed<4> guarantees that -0.0 or NaN are not in the input
-        // thus allowing this to be non IEEE754 compliant
-        unsafe { _mm512_max_ps(lhs.into(), rhs.into()).into() }
-    }
-}
-
-#[cfg(target_feature = "avx512f")]
-impl VectorGreater<16> for VectorLos<16> {
-    #[inline]
-    fn gt(lhs: Simd<f32, 16>, rhs: Simd<f32, 16>) -> Mask<i32, 16> {
-        use std::arch::x86_64::{_mm512_cmp_ps_mask, _CMP_GT_OS};
-        // safety: the caller of Viewshed<8> guarantees that -0.0 or NaN are not in the input
-        // thus allowing this to be non IEEE754 compliant
-        unsafe {
-            let mask = _mm512_cmp_ps_mask::<_CMP_GT_OS>(lhs.into(), rhs.into());
-            Mask::<i32, 16>::from_bitmask(mask.into())
         }
     }
 }
@@ -315,22 +309,22 @@ where
         adjustments: &[f32],
         angles_out: &mut [f32],
     ) {
-        debug_assert!(
+        assert!(
             elevations.len().is_multiple_of(WIDTH),
             "expected elevations to be a multiple of {WIDTH}",
         );
 
-        debug_assert!(
+        assert!(
             distances.len().is_multiple_of(WIDTH),
             "expected distances to be a multiple of {WIDTH}",
         );
 
-        debug_assert!(
+        assert!(
             adjustments.len().is_multiple_of(WIDTH),
             "expected adjustments to be a multiple of {WIDTH}",
         );
 
-        debug_assert!(
+        assert!(
             angles_out.len().is_multiple_of(WIDTH),
             "expected angles buf to be a multiple of {WIDTH}",
         );
@@ -354,89 +348,6 @@ where
     }
 }
 
-/// `GenericExpr` lets a const generic expression be evaluated in its
-/// `CONDITION` parameter for traits that need to evaluate constant expressions
-/// as part of their trait bounds
-struct GenericExpr<const CONDITION: bool>;
-
-/// `IsTrue `is a "marker" trait for trait bounds for when a const generic expr
-/// evaluates to true, and is only implemented for `GenericExpr<{true}>`
-trait IsTrue {}
-impl IsTrue for GenericExpr<true> {}
-
-impl<const SIZE: usize, const WIDTH: usize> Accumulate<Unroll<SIZE>> for VectorLos<WIDTH>
-where
-    LaneCount<WIDTH>: SupportedLaneCount,
-    GenericExpr<{ SIZE.is_multiple_of(WIDTH) }>: IsTrue,
-{
-    #[inline]
-    #[expect(clippy::allow_attributes, reason = "conditional attributes")]
-    #[allow(
-        unused,
-        unused_variables,
-        reason = "conditional compilation causes dead parameters"
-    )]
-    fn accumulate(
-        mut init: Unroll<SIZE>,
-        angles: &[f32],
-        prefix: &[f32],
-        distances: &[f32],
-        bitmap: &mut Vec<bool>,
-    ) -> Unroll<SIZE> {
-        debug_assert!(
-            angles.len().is_multiple_of(WIDTH),
-            "distance unroll should be multiple of width"
-        );
-        debug_assert!(
-            prefix.len().is_multiple_of(WIDTH),
-            "distance unroll should be multiple of width"
-        );
-        debug_assert!(
-            distances.len().is_multiple_of(WIDTH),
-            "distance unroll should be multiple of width"
-        );
-        debug_assert!(angles.len() <= SIZE, "angles must be less than unroll size");
-
-        let (vector_sum, _) = init.heatmap.as_chunks_mut::<{ WIDTH }>();
-        let (vector_longest, _) = init.longest.as_chunks_mut::<{ WIDTH }>();
-
-        let (vector_angles, _) = angles.as_chunks::<{ WIDTH }>();
-        let (vector_prefix, _) = prefix.as_chunks::<{ WIDTH }>();
-        let (vector_dists, _) = distances.as_chunks::<{ WIDTH }>();
-
-        izip!(
-            vector_sum,
-            vector_longest,
-            vector_angles,
-            vector_prefix,
-            vector_dists,
-        )
-        .for_each(
-            |(sum_arr, longest_arr, &angle_arr, &prefix_arr, &distances_arr)| {
-                let mask = Self::gt(Simd::from_array(angle_arr), Simd::from_array(prefix_arr));
-
-                if cfg!(any(test, feature = "ring_data")) {
-                    bitmap.extend(mask.to_array());
-                }
-
-                if !mask.any() {
-                    return;
-                }
-
-                let dist = mask.select(Simd::from_array(distances_arr), Simd::splat(0.0f32));
-
-                Self::max(Simd::from_array(*longest_arr), dist).copy_to_slice(longest_arr);
-
-                let acc = Simd::from(*sum_arr) + (dist * Simd::splat(TAN_ONE_RAD));
-
-                acc.copy_to_slice(sum_arr);
-            },
-        );
-
-        init
-    }
-}
-
 /// `DEFAULT_VECTOR_LENGTH` determines the CPU Kernel's default vector length based off
 /// the architecture that the binary is built for
 pub const DEFAULT_VECTOR_LENGTH: usize = const {
@@ -454,63 +365,3 @@ pub const DEFAULT_VECTOR_LENGTH: usize = const {
         4
     }
 };
-
-impl<const UNROLL: usize> From<Unroll<UNROLL>> for (f32, f32)
-where
-    GenericExpr<{ UNROLL.is_multiple_of(DEFAULT_VECTOR_LENGTH) }>: IsTrue,
-{
-    fn from(val: Unroll<UNROLL>) -> Self {
-        let (heatmap, _) = val.heatmap.as_chunks::<DEFAULT_VECTOR_LENGTH>();
-        let (longest, _) = val.longest.as_chunks::<DEFAULT_VECTOR_LENGTH>();
-
-        let heat = heatmap
-            .iter()
-            .fold(Simd::splat(0.0f32), |acc, &heat| {
-                acc + Simd::from_array(heat)
-            })
-            .reduce_sum();
-
-        let long = longest
-            .iter()
-            .fold(Simd::splat(0.0f32), |acc, &long| {
-                VectorLos::<DEFAULT_VECTOR_LENGTH>::max(acc, Simd::from_array(long))
-            })
-            .reduce_max()
-            / 100.0;
-
-        (heat, long)
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use crate::cpu::los::{LineOfSight as _, UnrolledLOS};
-    use crate::cpu::vector::VectorLos;
-
-    #[test]
-    #[cfg(all(
-        target_feature = "sse",
-        target_feature = "avx",
-        target_feature = "avx2"
-    ))]
-    fn line_of_sightsame() {
-        let mut vs = UnrolledLOS::<64>::new(16, 0.13);
-        let (visibility_four, longest_four, sector_four) = vs.line_of_sight::<VectorLos<4>>(
-            0.0f32,
-            &[
-                100, 0, 300, 400, 500, 0, 300, 0, 100, 0, 300, 0, 100, 0, 300, 0,
-            ],
-        );
-
-        let (visibility_eight, longest_eight, sector_eight) = vs.line_of_sight::<VectorLos<8>>(
-            0.0f32,
-            &[
-                100, 0, 300, 400, 500, 0, 300, 0, 100, 0, 300, 0, 100, 0, 300, 0,
-            ],
-        );
-
-        assert_eq!(visibility_four, visibility_eight);
-        assert_eq!(longest_four, longest_eight);
-        assert_eq!(sector_four, sector_eight);
-    }
-}
