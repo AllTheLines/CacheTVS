@@ -379,13 +379,13 @@ pub mod test {
         use googletest::prelude::*;
 
         #[test]
-        #[ignore = "TODO@ryan: Enable once viewshed tests are settled"]
+        // #[ignore = "TODO@ryan: Enable once viewshed tests are settled"]
         fn total_surfaces() {
             super::total_surfaces(crate::config::Backend::CPU);
         }
 
         #[gtest]
-        #[ignore = "TODO@ryan: Enable once viewshed tests are settled"]
+        // #[ignore = "TODO@ryan: Enable once viewshed tests are settled"]
         fn longest_lines() {
             //
             // Tom's angles
@@ -398,10 +398,10 @@ pub mod test {
             //
             // Ryan's angles:
             // [
-            //     0,  0,   0,   0,
-            //     0,  0,   0,   0,
-            //     0,  46,  0,   0,
-            //     0,  0,   0,   0
+            //     0, 0, 0, 0,
+            //     0, 0, 12, 0,
+            //     0, 46, 0, 0,
+            //     0, 0, 0, 0,
             // ]
             //
             // rberger CPU longest distance:

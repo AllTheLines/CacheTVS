@@ -1,5 +1,6 @@
-use crate::cpu::los::{LineOfSight as _, UnrolledLOS};
-use crate::cpu::vector::{VectorLos, DEFAULT_VECTOR_LENGTH};
+use crate::cpu::los::LineOfSight as _;
+use crate::cpu::unrolled_los::UnrolledVectorLos;
+use crate::cpu::vector_intrinsics::DEFAULT_VECTOR_LENGTH;
 use itertools::izip;
 
 /// The data output by a single angle.
@@ -16,6 +17,7 @@ pub struct OutputData {
     clippy::as_conversions,
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
     reason = "so long as max_los < 2^24, the following as conversions are entirely safe"
 )]
 #[expect(
@@ -44,9 +46,8 @@ fn dem_to_pov(dem_id: i32, width: usize, max_los: usize) -> i32 {
 /// vectors, and 10-way unrolling for the 16-wide vector as it is optimal for Turins
 const DEFAULT_UNROLL: usize = const {
     match DEFAULT_VECTOR_LENGTH {
-        4 => 32,
-        8 => 64,
-        16 => 160,
+        4 | 8 => 8,
+        16 => 10,
         #[expect(
             clippy::unreachable,
             reason = "no one should be setting any other constants"
@@ -57,12 +58,14 @@ const DEFAULT_UNROLL: usize = const {
 
 /// `kernel` will calculate the longest line of sight heatmap for a given angle and elevation map
 /// assuming that the maximum line of sight is `max_los`
-#[expect(
-    clippy::inline_always,
-    reason = "I am become Death, destroyer of compilers"
-)] // the real reason is that I need output_sector_data to be constant propagated
-#[inline(always)]
-pub fn kernel(elevation_map: &[i16], max_los: usize, angle: f32, refraction: f32) -> OutputData {
+pub fn kernel(
+    elevation_map: &[i16],
+    max_los: usize,
+    angle: f32,
+    refraction: f32,
+    scale: f32,
+    observer_height: f32,
+) -> OutputData {
     let mut surfaces = vec![0.0f32; max_los * max_los];
     let mut longest = vec![0.0f32; max_los * max_los];
 
@@ -86,7 +89,8 @@ pub fn kernel(elevation_map: &[i16], max_los: usize, angle: f32, refraction: f32
 
     let width = 2 * max_los;
 
-    let mut vs = UnrolledLOS::<DEFAULT_UNROLL>::new(max_los, refraction);
+    let mut vs =
+        UnrolledVectorLos::<DEFAULT_UNROLL, DEFAULT_VECTOR_LENGTH>::new(max_los, refraction, scale);
     for (line, line_indexes) in izip!(
         rotated_elevations.chunks_exact(width),
         indexes.chunks_exact(width),
@@ -113,11 +117,10 @@ pub fn kernel(elevation_map: &[i16], max_los: usize, angle: f32, refraction: f32
                 clippy::indexing_slicing,
                 reason = "if slicing is out of bounds, it should panic"
             )]
-            let (point_surface, point_longest, point_visibility) =
-                vs.line_of_sight::<VectorLos<{ DEFAULT_VECTOR_LENGTH }>>(
-                    f32::from(pov_height) + 1.65,
-                    &line[neighbor..neighbor + max_los],
-                );
+            let (point_surface, point_longest, point_visibility) = vs.line_of_sight(
+                f32::from(pov_height) + observer_height,
+                &line[neighbor..neighbor + max_los],
+            );
 
             #[expect(
                 clippy::as_conversions,
@@ -172,5 +175,26 @@ pub fn kernel(elevation_map: &[i16], max_los: usize, angle: f32, refraction: f32
         surfaces,
         longest,
         visibility: sector_data,
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::cpu::kernel as cpu_kernel;
+
+    #[test]
+    fn test_kernel() {
+        let dem = &kernel::tests::dems::bigger_dem();
+
+        let forward = cpu_kernel(&dem, 4, 0.0, 0.13, 1.0, 0.8);
+        let backward = cpu_kernel(&dem, 4, 180.0, 0.13, 1.0, 0.8);
+
+        let res = forward
+            .surfaces
+            .iter()
+            .zip(backward.surfaces.iter())
+            .map(|(l, r)| l + r)
+            .collect::<Vec<_>>();
+        println!("{:#?}", res);
     }
 }
