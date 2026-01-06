@@ -387,8 +387,6 @@ pub mod test {
         #[gtest]
         // #[ignore = "TODO@ryan: Enable once viewshed tests are settled"]
         fn longest_lines() {
-
-
             //
             // Tom's angles
             // [

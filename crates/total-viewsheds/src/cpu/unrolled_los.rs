@@ -80,7 +80,11 @@ impl<const UNROLL: usize, const VECTOR_WIDTH: usize> UnrolledVectorLos<UNROLL, V
     /// `new` initializes a new `UnrolledLOS`, and precalculates all the distances
     /// and earth curvature adjustments
     pub fn new(max_los: usize, refraction: f32, scale: f32) -> Self {
-        assert_eq!(max_los % VECTOR_WIDTH, 0);
+        assert_eq!(
+            max_los % VECTOR_WIDTH,
+            0,
+            "the maximum line of sight must be divisible by {VECTOR_WIDTH} for vectorization"
+        );
 
         let (distances, adjustments) = generate_distances(max_los, refraction, scale);
 
@@ -105,7 +109,6 @@ where
     )]
     #[inline]
     fn line_of_sight(&mut self, pov_height: f32, line: &[i16]) -> (f32, f32, Vec<bool>) {
-
         let mut angles = [0.0f32; UNROLL * VECTOR_WIDTH + 1];
         let mut prefix_max = [0.0f32; UNROLL * VECTOR_WIDTH];
 
@@ -115,12 +118,12 @@ where
         let mut output: Vec<bool> = vec![];
 
         let (chunked_line, rest_line) = line.as_chunks::<{ UNROLL * VECTOR_WIDTH }>();
-        assert_eq!(rest_line.len() % VECTOR_WIDTH, 0);
 
         let (chunked_distances, rest_distances) =
             self.distances.as_chunks::<{ UNROLL * VECTOR_WIDTH }>();
 
-        let (chunked_adjustments, rest_adjustments) = self.adjustments.as_chunks::<{ UNROLL * VECTOR_WIDTH }>();
+        let (chunked_adjustments, rest_adjustments) =
+            self.adjustments.as_chunks::<{ UNROLL * VECTOR_WIDTH }>();
 
         let los = izip!(chunked_line, chunked_distances, chunked_adjustments).fold(
             UnrollVector::<UNROLL, VECTOR_WIDTH> {
@@ -142,8 +145,13 @@ where
                     &mut prefix_max,
                 );
 
-                let new_acc =
-                    VectorLos::<VECTOR_WIDTH>::accumulate(acc, &angles[1..], &prefix_max, distances, &mut output);
+                let new_acc = VectorLos::<VECTOR_WIDTH>::accumulate(
+                    acc,
+                    &angles[1..],
+                    &prefix_max,
+                    distances,
+                    &mut output,
+                );
 
                 angles[0] = angles[UNROLL];
                 new_acc
@@ -180,8 +188,8 @@ where
 /// `TAN_ONE_RAD` is used in normalizing the surface area heatmap
 const TAN_ONE_RADIAN: f32 = 0.017_453_3;
 
-
-impl<const UNROLL: usize, const VECTOR_WIDTH: usize> Accumulate<UnrollVector<UNROLL, VECTOR_WIDTH>> for VectorLos<VECTOR_WIDTH>
+impl<const UNROLL: usize, const VECTOR_WIDTH: usize> Accumulate<UnrollVector<UNROLL, VECTOR_WIDTH>>
+    for VectorLos<VECTOR_WIDTH>
 where
     [(); UNROLL * VECTOR_WIDTH]:,
     LaneCount<VECTOR_WIDTH>: SupportedLaneCount,
@@ -213,7 +221,10 @@ where
             distances.len().is_multiple_of(VECTOR_WIDTH),
             "distance unroll should be multiple of width"
         );
-        assert!(angles.len() <= UNROLL*VECTOR_WIDTH, "angles must be less than unroll size");
+        assert!(
+            angles.len() <= UNROLL * VECTOR_WIDTH,
+            "angles must be less than unroll size"
+        );
 
         let (vector_sum, _) = init.heatmap.as_chunks_mut::<{ VECTOR_WIDTH }>();
         let (vector_longest, _) = init.longest.as_chunks_mut::<{ VECTOR_WIDTH }>();
@@ -245,8 +256,7 @@ where
 
                 Self::max(Simd::from_array(*longest_arr), dist).copy_to_slice(longest_arr);
 
-                let acc =
-                    Simd::from(*sum_arr) + (dist * Simd::splat(TAN_ONE_RADIAN));
+                let acc = Simd::from(*sum_arr) + (dist * Simd::splat(TAN_ONE_RADIAN));
 
                 acc.copy_to_slice(sum_arr);
             },

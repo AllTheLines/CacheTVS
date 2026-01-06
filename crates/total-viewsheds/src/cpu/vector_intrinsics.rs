@@ -1,8 +1,8 @@
-use std::iter::zip;
-use std::simd::{f32x4, f32x8, LaneCount, Mask, Simd, SupportedLaneCount};
-use std::simd::prelude::{SimdFloat as _, SimdInt, SimdPartialOrd as _};
-use itertools::izip;
 use crate::cpu::los::{Angle, PrefixMax};
+use itertools::izip;
+use std::iter::zip;
+use std::simd::prelude::{SimdFloat as _, SimdInt as _, SimdPartialOrd as _};
+use std::simd::{f32x4, f32x8, LaneCount, Mask, Simd, SupportedLaneCount};
 
 /// `VectorMax` performs an element-wise SIMD max of floats, allowing for architecture
 /// specific implementations

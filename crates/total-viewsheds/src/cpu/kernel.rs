@@ -189,7 +189,12 @@ mod test {
         let forward = cpu_kernel(&dem, 4, 0.0, 0.13, 1.0, 0.8);
         let backward = cpu_kernel(&dem, 4, 180.0, 0.13, 1.0, 0.8);
 
-        let res = forward.surfaces.iter().zip(backward.surfaces.iter()).map(|(l, r)| l + r).collect::<Vec<_>>();
+        let res = forward
+            .surfaces
+            .iter()
+            .zip(backward.surfaces.iter())
+            .map(|(l, r)| l + r)
+            .collect::<Vec<_>>();
         println!("{:#?}", res);
     }
 }
