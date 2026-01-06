@@ -44,19 +44,17 @@ impl super::compute::Compute<'_> {
                 }
             }
 
-            if Self::is_process_surfaces(&self.config.process) {
-                self.add_sector_surfaces_to_running_total(&sector_surfaces);
-                if angle == super::compute::SECTOR_STEPS - 1 {
-                    self.render_total_surfaces()?;
-                }
-            }
-
             if Self::is_process_longest_lines(&self.config.process) {
                 self.increment_longest_lines(&longest_lines, angle)?;
                 if angle == super::compute::SECTOR_STEPS - 1 {
                     self.render_longest_lines()?;
                 }
             }
+        }
+
+        if Self::is_process_surfaces(&self.config.process) {
+            self.add_sector_surfaces_to_running_total(&sector_surfaces);
+            self.render_total_surfaces()?;
         }
 
         Ok(())
