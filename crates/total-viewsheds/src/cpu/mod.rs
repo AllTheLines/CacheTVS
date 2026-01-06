@@ -3,9 +3,13 @@ mod los;
 
 mod rotation;
 
-/// vector contains vectorized implementations of the line of sight traits
-mod vector;
-
 /// kernel is the exported kernel module
 pub mod kernel;
+
+/// `unrolled_los` holds a fully implemented los trait for unrolled vectorization
+mod unrolled_los;
+
+/// `vector_intrinsics` holds all the vector-related LOS intrinsics
+mod vector_intrinsics;
+
 pub use kernel::kernel;

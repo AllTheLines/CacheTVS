@@ -41,6 +41,8 @@ impl super::compute::Compute<'_> {
 
             let elevations = &self.dem.elevations;
             let refraction = self.config.refraction;
+            let scale = self.config.scale;
+            let observer_height = self.config.observer_height;
 
             pool.install(move || {
                 (0u16..360u16)
@@ -49,8 +51,15 @@ impl super::compute::Compute<'_> {
                         let start = std::time::Instant::now();
                         tracing::info!("starting angle: {angle}");
 
-                        let output =
-                            crate::cpu::kernel(elevations, max_los, f32::from(angle), refraction);
+                        let output = crate::cpu::kernel(
+                            elevations,
+                            max_los,
+                            f32::from(angle),
+                            refraction,
+                            scale,
+                            observer_height,
+                        );
+
                         tracing::info!("finished angle in {:?}", start.elapsed());
                         (angle, output)
                     })
@@ -141,7 +150,7 @@ impl AccumulatingData<'_> {
                     return;
                 }
 
-                // let the smallest angle win due to keep consistent in a  multithreaded environment
+                // let the smallest angle win due to keep consistent in a multithreaded environment
                 if angle < to.0 && converted != 0 && converted == to.1 {
                     *to = (angle, converted);
                 }
