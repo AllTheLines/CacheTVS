@@ -161,18 +161,34 @@ impl super::compute::Compute<'_> {
 
     /// Check to see if this angle increases the current longest line of sight for the point.
     pub fn increment_longest_lines(&mut self, longest_lines: &[f32], sector: u16) -> Result<()> {
-        for (left, right) in self.longest_lines.iter_mut().zip(longest_lines.iter()) {
+        for (existing, candidate) in self.longest_lines.iter_mut().zip(longest_lines.iter()) {
+            let angle = if *candidate >= 0.0 {
+                sector
+            } else {
+                sector + 180
+            };
+
             #[expect(
                 clippy::as_conversions,
                 clippy::cast_sign_loss,
                 clippy::cast_possible_truncation,
                 reason = "Distances always fit in u32"
             )]
-            let current = right.abs() as u32;
-            if current > left.distance() {
-                let angle = if *right >= 0.0 { sector } else { sector + 180 };
-                let packed = crate::los_pack::LineOfSightPacked::new(current, angle)?;
-                *left = packed;
+            let absolute = candidate.abs() as u32;
+
+            if absolute > existing.distance() {
+                let packed = crate::los_pack::LineOfSightPacked::new(absolute, angle)?;
+                *existing = packed;
+            }
+
+            // For consistency with the CPU kernel we always want the first ever occurrence
+            // of a longest line to take precedence. However in thie Vulkan kernel we interleave
+            // the forward lines (0-179°) angles with the backward lines (180-359°). This means
+            // we have to have this awkward check here where a forward line takes precedence over
+            // an equally long backward line.
+            if absolute == existing.distance() && candidate > &0.0 && existing.angle()? >= 180 {
+                let packed = crate::los_pack::LineOfSightPacked::new(absolute, sector)?;
+                *existing = packed;
             }
         }
 
