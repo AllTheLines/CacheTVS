@@ -124,7 +124,7 @@ impl Kernel {
                 buffers.constants.observer_height,
             ),
             longest_line: 0.0,
-            refraction: buffers.constants.refraction - 1.0,
+            refraction: buffers.constants.refraction,
         }
     }
 
@@ -198,7 +198,7 @@ impl Kernel {
         //   * Is there a performance gain to be had from only checking for an
         //     increase in elevation as a trigger for the full angle calculation?
         //   * Is this safe for `f32`? At what point does it break down?
-        let curvature_correction = (distance * distance * self.refraction) / EARTH_DIAMETER;
+        let curvature_correction = (distance * distance * (self.refraction - 1.0)) / EARTH_DIAMETER;
         let angle = (elevation_delta + curvature_correction) / distance;
 
         //                            5              |-
