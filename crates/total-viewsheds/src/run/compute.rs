@@ -353,10 +353,10 @@ pub mod test {
             .map(|los| los.angle().unwrap())
             .collect::<Vec<_>>(),
             [
-                0, 0,   0,   0,
-                0, 0,   12,  0,
-                0, 180, 0,   0,
-                0, 0,   0,   0
+                0, 0,  0,  0,
+                0, 0,  12, 0,
+                0, 46, 0,  0,
+                0, 0,  0,  0
             ]
         );
     }
@@ -398,34 +398,7 @@ pub mod test {
 
         #[gtest]
         fn longest_lines() {
-            let mut dem = make_dem(&kernel::tests::dems::bigger_dem());
-            let compute = compute(&mut dem, Backend::CPU);
-
-            #[rustfmt::skip]
-            expect_eq!(
-                compute.longest_lines.iter()
-                    .map(|los| los.distance() as f32)
-                    .collect::<Vec<_>>(),
-                    [
-                        0.0, 0.0, 0.0, 0.0,
-                        0.0, 1.0, 4.0, 0.0,
-                        0.0, 4.0, 4.0, 0.0,
-                        0.0, 0.0, 0.0, 0.0
-                    ]
-            );
-
-            #[rustfmt::skip]
-            expect_eq!(
-                compute.longest_lines.iter()
-                    .map(|los| los.angle().unwrap())
-                    .collect::<Vec<_>>(),
-                    [
-                        0, 0,   0,   0,
-                        0, 0,   12,  0,
-                        0, 46,  0,   0,
-                        0, 0,   0,   0
-                    ]
-                );
+            super::longest_lines(crate::config::Backend::CPU);
         }
 
         #[gtest]

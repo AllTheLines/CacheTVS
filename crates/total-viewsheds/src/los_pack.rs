@@ -48,12 +48,13 @@ impl LineOfSightPacked {
         (self.to_u32() >> 10u32) & U22_MAX
     }
 
-    #[cfg(test)]
     /// The angle of the line of sight from the point of view.
     pub fn angle(&self) -> Result<u16> {
         Ok((self.to_u32() & U10_MAX).try_into()?)
     }
 
+    /// Get the raw f32 value. It doesn't represent any useful data, it's just the f32 view of the
+    /// packed data.
     pub const fn as_f32(&self) -> f32 {
         self.0
     }
