@@ -31,6 +31,7 @@ time cargo run --features ring_data --release -- \
 	--rings-per-km 3 \
 	--backend "$backend" \
 	--process all
+	--thread-count 1
 
 if [[ $backend == "vulkan" ]]; then
 	# On Github Actions there's no real GPU so it uses a software GPU, which seems to give
@@ -54,6 +55,6 @@ limit=$(echo "$actual_area * 0.01" | bc -l)
 if (($(echo "$diff <= $limit" | bc -l))); then
 	echo "Viewhsed area within 1% of existing benchmark"
 else
-	echo "Benchmark viewshed changed too much"
+	echo "Benchmark viewshed changed too much ${expected_area} vs ${actual_area}"
 	exit 1
 fi
