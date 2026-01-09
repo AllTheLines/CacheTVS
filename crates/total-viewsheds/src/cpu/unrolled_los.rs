@@ -14,10 +14,12 @@ const EARTH_RADIUS_SQUARED: f32 = 12_742_000.0;
     reason = "max_los is < 2^24"
 )]
 fn generate_distances(max_los: usize, refraction: f32, scale: f32) -> (Vec<f32>, Vec<f32>) {
+    let adjusted_refraction = refraction - 1.0;
+
     (1..=max_los)
         .map(|step| {
             let distance = (step as f32) * scale;
-            let adjustment = (distance * distance * refraction) / EARTH_RADIUS_SQUARED;
+            let adjustment = (distance * distance * adjusted_refraction) / EARTH_RADIUS_SQUARED;
 
             (distance, adjustment)
         })
@@ -209,19 +211,19 @@ where
         distances: &[f32],
         bitmap: &mut Vec<bool>,
     ) -> UnrollVector<UNROLL, VECTOR_WIDTH> {
-        assert!(
+        debug_assert!(
             angles.len().is_multiple_of(VECTOR_WIDTH),
             "distance unroll should be multiple of width"
         );
-        assert!(
+        debug_assert!(
             prefix.len().is_multiple_of(VECTOR_WIDTH),
             "distance unroll should be multiple of width"
         );
-        assert!(
+        debug_assert!(
             distances.len().is_multiple_of(VECTOR_WIDTH),
             "distance unroll should be multiple of width"
         );
-        assert!(
+        debug_assert!(
             angles.len() <= UNROLL * VECTOR_WIDTH,
             "angles must be less than unroll size"
         );
