@@ -30,7 +30,7 @@ time cargo run --features ring_data --release -- \
 	--scale 100 \
 	--rings-per-km 3 \
 	--backend "$backend" \
-	--process all
+	--process all \
 	--thread-count 1
 
 if [[ $backend == "vulkan" ]]; then

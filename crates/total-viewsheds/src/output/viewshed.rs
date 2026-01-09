@@ -179,7 +179,6 @@ impl<'viewshed> Reconstructor<'viewshed> {
             kernel::elevations::Direction::Backward,
         ] {
             // We divide by 2 because every ring must have both an opening and a closing.
-            // dbg!(&self.sector_ring_data[self.cursor..(self.cursor + self.reserved_ring_size)]);
             let mut no_of_ring_values = self.read_next_value()?.div_euclid(2);
 
             if no_of_ring_values == 0 {
