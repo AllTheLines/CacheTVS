@@ -46,7 +46,7 @@ time cargo run --release -- \
 
 ls -alh output/viewsheds
 
-expected_area=$(geojson_area "benchmarks/$backend-cardiff.json")
+expected_area=$(geojson_area "benchmarks/cardiff-viewshed.json")
 actual_area=$(geojson_area output/viewsheds/-3.122999906539917-51.48979949951172.json)
 
 diff=$(echo "$actual_area - $expected_area" | bc -l | tr -d '-')
