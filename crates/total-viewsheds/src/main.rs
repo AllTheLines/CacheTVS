@@ -1,7 +1,6 @@
 //! Total Viewshed Calculator
 #![feature(portable_simd)]
 #![feature(specialization)]
-#![feature(likely_unlikely)]
 #![expect(
     incomplete_features,
     reason = "our usage isn't crazy and unlikely to break"
