@@ -69,7 +69,7 @@ impl Elevations {
             Direction::Backward => self.chocolate_box_id -= 1,
         }
 
-        let elevation = elevations[self.chocolate_box_id];
+        let elevation = self.current_elevation(elevations);
 
         if Self::is_valid(elevation) {
             self.last_valid_elevation = elevation;
@@ -77,6 +77,27 @@ impl Elevations {
         } else {
             self.last_valid_elevation - self.pov_elevation
         }
+    }
+
+    #[inline]
+    #[must_use]
+    /// Return the current elevation.
+    pub fn current_elevation(&self, elevations: &[f32]) -> f32 {
+        elevations[self.chocolate_box_id]
+    }
+
+    #[inline]
+    #[must_use]
+    /// Are we moving forward through the elevations?
+    pub const fn is_forward(&self) -> bool {
+        matches!(self.direction, crate::elevations::Direction::Forward)
+    }
+
+    #[inline]
+    #[must_use]
+    /// Are we moving backward through the elevations?
+    pub const fn is_backward(&self) -> bool {
+        matches!(self.direction, crate::elevations::Direction::Backward)
     }
 
     /// Is the elevation valid.
