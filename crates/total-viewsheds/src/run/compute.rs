@@ -302,7 +302,7 @@ pub mod test {
             rings_per_km: 5000.0,
             heatmap: crate::config::HeatmapNormalisation::UnitScale,
             refraction: 0.13,
-            thread_count: 8,
+            thread_count: 1, // single thread it for consistency
         };
 
         let mut compute = Compute::new(config, dem).unwrap();
@@ -317,10 +317,10 @@ pub mod test {
         assert_eq!(
             compute.total_surfaces,
             [
-                0.0, 0.0,      0.0,       0.0,
-                0.0, 568.6271, 2461.8464, 0.0,
-                0.0, 4290.639, 5686.299,  0.0,
-                0.0, 0.0,      0.0,       0.0
+                0.0, 0.0,       0.0,       0.0,
+                0.0, 6.283163,  23.213009, 0.0,
+                0.0, 48.066483, 62.832096, 0.0,
+                0.0, 0.0,       0.0,       0.0
             ]
         );
     }
@@ -376,43 +376,56 @@ pub mod test {
     }
 
     mod cpu {
+        use super::{compute, make_dem};
+        use crate::config::Backend;
         use googletest::prelude::*;
 
         #[test]
-        // #[ignore = "TODO@ryan: Enable once viewshed tests are settled"]
         fn total_surfaces() {
-            super::total_surfaces(crate::config::Backend::CPU);
+            let mut dem = make_dem(&kernel::tests::dems::bigger_dem());
+            let compute = compute(&mut dem, Backend::CPU);
+            #[rustfmt::skip]
+            assert_eq!(
+                compute.total_surfaces,
+                [
+                    0.0, 0.0,      0.0,       0.0,
+                    0.0, 6.283163, 29.16455,  0.0,
+                    0.0, 48.06648, 62.832096, 0.0,
+                    0.0, 0.0,      0.0,       0.0
+                ]
+            );
         }
 
         #[gtest]
-        // #[ignore = "TODO@ryan: Enable once viewshed tests are settled"]
         fn longest_lines() {
-            //
-            // Tom's angles
-            // [
-            //     0, 0,   0,   0,
-            //     0, 0,   12,  0,
-            //     0, 180, 0,   0,
-            //     0, 0,   0,   0
-            // ]
-            //
-            // Ryan's angles:
-            // [
-            //     0, 0, 0, 0,
-            //     0, 0, 12, 0,
-            //     0, 46, 0, 0,
-            //     0, 0, 0, 0,
-            // ]
-            //
-            // rberger CPU longest distance:
-            //
-            // [
-            //     0.0, 0.0, 0.0, 0.0,
-            //     0.0, 1.0, 4.0, 4.0,
-            //     0.0, 4.0, 4.0, 4.0,
-            //     0.0, 4.0, 4.0, 4.0,
-            // ],
-            super::longest_lines(crate::config::Backend::CPU);
+            let mut dem = make_dem(&kernel::tests::dems::bigger_dem());
+            let compute = compute(&mut dem, Backend::CPU);
+
+            #[rustfmt::skip]
+            expect_eq!(
+                compute.longest_lines.iter()
+                    .map(|los| los.distance() as f32)
+                    .collect::<Vec<_>>(),
+                    [
+                        0.0, 0.0, 0.0, 0.0,
+                        0.0, 1.0, 4.0, 0.0,
+                        0.0, 4.0, 4.0, 0.0,
+                        0.0, 0.0, 0.0, 0.0
+                    ]
+            );
+
+            #[rustfmt::skip]
+            expect_eq!(
+                compute.longest_lines.iter()
+                    .map(|los| los.angle().unwrap())
+                    .collect::<Vec<_>>(),
+                    [
+                        0, 0,   0,   0,
+                        0, 0,   12,  0,
+                        0, 46,  0,   0,
+                        0, 0,   0,   0
+                    ]
+                );
         }
 
         #[gtest]
