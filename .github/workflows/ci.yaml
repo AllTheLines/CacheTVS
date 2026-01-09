@@ -34,8 +34,6 @@ jobs:
         with:
           toolchain: ${{ env.RUST_VERSION }}
       - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
       - name: Build
         run: cargo build --verbose --all
       - name: Run tests
