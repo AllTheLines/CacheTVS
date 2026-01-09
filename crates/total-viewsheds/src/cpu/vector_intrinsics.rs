@@ -309,22 +309,22 @@ where
         adjustments: &[f32],
         angles_out: &mut [f32],
     ) {
-        assert!(
+        debug_assert!(
             elevations.len().is_multiple_of(WIDTH),
             "expected elevations to be a multiple of {WIDTH}",
         );
 
-        assert!(
+        debug_assert!(
             distances.len().is_multiple_of(WIDTH),
             "expected distances to be a multiple of {WIDTH}",
         );
 
-        assert!(
+        debug_assert!(
             adjustments.len().is_multiple_of(WIDTH),
             "expected adjustments to be a multiple of {WIDTH}",
         );
 
-        assert!(
+        debug_assert!(
             angles_out.len().is_multiple_of(WIDTH),
             "expected angles buf to be a multiple of {WIDTH}",
         );
