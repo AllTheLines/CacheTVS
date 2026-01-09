@@ -5,13 +5,9 @@ use color_eyre::Result;
 impl super::compute::Compute<'_> {
     /// `run_sequential` runs a sequential GPU or CPU kernel
     pub fn run_sequential(&mut self) -> Result<()> {
-        let mut sector_surfaces = if Self::is_process_surfaces(&self.config.process) {
-            let blank = vec![0.0; usize::try_from(self.dem.computable_points_count)?];
-            self.total_surfaces.clone_from(&blank);
-            blank
-        } else {
-            Vec::new()
-        };
+        if Self::is_process_surfaces(&self.config.process) {
+            self.total_surfaces = vec![0.0; usize::try_from(self.dem.computable_points_count)?];
+        }
 
         let mut longest_lines = if Self::is_process_longest_lines(&self.config.process) {
             self.longest_lines = vec![
@@ -28,12 +24,7 @@ impl super::compute::Compute<'_> {
             let trig = kernel::rotation::Rotator::calculate_trig(f32::from(angle));
             self.constants.sine = trig.0;
             self.constants.cosine = trig.1;
-            self.compute_sector(
-                angle,
-                &mut sector_surfaces,
-                &mut sector_ring_data,
-                &mut longest_lines,
-            )?;
+            self.compute_sector(angle, &mut sector_ring_data, &mut longest_lines)?;
 
             if Self::is_process_viewsheds(&self.config.process) {
                 match &self.config.output_directory {
@@ -53,7 +44,6 @@ impl super::compute::Compute<'_> {
         }
 
         if Self::is_process_surfaces(&self.config.process) {
-            self.add_sector_surfaces_to_running_total(&sector_surfaces);
             self.render_total_surfaces()?;
         }
 
@@ -85,17 +75,16 @@ impl super::compute::Compute<'_> {
     pub fn compute_sector(
         &mut self,
         angle: u16,
-        cumulative_surfaces: &mut [f32],
         ring_data: &mut [u32],
         longest_lines: &mut [f32],
     ) -> Result<()> {
         tracing::info!("Running kernel for {angle}°");
         match self.config.backend {
             crate::config::Backend::VulkanCPU => {
-                self.compute_sector_cpu_vulkan(cumulative_surfaces, ring_data, longest_lines)?;
+                self.compute_sector_cpu_vulkan(ring_data, longest_lines)?;
             }
             crate::config::Backend::Vulkan => {
-                self.compute_sector_vulkan(cumulative_surfaces, ring_data, longest_lines)?;
+                self.compute_sector_vulkan(ring_data, longest_lines)?;
             }
             #[expect(clippy::unimplemented, reason = "CPU kernel is only multithreaded")]
             crate::config::Backend::CPU => {
@@ -112,7 +101,6 @@ impl super::compute::Compute<'_> {
     /// Do a whole sector calculation on the GPU using Vulkan.
     fn compute_sector_vulkan(
         &mut self,
-        cumulative_surfaces: &mut [f32],
         rings: &mut [u32],
         longest_lines: &mut [f32],
     ) -> Result<()> {
@@ -122,7 +110,8 @@ impl super::compute::Compute<'_> {
 
         let (surfaces_data, rings_data, longest_lines_data) = gpu.run(self.constants)?;
         if Self::is_process_surfaces(&self.config.process) {
-            cumulative_surfaces.copy_from_slice(surfaces_data.as_slice());
+            self.total_surfaces
+                .copy_from_slice(surfaces_data.as_slice());
         }
         if Self::is_process_viewsheds(&self.config.process) {
             rings.copy_from_slice(rings_data.as_slice());
@@ -135,8 +124,7 @@ impl super::compute::Compute<'_> {
 
     /// Do a whole sector calculation on the CPU.
     fn compute_sector_cpu_vulkan(
-        &self,
-        cumulative_surfaces: &mut [f32],
+        &mut self,
         ring_data: &mut [u32],
         longest_lines: &mut [f32],
     ) -> Result<()> {
@@ -159,7 +147,7 @@ impl super::compute::Compute<'_> {
         let mut buffers = kernel::kernel::Buffers {
             constants: &self.constants,
             elevations: &rotated_elevations,
-            cumulative_surfaces,
+            cumulative_surfaces: &mut self.total_surfaces,
             longest_lines,
             ring_data,
         };
@@ -169,17 +157,6 @@ impl super::compute::Compute<'_> {
         }
 
         Ok(())
-    }
-
-    /// Add the accumulated total surface areas for the current sector to the running total.
-    pub fn add_sector_surfaces_to_running_total(&mut self, cumulative_surfaces: &[f32]) {
-        for (left, right) in self
-            .total_surfaces
-            .iter_mut()
-            .zip(cumulative_surfaces.iter())
-        {
-            *left += right;
-        }
     }
 
     /// Check to see if this angle increases the current longest line of sight for the point.
