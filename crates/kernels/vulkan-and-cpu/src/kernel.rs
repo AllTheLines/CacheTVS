@@ -161,18 +161,26 @@ impl Kernel {
 
             // Save the longest line of sight for the given TVS ID.
             if buffers.constants.is_longest_lines() {
-                #[expect(
-                    clippy::as_conversions,
-                    reason = "This needs to run on the GPU where fallibility isn't possible"
-                )]
-                let current_longest = buffers.longest_lines[runner.rotated_tvs_id as usize];
+                let current_longest = buffers.longest_lines[runner.original_tvs_id];
                 if runner.longest_line > current_longest.abs() {
-                    if matches!(
-                        runner.elevations.direction,
-                        crate::elevations::Direction::Backward
-                    ) {
+                    if runner.elevations.is_backward() {
                         runner.longest_line = -runner.longest_line;
                     }
+
+                    buffers.longest_lines[runner.original_tvs_id] = runner.longest_line;
+                }
+
+                #[expect(
+                    clippy::float_cmp,
+                    reason = "They are both from the same bits in memory"
+                )]
+                // For consistency with the CPU kernel we always want the first ever occurrence
+                // of a longest line to take precedence. However in this kernel we interleave the
+                // forward lines (0-179°) angles with the backward lines (180-359°). This means we
+                // have to have this awkward check here where a forward lines takes precedence over
+                // an equally long backward line.
+                let is_same_length_line = runner.longest_line == current_longest.abs();
+                if runner.elevations.is_forward() && is_same_length_line {
                     buffers.longest_lines[runner.original_tvs_id] = runner.longest_line;
                 }
             }
@@ -265,9 +273,25 @@ impl Kernel {
             buffers.constants.cosine,
         )
         .anti_rotate_chocolate_id_to_dem_id();
+
         angle_to_debug.to_radians().cos() == buffers.constants.cosine
             && angle_to_debug.to_radians().sin() == buffers.constants.sine
             && original_pov_id == pov_id
+    }
+
+    #[cfg(not(target_arch = "spirv"))]
+    #[expect(dead_code, clippy::float_cmp, reason = "Used for debugging")]
+    /// Get the angle from the trigonometry values.
+    fn debug_angle(buffers: &Buffers) -> f32 {
+        for sector in 0..180u16 {
+            let angle = f32::from(sector) + ANGLE_SHIFT;
+            if angle.to_radians().cos() == buffers.constants.cosine
+                && angle.to_radians().sin() == buffers.constants.sine
+            {
+                return angle;
+            }
+        }
+        f32::NAN
     }
 }
 
@@ -471,6 +495,17 @@ mod test {
         expect_tvs(&tvs_id, &surfaces, 0.0174533);
         expect_ring_data(&tvs_id, angle, &rings, vec![1]);
         expect_tvs(&tvs_id, &lines, 1.0);
+    }
+
+    #[gtest]
+    fn invocation_at_id6_46_degrees_forward() {
+        let tvs_id = TvsId::Forward(6);
+        let angle = 46.0;
+        let (surfaces, rings, lines) = invoke_default(&tvs_id, angle);
+
+        expect_tvs(&tvs_id, &surfaces, 0.17453301);
+        expect_ring_data(&tvs_id, angle, &rings, vec![4]);
+        expect_tvs(&tvs_id, &lines, 4.0);
     }
 
     #[gtest]
