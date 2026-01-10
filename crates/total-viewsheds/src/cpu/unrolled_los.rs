@@ -5,7 +5,7 @@ use std::simd::prelude::SimdFloat as _;
 use std::simd::{LaneCount, Simd, SupportedLaneCount};
 
 /// `EARTH_RADIUS_SQUARED` is the radius of the earth in meters
-const EARTH_RADIUS_SQUARED: f32 = 12_742_000.0;
+const EARTH_DIAMETER: f32 = 12_742_000.0;
 
 /// `generate_distances` generates the distance from
 #[expect(
@@ -19,7 +19,7 @@ fn generate_distances(max_los: usize, refraction: f32, scale: f32) -> (Vec<f32>,
     (1..=max_los)
         .map(|step| {
             let distance = (step as f32) * scale;
-            let adjustment = (distance * distance * adjusted_refraction) / EARTH_RADIUS_SQUARED;
+            let adjustment = (distance * distance * adjusted_refraction) / EARTH_DIAMETER;
 
             (distance, adjustment)
         })
