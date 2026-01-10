@@ -1,3 +1,5 @@
+
+
 /// los contains all the traits necessary for implementing a line of sight algorithm
 mod los;
 
