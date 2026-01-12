@@ -44,6 +44,9 @@ where
 
 /// `UnrolledLOS` implements an Unrolled `LineOfSight` calculation
 pub struct UnrolledVectorLos<const UNROLL: usize, const VECTOR_WIDTH: usize> {
+    /// `angles` holds a buffer for line of sight angles to be put into
+    /// which is exactly `max_los+1` long
+    angles: Vec<f32>,
     /// `distances` holds `max_los` distances
     distances: Vec<f32>,
     /// `adjustments` holds `max_los` earth curvature adjustments
@@ -93,6 +96,7 @@ impl<const UNROLL: usize, const VECTOR_WIDTH: usize> UnrolledVectorLos<UNROLL, V
         Self {
             distances,
             adjustments,
+            angles: vec![-2000.0f32; max_los + 1],
         }
     }
 }
@@ -111,73 +115,60 @@ where
     )]
     #[inline]
     fn line_of_sight(&mut self, pov_height: f32, line: &[i16]) -> (f32, f32, Vec<bool>) {
-        let mut angles = [0.0f32; UNROLL * VECTOR_WIDTH + 1];
         let mut prefix_max = [0.0f32; UNROLL * VECTOR_WIDTH];
 
         prefix_max[UNROLL * VECTOR_WIDTH - 1] = -2000.0;
-        angles[0] = -2000.0;
+
+        VectorLos::<VECTOR_WIDTH>::calculate_angles(
+            pov_height,
+            line,
+            &self.distances,
+            &self.adjustments,
+            &mut self.angles[1..],
+        );
 
         let mut output: Vec<bool> = vec![];
 
-        let (chunked_line, rest_line) = line.as_chunks::<{ UNROLL * VECTOR_WIDTH }>();
+        let (chunked_prefix_angles, rest_prefix_angles) =
+            self.angles[..self.angles.len() - 1].as_chunks::<{ UNROLL * VECTOR_WIDTH }>();
+        let (chunked_angles, rest_angles) =
+            self.angles[1..].as_chunks::<{ UNROLL * VECTOR_WIDTH }>();
 
         let (chunked_distances, rest_distances) =
             self.distances.as_chunks::<{ UNROLL * VECTOR_WIDTH }>();
 
-        let (chunked_adjustments, rest_adjustments) =
-            self.adjustments.as_chunks::<{ UNROLL * VECTOR_WIDTH }>();
-
-        let los = izip!(chunked_line, chunked_distances, chunked_adjustments).fold(
+        let los = izip!(chunked_prefix_angles, chunked_angles, chunked_distances).fold(
             UnrollVector::<UNROLL, VECTOR_WIDTH> {
                 longest: [0.0; UNROLL * VECTOR_WIDTH],
                 heatmap: [0.0; UNROLL * VECTOR_WIDTH],
             },
-            |acc, (unroll_line, distances, adjusts)| {
-                VectorLos::<VECTOR_WIDTH>::calculate_angles(
-                    pov_height,
-                    unroll_line,
-                    distances,
-                    adjusts,
-                    &mut angles[1..],
-                );
-
+            |acc, (prefix_angles, angles, distances)| {
                 VectorLos::<VECTOR_WIDTH>::prefix_max(
                     prefix_max[UNROLL * VECTOR_WIDTH - 1],
-                    &angles[..UNROLL * VECTOR_WIDTH],
+                    prefix_angles,
                     &mut prefix_max,
                 );
 
-                let new_acc = VectorLos::<VECTOR_WIDTH>::accumulate(
+                VectorLos::<VECTOR_WIDTH>::accumulate(
                     acc,
-                    &angles[1..],
+                    angles,
                     &prefix_max,
                     distances,
                     &mut output,
-                );
-
-                angles[0] = angles[UNROLL];
-                new_acc
+                )
             },
-        );
-
-        VectorLos::<VECTOR_WIDTH>::calculate_angles(
-            pov_height,
-            rest_line,
-            rest_distances,
-            rest_adjustments,
-            &mut angles[1..=rest_line.len()],
         );
 
         VectorLos::<VECTOR_WIDTH>::prefix_max(
             prefix_max[UNROLL * VECTOR_WIDTH - 1],
-            &angles[..rest_line.len()],
-            &mut prefix_max[..rest_line.len()],
+            rest_prefix_angles,
+            &mut prefix_max[..rest_angles.len()],
         );
 
         let new_acc = VectorLos::<VECTOR_WIDTH>::accumulate(
             los,
-            &angles[1..=rest_line.len()],
-            &prefix_max[..rest_line.len()],
+            rest_angles,
+            &prefix_max[..rest_angles.len()],
             rest_distances,
             &mut output,
         );
@@ -213,11 +204,13 @@ where
     ) -> UnrollVector<UNROLL, VECTOR_WIDTH> {
         debug_assert!(
             angles.len().is_multiple_of(VECTOR_WIDTH),
-            "distance unroll should be multiple of width"
+            "angles with len {} should be multiple of {}",
+            angles.len(),
+            VECTOR_WIDTH,
         );
         debug_assert!(
             prefix.len().is_multiple_of(VECTOR_WIDTH),
-            "distance unroll should be multiple of width"
+            "prefix unroll should be multiple of width"
         );
         debug_assert!(
             distances.len().is_multiple_of(VECTOR_WIDTH),
