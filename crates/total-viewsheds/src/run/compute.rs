@@ -288,7 +288,11 @@ pub mod test {
         dem
     }
 
-    pub fn compute(dem: &mut crate::dem::DEM, backend: crate::config::Backend) -> Compute<'_> {
+    pub fn compute(
+        dem: &mut crate::dem::DEM,
+        backend: crate::config::Backend,
+        refraction_override: Option<f32>,
+    ) -> Compute<'_> {
         let config = Config {
             observer_height: 0.8,
             scale: 1.0,
@@ -301,7 +305,7 @@ pub mod test {
             output_directory: None,
             rings_per_km: 5000.0,
             heatmap: crate::config::HeatmapNormalisation::UnitScale,
-            refraction: 0.13,
+            refraction: refraction_override.unwrap_or(0.13f32),
             thread_count: 1, // single thread it for consistency
         };
 
@@ -312,7 +316,7 @@ pub mod test {
 
     fn total_surfaces(backend: crate::config::Backend) {
         let mut dem = make_dem(&kernel::tests::dems::bigger_dem());
-        let compute = compute(&mut dem, backend);
+        let compute = compute(&mut dem, backend, None);
         #[rustfmt::skip]
         assert_eq!(
             compute.total_surfaces,
@@ -332,7 +336,7 @@ pub mod test {
     )]
     fn longest_lines(backend: crate::config::Backend) {
         let mut dem = make_dem(&kernel::tests::dems::bigger_dem());
-        let compute = compute(&mut dem, backend);
+        let compute = compute(&mut dem, backend, None);
 
         #[rustfmt::skip]
         expect_eq!(
@@ -379,11 +383,12 @@ pub mod test {
         use super::{compute, make_dem};
         use crate::config::Backend;
         use googletest::prelude::*;
+        use std::iter::zip;
 
         #[test]
         fn total_surfaces() {
             let mut dem = make_dem(&kernel::tests::dems::bigger_dem());
-            let compute = compute(&mut dem, Backend::CPU);
+            let compute = compute(&mut dem, Backend::CPU, None);
             #[rustfmt::skip]
             assert_eq!(
                 compute.total_surfaces,
@@ -402,11 +407,26 @@ pub mod test {
         }
 
         #[gtest]
-        #[ignore = "TODO@ryan: Enable once you've added refraction"]
         fn refraction_affects_visibility() {
-            // Set your refraction constant to this so that the effect is so dramatic that it shows
-            // up in our tiny test DEMS.
-            // let refraction = -kernel::kernel::EARTH_DIAMETER;
+            let none_refraction = {
+                let mut dem = make_dem(&kernel::tests::dems::bigger_dem());
+                let compute_no_refraction = compute(&mut dem, Backend::CPU, None);
+                compute_no_refraction.total_surfaces
+            };
+
+            let very_refraction = {
+                let mut dem = make_dem(&kernel::tests::dems::bigger_dem());
+                let compute_no_refraction = compute(
+                    &mut dem,
+                    Backend::CPU,
+                    Some(-kernel::kernel::EARTH_DIAMETER),
+                );
+                compute_no_refraction.total_surfaces
+            };
+
+            for (no_refraction, refraction) in zip(none_refraction, very_refraction) {
+                expect_ge!(no_refraction, refraction);
+            }
         }
     }
 }
