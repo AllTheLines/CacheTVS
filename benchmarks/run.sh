@@ -26,7 +26,7 @@ function geojson_area() {
 
 # Do the calculations
 time cargo run --features ring_data --release -- \
-	compute "$PROJECT_ROOT/benchmarks/cardiff_50km_aeqd_100m.bt" \
+	compute "$PROJECT_ROOT/benchmarks/cardiff.bt" \
 	--scale 100 \
 	--rings-per-km 3 \
 	--backend "$backend" \
