@@ -2,7 +2,7 @@ use crate::cpu::los::{Angle, PrefixMax};
 use itertools::izip;
 use std::iter::zip;
 use std::simd::prelude::{SimdFloat as _, SimdInt as _, SimdPartialOrd as _};
-use std::simd::{f32x4, f32x8, LaneCount, Mask, Simd, SupportedLaneCount};
+use std::simd::{f32x4, LaneCount, Mask, Simd, SupportedLaneCount};
 
 /// `VectorMax` performs an element-wise SIMD max of floats, allowing for architecture
 /// specific implementations
@@ -81,7 +81,7 @@ impl VectorGreater<4> for VectorLos<4> {
 #[cfg(target_feature = "avx")]
 impl VectorMax<8> for VectorLos<8> {
     #[inline]
-    fn max(lhs: f32x8, rhs: f32x8) -> f32x8 {
+    fn max(lhs: Simd<f32, 8>, rhs: Simd<f32, 8>) -> Simd<f32, 8> {
         use std::arch::x86_64::_mm256_max_ps;
         // safety: the caller of Viewshed<4> guarantees that -0.0 or NaN are not in the input
         // thus allowing this to be non IEEE754 compliant
@@ -92,7 +92,7 @@ impl VectorMax<8> for VectorLos<8> {
 #[cfg(target_feature = "avx")]
 impl VectorGreater<8> for VectorLos<8> {
     #[inline]
-    fn gt(lhs: f32x8, rhs: f32x8) -> Mask<i32, 8> {
+    fn gt(lhs: Simd<f32, 8>, rhs: Simd<f32, 8>) -> Mask<i32, 8> {
         use std::arch::x86_64::{_mm256_castps_si256, _mm256_cmp_ps, _CMP_GT_OS};
 
         // safety: the caller of Viewshed<4> guarantees that -0.0 or NaN are not in the input

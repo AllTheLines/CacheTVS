@@ -18,7 +18,7 @@ pub fn make_viewshed(
         .to_degrees(viewshed_pov_metric)
         .unwrap();
 
-    let compute = crate::run::compute::test::compute(&mut dem, backend);
+    let compute = crate::run::compute::test::compute(&mut dem, backend, None);
 
     let mut viewshed = crate::output::viewshed::Viewshed::reconstruct(
         &super::ring_data::Source::RAM(crate::output::ring_data::AllData {
