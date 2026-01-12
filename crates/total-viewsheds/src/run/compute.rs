@@ -407,7 +407,6 @@ pub mod test {
         }
 
         #[gtest]
-        #[ignore = "TODO@ryan: Enable once you've added refraction"]
         fn refraction_affects_visibility() {
             let none_refraction = {
                 let mut dem = make_dem(&kernel::tests::dems::bigger_dem());
