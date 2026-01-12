@@ -46,8 +46,7 @@ fn dem_to_pov(dem_id: i32, width: usize, max_los: usize) -> i32 {
 /// vectors, and 10-way unrolling for the 16-wide vector as it is optimal for Turins
 const DEFAULT_UNROLL: usize = const {
     match DEFAULT_VECTOR_LENGTH {
-        4 | 8 => 8,
-        16 => 10,
+        4 | 8 | 16 => 10,
         #[expect(
             clippy::unreachable,
             reason = "no one should be setting any other constants"
