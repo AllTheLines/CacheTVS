@@ -141,6 +141,7 @@ fn compute(config: &config::Compute) -> Result<()> {
         heatmap: config.heatmap,
         refraction: config.refraction,
         thread_count: config.thread_count,
+        disable_render_image: config.disable_image_render,
     };
     let mut compute = run::compute::Compute::new(compute_config, &mut dem)?;
     compute.run()?;
