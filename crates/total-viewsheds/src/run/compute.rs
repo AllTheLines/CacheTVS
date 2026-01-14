@@ -47,6 +47,8 @@ pub struct Config {
     pub refraction: f32,
     /// Number of threads for computation
     pub thread_count: usize,
+    /// Disables the rendering of PNG images (good for long runs)
+    pub disable_render_image: bool,
 }
 
 impl<'compute> Compute<'compute> {
@@ -209,18 +211,22 @@ impl<'compute> Compute<'compute> {
             return Ok(());
         };
 
+        crate::output::bt::save(
+            self.dem,
+            &self.total_surfaces,
+            &output_dir.join("total_surfaces.bt"),
+        )?;
+
+        if self.config.disable_render_image {
+            return Ok(());
+        }
+
         crate::output::png::save(
             &self.total_surfaces,
             self.dem.tvs_width,
             self.dem.tvs_width,
             output_dir.join("total_surfaces.png"),
             self.config.heatmap,
-        )?;
-
-        crate::output::bt::save(
-            self.dem,
-            &self.total_surfaces,
-            &output_dir.join("total_surfaces.bt"),
         )?;
 
         Ok(())
@@ -232,6 +238,22 @@ impl<'compute> Compute<'compute> {
         let Some(output_dir) = &self.config.output_directory else {
             return Ok(());
         };
+
+        let packed_lines = self
+            .longest_lines
+            .iter()
+            .map(crate::los_pack::LineOfSightPacked::as_f32)
+            .collect::<Vec<_>>();
+
+        crate::output::bt::save(
+            self.dem,
+            &packed_lines,
+            &output_dir.join("longest_lines.bt"),
+        )?;
+
+        if self.config.disable_render_image {
+            return Ok(());
+        }
 
         let distances = self
             .longest_lines
@@ -247,23 +269,13 @@ impl<'compute> Compute<'compute> {
                 }
             })
             .collect::<Vec<_>>();
+
         crate::output::png::save(
             &distances,
             self.dem.tvs_width,
             self.dem.tvs_width,
             output_dir.join("longest_lines.png"),
             self.config.heatmap,
-        )?;
-
-        let packed_lines = self
-            .longest_lines
-            .iter()
-            .map(crate::los_pack::LineOfSightPacked::as_f32)
-            .collect::<Vec<_>>();
-        crate::output::bt::save(
-            self.dem,
-            &packed_lines,
-            &output_dir.join("longest_lines.bt"),
         )?;
 
         Ok(())
@@ -307,6 +319,7 @@ pub mod test {
             heatmap: crate::config::HeatmapNormalisation::UnitScale,
             refraction: refraction_override.unwrap_or(0.13f32),
             thread_count: 1, // single thread it for consistency
+            disable_render_image: false,
         };
 
         let mut compute = Compute::new(config, dem).unwrap();

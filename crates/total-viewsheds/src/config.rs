@@ -108,6 +108,10 @@ pub struct Compute {
     /// Thread count used for CPU parallelism
     #[arg(long, value_name = "thread count", default_value = "8")]
     pub thread_count: usize,
+
+    /// Controls line of sight and total viewshed image generation
+    #[arg(long, value_name = "render image", default_value = "false")]
+    pub disable_image_render: bool,
 }
 
 #[derive(clap::Parser, Debug)]
