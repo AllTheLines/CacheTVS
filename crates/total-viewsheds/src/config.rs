@@ -57,7 +57,7 @@ pub struct Compute {
         long,
         value_enum,
         value_name = "The method of running the kernel",
-        default_value_t = Backend::Vulkan
+        default_value_t = Backend::CPU
     )]
     pub backend: Backend,
 
