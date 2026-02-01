@@ -1,45 +1,57 @@
-# Total Viewshed Calculator
-Calculates the total visible surface from every point of a given terrain. For example, the viewshed for the summit of a mountain will be large and for a valley it will be small. There are other viewshed calculators, most notably for [Arcgis](http://pro.arcgis.com/en/pro-app/tool-reference/3d-analyst/viewshed.htm), but they only calculate single viewsheds for a specific point. The algorithm used here however takes advantage of the computational efficiency gained by calculating *all*, therefore the total, viewsheds for a given region.
+# Total Viewshed Analysis
+This project simultaneously calculates _all_ the viewsheds in a given region. It is faster than using a traditional tool like [Arcgis](http://pro.arcgis.com/en/pro-app/tool-reference/3d-analyst/viewshed.htm) to calculate many viewsheds sequentially.
 
-This is an example of a single viewshed in Cardiff Bay, Wales, created by this application:
+A viewshed is a geographical term to describe the area of the planet that can be seen by an observer. Typically the viewshed from the summit of a mountain will be large and in a valley it will be small.
+
+Here is an example of a single viewshed in Cardiff Bay, Wales, created by this application:
 ![Viewshed Example](cardiff_viewshed.webp)
 
-This is an example of a heatmap of a total viewshed surface (TVS) area (the darker square in the middle). The background is a simple heatmap visualisation of elevation (the higher the whiter). It is from the same Cardiff Bay area as above. Notice how the TVS features are similar but different to the underlying elevation data. It still represents peaks and valleys, but for example its southern side is brighter because it can see further into the lower regions of the river channel. The TVS heatmap is smaller because it doesn't calculate values at the edges of the elevation data, it can't calculate the visibility of regions it is not given data for.
+It's not as simple to view the output of total viewshed analysis. Rendering every single viewshed for a given region just appears as meaningless noise. So a more useful format is a heatmap of total viewshed surface (TVS) area. Here is such a heatmap for the same region as above:
 
 ![A total viewshed placed over the DEM file from which it was created](cardiff_tvs.webp)
 
+The whiter a pixel in a heatmap the more can be seen by an observer at that point. And vice-versa for darker pixels. A TVS heatmap extent is always 1/9th the size of its source data. This is because it can't calculate visibility for all 360 degrees at the edges of the source data.
+
 ## Algorithm
-This project has taken a lot of inspiration from the work of Siham Tabik, Antonio R. Cervilla, Emilio Zapata, Luis F. Romero in their
+This project originally took inspiration from the work of Siham Tabik, Antonio R. Cervilla, Emilio Zapata, Luis F. Romero in their 2014
 paper _Efficient Data Structure and Highly Scalable Algorithm for Total-Viewshed Computation_: https://ieeexplore.ieee.org/document/6837455
 
-However it notably deviates by using traditional rotation instead of Tabik et al's "band of sight". This both improves memory access patterns
-and simplifies the code. As such it resembles some of the ideas in the same authors' 2021 paper, https://arxiv.org/pdf/2003.02200, that uses skewing.
+However it now takes an approach unique in the academic literature. We share the goals of improving memory access found in the previously mentioned authors' 2021 paper, https://arxiv.org/pdf/2003.02200, but we use rotation rather than skewing.
 
-## DEM file format
-Currently only the [`.bt` file format](http://vterrain.org/Implementation/Formats/BT.html) is supported.
+## Kernels
+There are 2 kernels; a CPU SIMD-based one and a GPU-based one. The CPU kernel is in fact significantly more performant than the GPU kernel and so is set as the default. The only reason for the GPU kernel is that it is a continuation of an earlier C++ kernel and so acts as a reference implementation to verify the new CPU kernel.
+
+## Use case
+The primary use case for this project is to find the longest line of sight on the planet. We present our results at [alltheviews.world](https://alltheviews.world).
+
+## Input file format
+Currently only the [`.bt` file format](http://vterrain.org/Implementation/Formats/BT.html) is supported. And must follow this requirements:
 * It must be perfectly square.
-* The width must be divisible by 3.
-* Must be in an AEQD projection whose anchor is the centre of the tile.
-* The tile's extent must be set so that both the bottom-left and top-right are repurposed to define the lon/lat coordinates of the centre.
+* The width must be divisible by 48.
+* It must be in an AEQD or similar metric projection whose anchor is the centre of the tile.
 * All points must be the same metric distance apart.
+* The tile's extent must be set so that both the bottom-left and top-right are repurposed to define the lon/lat coordinates of the centre.
 
 Example of how to repurpose the extent for the AEQD centre:
 `gdal_edit -a_ullr $CENTER_LON $CENTER_LAT $CENTER_LON $CENTER_LAT path/to/tile.bt`
 
-## Usage
 The best source of elevation data I have found is here: https://www.viewfinderpanoramas.org/Coverage%20map%20viewfinderpanoramas_org3.htm It's mostly in the `.hgt` format, but can easily be converted to `.bt` using `gdal_translate`.
 
-### Total Viewshed Surfaces
-Example: `RUST_LOG=trace cargo run --release -- compute caerphilly_100km_aeqd_100m.bt --scale 100 --rings-per-km 3`
+## Usage
+Eg: `RUST_LOG=trace cargo run --release -- compute input.bt --scale 100 --process total-surfaces`
 
-A heatmap of total viewshed surface areas will be saved to `./heatmap.png`. The path can be changed with `--output-dir path/to/dir`. Note that the same image file is updated for every sector angle, so you can watch the details improve as the computatioin progresses.
-
-The heatmap is generally only of the central third of the input file. You can see an elevation heatmap of the original here: https://dwtkns.com/srtm30m, you should be able match features from its central area.
+A heatmap of total viewshed surface areas will be saved to `./output/heatmap.png`. The path can be changed with `--output-dir path/to/dir`.
 
 ### Individual Viewsheds
-Once you have run the above computations you will have access to what's called "ring data". This can be used to reconstruct _any_ viewshed from within the TVS. Example:
+Typically you won't want to process viewsheds as it incurs a significant time cost from all the extra data that's generated. But processing viewsheds can be useful for verification and benchmarks.
+
+Eg: `RUST_LOG=trace cargo run --release -- compute input.bt --scale 100 --process viewsheds`
+
+Once that's run, you will have access to what's called "ring data", stored by default at `output/ring_data`. This can be used to reconstruct _any_ viewshed from within the TVS. Example:
 `RUST_LOG=trace cargo run --release -- viewshed output -- -3.1230,51.4898`
 
+
+### CLI
 ```
   Generate _all_ the viewsheds for a given Digital Elevation Model, therefore the total viewsheds.
 
@@ -84,6 +96,7 @@ Once you have run the above computations you will have access to what's called "
             Possible values:
             - vulkan:     A SPIRV shader run on the GPU via Vulkan
             - vulkan-cpu: Vulkan shader but run on the CPU
+            - cpu:        Optimised cache-efficient CPU kernel
             - cuda:       TBC
 
             [default: vulkan]
@@ -122,6 +135,11 @@ Once you have run the above computations you will have access to what's called "
 
             [default: 0.13]
 
+        --thread-count <thread count>
+            Thread count used for CPU parallelism
+
+            [default: 8]
+
     -h, --help
             Print help (see a summary with '-h')
 
@@ -155,39 +173,9 @@ The license is the same as that used for the original paper's sample code: https
 
 ## Notes
 
-### View Finder Panoramas by Jonathon de Ferranti
-The holy grail of DEM data. He's done all the work to clean ad void fill the DEM data
-http://www.viewfinderpanoramas.org
-
-### Open Topography
-https://opentopography.org
-Seems to be an effort to bring everything together. But doesn't seem to clean up the data like View Finder does.
-
-### SRTM 1 arcsecond data
-Apparently this is the highest resolution and most comprehensive DEM data:
-https://e4ftl01.cr.usgs.gov/MEASURES/SRTMGL1.003/2000.02.11/SRTMGL1_page_1.html
-
-Map of coverage (80%) and total size of data (35GB)
-
-User guide: https://lpdaac.usgs.gov/documents/179/SRTM_User_Guide_V3.pdf
-
-### GDAL support for the .hgt format
-https://gdal.org/drivers/raster/srtmhgt.html
-
-### Claim of Krygystan 538km LoS and cool 3D graphic
-https://calgaryvisioncentre.com/news/2017/6/23/tdgft1bsbdlm8496ov7tn73kr0ci1q
-
 ### Errors caused by AEQD projection
 To do all the viewshed calculations we assume the DEM data is projected to an AEQD projection with an anchor in the centre of the tile. For the longest lines of sight on the planet, ~500km, the worst case errors caused by the projection can reach ~0.0685%. This error is only relevant to viewsheds at the edge of the computable area of the tile, therefore those viewsheds around 500km from the centre of the tile. Therefore depending on your usecase you may want to choose different bounds for your tile so that critical regions are nearer the centre and so suffer less errors.
 
-### Misc
-* https://crates.io/crates/srtm_reader
-* https://www.heywhatsthat.com
-* https://www.uptowhere.com 
-
-## Further Reading
+### Further Reading
 * https://en.wikipedia.org/wiki/Long_distance_observations
 * Norwegian Defense Research has perhaps the best introduction covering the maths of Viewshed analysis: https://www.ffi.no/no/Rapporter/15-01300.pdf
-
-## TODO
-* [ ] `--rings-per-km` doesn't seem intuitive and doesn't give an informative error when it fails.
