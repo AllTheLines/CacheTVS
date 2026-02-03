@@ -18,6 +18,9 @@ paper _Efficient Data Structure and Highly Scalable Algorithm for Total-Viewshed
 
 However it now takes an approach unique in the academic literature. We share the goals of improving memory access found in the previously mentioned authors' 2021 paper, https://arxiv.org/pdf/2003.02200, but we use rotation rather than skewing.
 
+For the line of sight visibility calculations, CacheTVS takes inspiration from the line of sight visibility calculation
+which was used as an example in Blelloch's 1993 paper, _Prefix Sums and Their Applications_: https://www.cs.cmu.edu/~guyb/papers/Ble93.pdf
+
 ## Kernels
 There are 2 kernels; a CPU SIMD-based one and a GPU-based one. The CPU kernel is in fact significantly more performant than the GPU kernel and so is set as the default. The only reason for the GPU kernel is that it is a continuation of an earlier C++ kernel and so acts as a reference implementation to verify the new CPU kernel.
 
