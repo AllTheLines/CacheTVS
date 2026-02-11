@@ -43,12 +43,14 @@ pub struct Config {
     pub rings_per_km: f32,
     /// How to normalise the heatmap data.
     pub heatmap: crate::config::HeatmapNormalisation,
-    /// Refractoin coefficient
+    /// Refraction coefficient
     pub refraction: f32,
     /// Number of threads for computation
     pub thread_count: usize,
     /// Disables the rendering of PNG images (good for long runs)
     pub disable_render_image: bool,
+    /// Subdivides 360 degrees into a `angle_subdivisions` number of subdivisions
+    pub angle_subdivisions: u8,
 }
 
 impl<'compute> Compute<'compute> {
@@ -320,6 +322,7 @@ pub mod test {
             refraction: refraction_override.unwrap_or(0.13f32),
             thread_count: 1, // single thread it for consistency
             disable_render_image: false,
+            angle_subdivisions: 1,
         };
 
         let mut compute = Compute::new(config, dem).unwrap();

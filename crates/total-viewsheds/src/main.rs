@@ -103,6 +103,19 @@ fn setup_logging() -> Result<()> {
 
 /// Run computations
 fn compute(config: &config::Compute) -> Result<()> {
+    // for now, only the CPU backend knows how to interpret more than one angle division
+    if !matches!(config.backend, config::Backend::CPU) && config.angle_subdivisions > 1 {
+        color_eyre::eyre::bail!(
+            "An angle division higher than 1 is only supported on the `cpu` backend"
+        )
+    }
+
+    // we can't subdivide rotation into more than 182 rotations or else we overflow the u16
+    // we use for angles, so 100 is an artificial limit
+    if config.angle_subdivisions > 100 {
+        color_eyre::eyre::bail!("The maximum angle divisions is 100")
+    }
+
     let tile = bt::BinaryTerrain::read(&config.input)?;
     let scale = config.scale.unwrap_or_else(|| tile.scale());
 
@@ -142,6 +155,7 @@ fn compute(config: &config::Compute) -> Result<()> {
         refraction: config.refraction,
         thread_count: config.thread_count,
         disable_render_image: config.disable_image_render,
+        angle_subdivisions: config.angle_subdivisions,
     };
     let mut compute = run::compute::Compute::new(compute_config, &mut dem)?;
     compute.run()?;

@@ -43,25 +43,31 @@ impl super::compute::Compute<'_> {
             let refraction = self.config.refraction;
             let scale = self.config.scale;
             let observer_height = self.config.observer_height;
+            let angle_subdivisions = u16::from(self.config.angle_subdivisions);
 
             pool.install(move || {
-                (0u16..360u16)
+                (0u16..360u16 * angle_subdivisions)
                     .into_par_iter()
                     .map(|angle| {
                         let start = std::time::Instant::now();
-                        tracing::info!("starting angle: {angle}");
+                        tracing::info!(
+                            "starting angle: {}",
+                            f32::from(angle) / f32::from(angle_subdivisions)
+                        );
 
                         let output = crate::cpu::kernel(
                             elevations,
                             max_los,
-                            f32::from(angle),
+                            f32::from(angle) / f32::from(angle_subdivisions),
                             refraction,
                             scale,
                             observer_height,
                         );
 
                         tracing::info!("finished angle in {:?}", start.elapsed());
-                        (angle, output)
+
+                        #[expect(clippy::integer_division, reason = "truncating the angle is fine")]
+                        (angle / angle_subdivisions, output)
                     })
                     .for_each(|(angle, output)| {
                         let result = accumulating.handle_parallel_per_angle_output(angle, output);

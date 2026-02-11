@@ -112,6 +112,10 @@ pub struct Compute {
     /// Controls line of sight and total viewshed image generation
     #[arg(long, value_name = "render image", default_value = "false")]
     pub disable_image_render: bool,
+
+    /// Subdivides 360 degrees into a `angle_subdivisions` number of subdivisions
+    #[arg(long, value_name = "number of angle divisions", default_value = "1")]
+    pub angle_subdivisions: u8,
 }
 
 #[derive(clap::Parser, Debug)]
