@@ -25,7 +25,8 @@ function geojson_area() {
 }
 
 # Do the calculations
-time RUSTFLAGS='-Ctarget-cpu=native' cargo run --features ring_data --release -- \
+export RUSTFLAGS='-Ctarget-cpu=native'
+time cargo run --features ring_data --release -- \
 	compute "$PROJECT_ROOT/benchmarks/cardiff.bt" \
 	--scale 100 \
 	--rings-per-km 3 \
