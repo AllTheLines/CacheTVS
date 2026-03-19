@@ -24,7 +24,7 @@ extern crate core;
 
 use clap::Parser as _;
 use color_eyre::eyre::Result;
-use tracing_subscriber::{layer::SubscriberExt as _, util::SubscriberInitExt as _, Layer as _};
+use tracing_subscriber::{Layer as _, layer::SubscriberExt as _, util::SubscriberInitExt as _};
 
 /// Handling the running of computations.
 mod run {
@@ -39,6 +39,7 @@ mod cpu {
     mod los;
 
     mod rotation;
+    pub mod storage;
 
     /// kernel is the exported kernel module
     pub mod kernel;

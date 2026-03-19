@@ -2,7 +2,7 @@ use crate::cpu::los::{Angle, PrefixMax};
 use itertools::izip;
 use std::iter::zip;
 use std::simd::prelude::{SimdFloat as _, SimdInt as _, SimdPartialOrd as _};
-use std::simd::{f32x4, LaneCount, Mask, Simd, SupportedLaneCount};
+use std::simd::{LaneCount, Mask, Simd, SupportedLaneCount, f32x4};
 
 /// `VectorMax` performs an element-wise SIMD max of floats, allowing for architecture
 /// specific implementations
@@ -57,7 +57,6 @@ impl VectorMax<4> for VectorLos<4> {
     #[inline]
     fn max(lhs: f32x4, rhs: f32x4) -> f32x4 {
         use std::arch::x86_64::_mm_max_ps;
-
         // safety: the caller of Viewshed<4> guarantees that -0.0 or NaN are not in the input
         // thus allowing this to be non IEEE754 compliant
         unsafe { _mm_max_ps(lhs.into(), rhs.into()) }.into()
@@ -67,7 +66,7 @@ impl VectorMax<4> for VectorLos<4> {
 #[cfg(target_feature = "avx")]
 impl VectorGreater<4> for VectorLos<4> {
     fn gt(lhs: f32x4, rhs: f32x4) -> Mask<i32, 4> {
-        use std::arch::x86_64::{_mm_castps_si128, _mm_cmp_ps, _CMP_GT_OS};
+        use std::arch::x86_64::{_CMP_GT_OS, _mm_castps_si128, _mm_cmp_ps};
 
         // safety: the caller of Viewshed<4> guarantees that -0.0 or NaN are not in the input
         // thus allowing this to be non IEEE754 compliant
@@ -93,7 +92,7 @@ impl VectorMax<8> for VectorLos<8> {
 impl VectorGreater<8> for VectorLos<8> {
     #[inline]
     fn gt(lhs: Simd<f32, 8>, rhs: Simd<f32, 8>) -> Mask<i32, 8> {
-        use std::arch::x86_64::{_mm256_castps_si256, _mm256_cmp_ps, _CMP_GT_OS};
+        use std::arch::x86_64::{_CMP_GT_OS, _mm256_castps_si256, _mm256_cmp_ps};
 
         // safety: the caller of Viewshed<4> guarantees that -0.0 or NaN are not in the input
         // thus allowing this to be non IEEE754 compliant
@@ -119,7 +118,7 @@ impl VectorMax<16> for VectorLos<16> {
 impl VectorGreater<16> for VectorLos<16> {
     #[inline]
     fn gt(lhs: Simd<f32, 16>, rhs: Simd<f32, 16>) -> Mask<i32, 16> {
-        use std::arch::x86_64::{_mm512_cmp_ps_mask, _CMP_GT_OS};
+        use std::arch::x86_64::{_CMP_GT_OS, _mm512_cmp_ps_mask};
         // safety: the caller of Viewshed<8> guarantees that -0.0 or NaN are not in the input
         // thus allowing this to be non IEEE754 compliant
         unsafe {
@@ -174,8 +173,8 @@ impl PrefixMax for VectorLos<8> {
     #[inline]
     fn prefix_max(highest: f32, angles_in: &[f32], angles_out: &mut [f32]) {
         use std::arch::x86_64::{
-            _mm256_blend_ps, _mm256_castps_si256, _mm256_castsi256_ps, _mm256_slli_si256,
-            _mm_max_ps,
+            _mm_max_ps, _mm256_blend_ps, _mm256_castps_si256, _mm256_castsi256_ps,
+            _mm256_slli_si256,
         };
 
         debug_assert!(
