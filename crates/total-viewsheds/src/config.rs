@@ -1,6 +1,7 @@
 //! Defines all the CLI arguments.
 
 use color_eyre::eyre::Result;
+use std::path::PathBuf;
 
 /// `Config`
 #[derive(clap::Parser, Debug)]
@@ -121,6 +122,9 @@ pub struct Compute {
         default_value = "false"
     )]
     pub centre_from_projection: bool,
+    /// Where to store the viewshed data
+    #[arg(long, value_name = "viewshed storage path")]
+    pub viewshed_out: Option<PathBuf>,
 }
 
 #[derive(clap::Parser, Debug)]
