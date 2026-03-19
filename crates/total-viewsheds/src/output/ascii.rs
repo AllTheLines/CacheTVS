@@ -88,6 +88,7 @@ pub fn make_viewshed(
 
     let mut ascii = Vec::new();
     let row_count = raster_width.div_euclid(2);
+    #[expect(clippy::needless_range_loop, reason="clippy is wrong")]
     for row in 0..row_count {
         let mut viewshed_line = String::new();
         for x in 0..raster_width {

@@ -738,9 +738,9 @@ impl Vulkan {
                 total_invocations_generated = invocations.0 * invocations.1 * invocations.2;
                 if total_invocations_generated >= total_invocations {
                     tracing::debug!(
-                    "Kernel dimensions (for {workgroups:?}). \
+                        "Kernel dimensions (for {workgroups:?}). \
                     Dispatches: {dispatches:?}. Invocations: {invocations:?} (total: {total_invocations_generated}, needed: {total_invocations} )"
-                );
+                    );
 
                     return Ok((dispatches.into(), invocations));
                 }

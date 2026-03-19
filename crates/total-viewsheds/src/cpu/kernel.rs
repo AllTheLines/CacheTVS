@@ -1,4 +1,5 @@
 use crate::cpu::los::LineOfSight as _;
+use crate::cpu::storage::Storage;
 use crate::cpu::unrolled_los::UnrolledVectorLos;
 use crate::cpu::vector_intrinsics::DEFAULT_VECTOR_LENGTH;
 use itertools::izip;
@@ -9,8 +10,6 @@ pub struct OutputData {
     pub surfaces: Vec<f32>,
     /// The longest lines of sight.
     pub longest: Vec<f32>,
-    /// The raw ring data used to reconstruct viewsheds.
-    pub visibility: Vec<Vec<bool>>,
 }
 
 #[expect(
@@ -58,6 +57,7 @@ const DEFAULT_UNROLL: usize = const {
 /// `kernel` will calculate the longest line of sight heatmap for a given angle and elevation map
 /// assuming that the maximum line of sight is `max_los`
 pub fn kernel(
+    storage: &Storage,
     elevation_map: &[i16],
     max_los: usize,
     angle: f32,
@@ -67,15 +67,6 @@ pub fn kernel(
 ) -> OutputData {
     let mut surfaces = vec![0.0f32; max_los * max_los];
     let mut longest = vec![0.0f32; max_los * max_los];
-
-    let mut sector_data: Vec<Vec<bool>> = vec![
-        vec![];
-        if cfg!(any(test, feature = "ring_data")) {
-            max_los * max_los
-        } else {
-            0
-        }
-    ];
 
     let (indexes, rotated_elevations) =
         super::rotation::generate_rotation(elevation_map, angle, max_los);
@@ -124,7 +115,7 @@ pub fn kernel(
             #[expect(
                 clippy::as_conversions,
                 clippy::cast_sign_loss,
-                clippy::indexing_slicing,
+                clippy::cast_possible_truncation,
                 reason = "max_los^2 < 2^31"
             )]
             {
@@ -136,64 +127,13 @@ pub fn kernel(
                 unsafe {
                     *longest.get_unchecked_mut(result_tvs_id as usize) = point_longest;
                 };
-
                 if cfg!(any(test, feature = "ring_data")) {
-                    // TODO@ryan:
-                    //   This rotation of the `result_tvs_id` is just a hack to get the ring data
-                    //   into the right format for rendering. Ideally we would just fill up the ring data
-                    //   in the order that each point is processed. Though without skipping any points. The
-                    //   sector data is just a snapshot of the already rotated TVS grid. The reason for this
-                    //   is mainly fidelity. We don't want to have to both rotate the DEM and then rotate the
-                    //   sector data. Just the DEM rotation already has all the data we need to reconstruct
-                    //   viewsheds.
-                    //
-                    //   In short: either keep this hack or better, just fill the sector data as you process
-                    //   it, but make sure that any skipped points are also filled with empty bitmaps.
-                    {
-                        let sector = angle.rem_euclid(f32::from(crate::run::compute::SECTOR_STEPS));
-                        #[expect(
-                            clippy::cast_possible_truncation,
-                            reason = "max_los is always within u32"
-                        )]
-                        let rotated_tvs_id = kernel::rotation::Rotator::rotate_index(
-                            result_tvs_id as u32,
-                            max_los as u32,
-                            sector,
-                        );
-
-                        if rotated_tvs_id != kernel::rotation::NOOP_DEM_ID {
-                            sector_data[rotated_tvs_id] = point_visibility;
-                        }
-                    }
+                    storage.store_bitmap(result_tvs_id as u32, angle as u16, &point_visibility);
                 }
             }
         }
     }
 
-    OutputData {
-        surfaces,
-        longest,
-        visibility: sector_data,
-    }
+    OutputData { surfaces, longest }
 }
 
-#[cfg(test)]
-mod test {
-    use crate::cpu::kernel as cpu_kernel;
-
-    #[test]
-    fn test_kernel() {
-        let dem = &kernel::tests::dems::bigger_dem();
-
-        let forward = cpu_kernel(&dem, 4, 0.0, 0.13, 1.0, 0.8);
-        let backward = cpu_kernel(&dem, 4, 180.0, 0.13, 1.0, 0.8);
-
-        let res = forward
-            .surfaces
-            .iter()
-            .zip(backward.surfaces.iter())
-            .map(|(l, r)| l + r)
-            .collect::<Vec<_>>();
-        println!("{:#?}", res);
-    }
-}

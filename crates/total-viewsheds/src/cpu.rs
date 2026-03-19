@@ -9,6 +9,9 @@ pub mod kernel;
 /// `unrolled_los` holds a fully implemented los trait for unrolled vectorization
 mod unrolled_los;
 
+/// `storage` handles viewshed storage
+pub mod storage;
+
 /// `vector_intrinsics` holds all the vector-related LOS intrinsics
 mod vector_intrinsics;
 
