@@ -24,7 +24,7 @@ extern crate core;
 
 use clap::Parser as _;
 use color_eyre::eyre::Result;
-use tracing_subscriber::{layer::SubscriberExt as _, util::SubscriberInitExt as _, Layer as _};
+use tracing_subscriber::{Layer as _, layer::SubscriberExt as _, util::SubscriberInitExt as _};
 
 /// Handling the running of computations.
 mod run {
@@ -39,6 +39,7 @@ mod cpu {
     mod los;
 
     mod rotation;
+    pub mod storage;
 
     /// kernel is the exported kernel module
     pub mod kernel;
@@ -145,6 +146,7 @@ fn compute(config: &config::Compute) -> Result<()> {
         refraction: config.refraction,
         thread_count: config.thread_count,
         disable_render_image: config.disable_image_render,
+        viewshed_out: config.viewshed_out.clone(),
     };
     let mut compute = run::compute::Compute::new(compute_config, &mut dem)?;
     compute.run()?;

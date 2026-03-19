@@ -1,5 +1,5 @@
 //! Converting final output to PNG images.
-use color_eyre::{eyre::ContextCompat as _, Result};
+use color_eyre::{Result, eyre::ContextCompat as _};
 
 /// Convert an array of floats to a grayscale heatmap.
 pub fn save(

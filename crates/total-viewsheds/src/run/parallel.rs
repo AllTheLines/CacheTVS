@@ -1,9 +1,10 @@
 //! For kernels that run each angle in parallel.
 
+use crate::cpu::storage::Storage;
 use crate::los_pack::LineOfSightPacked;
 use color_eyre::{
-    eyre::{eyre, ContextCompat as _},
     Result,
+    eyre::{ContextCompat as _, eyre},
 };
 use rayon::iter::{IntoParallelIterator as _, ParallelIterator as _};
 
@@ -16,16 +17,19 @@ impl super::compute::Compute<'_> {
     pub fn run_parallel(&mut self) -> Result<()> {
         let max_los = usize::try_from(self.dem.max_los_as_points)?;
         let tvs_size = max_los * max_los;
+
+        #[expect(unused, reason = "We'll use this bit of code soon")]
         let is_process_ring_data = Self::is_process_viewsheds(&self.config.process);
-        let reserved_ring_data_size = if is_process_ring_data {
-            usize::try_from(self.constants.reserved_rings_per_band)?
-        } else {
-            0
-        };
 
         let mut surfaces = vec![0.0f32; tvs_size];
         let mut longest = vec![(0u16, 0u32); tvs_size];
-        let mut ring_data = vec![vec![0u32; tvs_size * reserved_ring_data_size]; 360];
+
+        let storage = if let Some(viewshed_out) = &self.config.viewshed_out {
+            Storage::new(viewshed_out)
+        } else {
+            Storage::new_noop()
+        };
+
 
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.config.thread_count)
@@ -33,10 +37,8 @@ impl super::compute::Compute<'_> {
 
         {
             let accumulating = AccumulatingData {
-                constants: self.constants,
                 surfaces: std::sync::Mutex::new(&mut surfaces),
                 longest: std::sync::Mutex::new(&mut longest),
-                visibility: std::sync::Mutex::new(&mut ring_data),
             };
 
             let elevations = &self.dem.elevations;
@@ -52,6 +54,7 @@ impl super::compute::Compute<'_> {
                         tracing::info!("starting angle: {angle}");
 
                         let output = crate::cpu::kernel(
+                            &storage,
                             elevations,
                             max_los,
                             f32::from(angle),
@@ -82,7 +85,6 @@ impl super::compute::Compute<'_> {
             .map(|&(angle, distance): &(u16, u32)| LineOfSightPacked::new(distance, angle))
             .collect();
         self.longest_lines = packed?;
-        self.ring_data = ring_data;
 
         self.render_total_surfaces()?;
         self.render_longest_lines()?;
@@ -106,14 +108,10 @@ impl super::compute::Compute<'_> {
 
 /// A struct to accumulate data as it comes from the angle compute threads.
 struct AccumulatingData<'accumulating> {
-    /// Various common kernel constants.
-    constants: kernel::constants::Constants,
     /// Total surfaces.
     surfaces: std::sync::Mutex<&'accumulating mut Vec<f32>>,
     /// Longest lines.
     longest: std::sync::Mutex<&'accumulating mut Vec<(u16, u32)>>,
-    /// Ring data to reconstruct individual viewsheds.
-    visibility: std::sync::Mutex<&'accumulating mut Vec<Vec<u32>>>,
 }
 
 impl AccumulatingData<'_> {
@@ -155,37 +153,6 @@ impl AccumulatingData<'_> {
                     *to = (angle, converted);
                 }
             });
-
-        if self.constants.is_ring_data() {
-            self.convert_bitmap_to_ids(&output.visibility, angle)?;
-        }
-
-        Ok(())
-    }
-
-    /// Convert CPU visibilty bitmap to GPU sector ring data.
-    fn convert_bitmap_to_ids(&self, bitmap: &[Vec<bool>], angle: u16) -> Result<()> {
-        let max_los = self.constants.max_los_as_points;
-        let tvs_size = max_los * max_los;
-        let sector = usize::from(angle.rem_euclid(super::compute::SECTOR_STEPS));
-        let reserved_ring_space = usize::try_from(self.constants.reserved_rings_per_band)?;
-        let reserved_per_tvs = reserved_ring_space * usize::try_from(tvs_size)?;
-        let angle_ring_data =
-            crate::output::ring_data::convert_bitmap_to_ids(bitmap, reserved_ring_space, max_los)?;
-
-        let mut visibility = self.visibility.lock().map_err(|err| eyre!("{err:?}"))?;
-        let item = visibility
-            .get_mut(sector)
-            .context("Couldn't find sector slice to store visibilty")?;
-
-        if angle < 180 {
-            // Forward lines of sight
-            item.splice(0..reserved_per_tvs, angle_ring_data);
-        } else {
-            // Backward lines of sight
-            item.splice(reserved_per_tvs.., angle_ring_data);
-        }
-        drop(visibility);
 
         Ok(())
     }

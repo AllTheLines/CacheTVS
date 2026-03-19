@@ -1,6 +1,6 @@
 //! The raw, underlying data used to reconstruct viewsheds.
 
-use color_eyre::{eyre::ContextCompat as _, Result};
+use color_eyre::{Result, eyre::ContextCompat as _};
 
 /// Name of the `fjall` partition.
 const PARTITION_NAME: &str = "ring_data";
