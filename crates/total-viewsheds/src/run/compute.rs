@@ -1,6 +1,7 @@
 //! The main entrypoint for running computations.
 
 use color_eyre::Result;
+use std::path::PathBuf;
 
 /// The number of angles we rotate through. The other half are done via "backwards" lines of sight.
 pub const SECTOR_STEPS: u16 = 180;
@@ -49,6 +50,8 @@ pub struct Config {
     pub thread_count: usize,
     /// Disables the rendering of PNG images (good for long runs)
     pub disable_render_image: bool,
+    /// Where to store the viewshed
+    pub viewshed_out: Option<PathBuf>,
 }
 
 impl<'compute> Compute<'compute> {
@@ -77,6 +80,13 @@ impl<'compute> Compute<'compute> {
         } else {
             None
         };
+
+        // only allow viewshed_out to be used with the ring_data feature
+        if config.viewshed_out.is_some() && !cfg!(any(test, feature = "ring_data")) {
+            color_eyre::eyre::bail!(
+                "Viewshed storage is only supported with the ring_data feature, please recompile with --feature=ring_data"
+            );
+        }
 
         let constants = kernel::constants::Constants {
             total_bands,
@@ -316,6 +326,7 @@ pub mod test {
             refraction: 0.13f32,
             thread_count: 1, // single thread it for consistency
             disable_render_image: false,
+            viewshed_out: None,
         }
     }
 

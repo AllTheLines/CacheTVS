@@ -228,7 +228,6 @@ pub struct Storage {
 
 impl Storage {
     /// `new_noop` initializes a Storage with a dummy engine for testing
-    #[expect(dead_code, reason = "for testing only")]
     pub fn new_noop() -> Self {
         Self {
             engine: Box::new(NoopEngine),

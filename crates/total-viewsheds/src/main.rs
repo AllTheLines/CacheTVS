@@ -146,6 +146,7 @@ fn compute(config: &config::Compute) -> Result<()> {
         refraction: config.refraction,
         thread_count: config.thread_count,
         disable_render_image: config.disable_image_render,
+        viewshed_out: config.viewshed_out.clone(),
     };
     let mut compute = run::compute::Compute::new(compute_config, &mut dem)?;
     compute.run()?;
