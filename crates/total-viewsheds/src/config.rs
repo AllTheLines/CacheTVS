@@ -1,6 +1,7 @@
 //! Defines all the CLI arguments.
 
 use color_eyre::eyre::Result;
+use std::path::PathBuf;
 
 /// `Config`
 #[derive(clap::Parser, Debug)]
@@ -112,6 +113,10 @@ pub struct Compute {
     /// Controls line of sight and total viewshed image generation
     #[arg(long, value_name = "render image", default_value = "false")]
     pub disable_image_render: bool,
+
+    /// Where to store the viewshed data
+    #[arg(long, value_name="viewshed storage path")]
+    pub viewshed_out: Option<PathBuf>,
 }
 
 #[derive(clap::Parser, Debug)]

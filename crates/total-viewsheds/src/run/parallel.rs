@@ -24,7 +24,12 @@ impl super::compute::Compute<'_> {
         let mut surfaces = vec![0.0f32; tvs_size];
         let mut longest = vec![(0u16, 0u32); tvs_size];
 
-        let storage = Storage::new("test.db");
+        let storage = if let Some(viewshed_out) = &self.config.viewshed_out {
+            Storage::new(viewshed_out)
+        } else {
+            Storage::new_noop()
+        };
+
 
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.config.thread_count)
