@@ -6,7 +6,7 @@
 pub fn make_viewshed(
     elevations: &[i16],
     viewshed_pov: geo::Coord,
-    backend: crate::config::Backend,
+    config: crate::run::compute::Config,
 ) -> Vec<String> {
     let mut dem = crate::run::compute::test::make_dem(elevations);
     let dem_half_width = f64::from(dem.width - 1) / 2.0f64;
@@ -18,7 +18,7 @@ pub fn make_viewshed(
         .to_degrees(viewshed_pov_metric)
         .unwrap();
 
-    let compute = crate::run::compute::test::compute(&mut dem, backend, None);
+    let compute = crate::run::compute::test::compute(&mut dem, config);
 
     let mut viewshed = crate::output::viewshed::Viewshed::reconstruct(
         &super::ring_data::Source::RAM(crate::output::ring_data::AllData {
