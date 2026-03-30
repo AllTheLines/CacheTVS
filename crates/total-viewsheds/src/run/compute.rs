@@ -300,12 +300,8 @@ pub mod test {
         dem
     }
 
-    pub fn compute(
-        dem: &mut crate::dem::DEM,
-        backend: crate::config::Backend,
-        refraction_override: Option<f32>,
-    ) -> Compute<'_> {
-        let config = Config {
+    pub fn default_config(backend: crate::config::Backend) -> Config {
+        Config {
             observer_height: 0.8,
             scale: 1.0,
             backend,
@@ -317,11 +313,13 @@ pub mod test {
             output_directory: None,
             rings_per_km: 5000.0,
             heatmap: crate::config::HeatmapNormalisation::UnitScale,
-            refraction: refraction_override.unwrap_or(0.13f32),
+            refraction: 0.13f32,
             thread_count: 1, // single thread it for consistency
             disable_render_image: false,
-        };
+        }
+    }
 
+    pub fn compute(dem: &mut crate::dem::DEM, config: Config) -> Compute<'_> {
         let mut compute = Compute::new(config, dem).unwrap();
         compute.run().unwrap();
         compute
@@ -329,7 +327,7 @@ pub mod test {
 
     fn total_surfaces(backend: crate::config::Backend) {
         let mut dem = make_dem(&kernel::tests::dems::bigger_dem());
-        let compute = compute(&mut dem, backend, None);
+        let compute = compute(&mut dem, default_config(backend));
         #[rustfmt::skip]
         assert_eq!(
             compute.total_surfaces,
@@ -349,7 +347,7 @@ pub mod test {
     )]
     fn longest_lines(backend: crate::config::Backend) {
         let mut dem = make_dem(&kernel::tests::dems::bigger_dem());
-        let compute = compute(&mut dem, backend, None);
+        let compute = compute(&mut dem, default_config(backend));
 
         #[rustfmt::skip]
         expect_eq!(
@@ -396,22 +394,20 @@ pub mod test {
         use super::{compute, make_dem};
         use crate::config::Backend;
         use googletest::prelude::*;
-        use std::iter::zip;
+
+        #[rustfmt::skip]
+        const EXPECTED_SURFACES: [f32; 16] = [
+            0.0, 0.0,      0.0,       0.0,
+            0.0, 6.283163, 29.16455,  0.0,
+            0.0, 48.06648, 62.832096, 0.0,
+            0.0, 0.0,      0.0,       0.0
+        ];
 
         #[test]
         fn total_surfaces() {
             let mut dem = make_dem(&kernel::tests::dems::bigger_dem());
-            let compute = compute(&mut dem, Backend::CPU, None);
-            #[rustfmt::skip]
-            assert_eq!(
-                compute.total_surfaces,
-                [
-                    0.0, 0.0,      0.0,       0.0,
-                    0.0, 6.283163, 29.16455,  0.0,
-                    0.0, 48.06648, 62.832096, 0.0,
-                    0.0, 0.0,      0.0,       0.0
-                ]
-            );
+            let compute = compute(&mut dem, super::default_config(Backend::CPU));
+            assert_eq!(compute.total_surfaces, EXPECTED_SURFACES);
         }
 
         #[gtest]
@@ -421,25 +417,78 @@ pub mod test {
 
         #[gtest]
         fn refraction_affects_visibility() {
-            let none_refraction = {
-                let mut dem = make_dem(&kernel::tests::dems::bigger_dem());
-                let compute_no_refraction = compute(&mut dem, Backend::CPU, None);
-                compute_no_refraction.total_surfaces
-            };
+            let mut dem_for_no_refraction = make_dem(&kernel::tests::dems::bigger_dem());
+            let compute_no_refraction = super::compute(
+                &mut dem_for_no_refraction,
+                super::Config {
+                    // Our "bigger_dem" isn't actually big enough for a 0.0 refraction to have an
+                    // affect. We already test for default refraction above, so may as well test for
+                    // 0.0 refraction here just in case there's some unexpected divergence.
+                    refraction: 0.0,
+                    ..super::default_config(Backend::CPU)
+                },
+            );
+            expect_eq!(compute_no_refraction.total_surfaces, EXPECTED_SURFACES);
 
-            let very_refraction = {
-                let mut dem = make_dem(&kernel::tests::dems::bigger_dem());
-                let compute_no_refraction = compute(
-                    &mut dem,
-                    Backend::CPU,
-                    Some(-kernel::kernel::EARTH_DIAMETER),
-                );
-                compute_no_refraction.total_surfaces
-            };
+            let mut dem_for_very_refraction = make_dem(&kernel::tests::dems::bigger_dem());
+            let compute_very_refraction = super::compute(
+                &mut dem_for_very_refraction,
+                super::Config {
+                    refraction: -kernel::kernel::EARTH_DIAMETER,
+                    ..super::default_config(Backend::CPU)
+                },
+            );
+            #[rustfmt::skip]
+            expect_eq!(
+                compute_very_refraction.total_surfaces,
+                [
+                    0.0, 0.0,      0.0,       0.0,
+                    0.0, 6.283163, 9.773839,  0.0,
+                    0.0, 15.481036,38.589294, 0.0,
+                    0.0, 0.0,      0.0,       0.0
+                ]
+            );
+        }
 
-            for (no_refraction, refraction) in zip(none_refraction, very_refraction) {
-                expect_ge!(no_refraction, refraction);
-            }
+        #[gtest]
+        fn scale_affects_visibility() {
+            let mut dem_for_small_scale = make_dem(&kernel::tests::dems::bigger_dem());
+            let compute_small_scale = super::compute(
+                &mut dem_for_small_scale,
+                super::Config {
+                    scale: 0.01,
+                    ..super::default_config(Backend::CPU)
+                },
+            );
+            #[rustfmt::skip]
+            expect_eq!(
+                compute_small_scale.total_surfaces,
+                [
+                    0.0, 0.0,       0.0,       0.0,
+                    0.0, 0.06283202,0.2916432, 0.0,
+                    0.0, 0.4806646, 0.6283214, 0.0,
+                    0.0, 0.0,       0.0,       0.0
+                ]
+            );
+
+            let mut dem_for_big_scale = make_dem(&kernel::tests::dems::bigger_dem());
+            let compute_big_scale = super::compute(
+                &mut dem_for_big_scale,
+                super::Config {
+                    scale: 100.0,
+                    ..super::default_config(Backend::CPU)
+                },
+            );
+            #[rustfmt::skip]
+            expect_eq!(
+                compute_big_scale.total_surfaces,
+                [
+                    0.0, 0.0,      0.0,       0.0,
+                    0.0, 628.317,  2916.4526, 0.0,
+                    0.0, 4806.6274,6283.1714, 0.0,
+                    0.0, 0.0,      0.0,       0.0
+                ]
+            );
         }
     }
 }

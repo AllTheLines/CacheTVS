@@ -344,7 +344,7 @@ impl<'viewshed> Reconstructor<'viewshed> {
 
 #[cfg(test)]
 mod test {
-    use crate::output::ascii::assert_viewshed;
+    use crate::{output::ascii::assert_viewshed, run};
 
     use super::*;
 
@@ -494,7 +494,7 @@ mod test {
         let viewshed = crate::output::ascii::make_viewshed(
             &kernel::tests::dems::bigger_dem(),
             geo::Coord { x: 5.0, y: 5.0 },
-            backend.clone(),
+            crate::run::compute::test::default_config(backend.clone()),
         );
 
         let expected = &[
@@ -526,7 +526,7 @@ mod test {
         let viewshed = crate::output::ascii::make_viewshed(
             &kernel::tests::dems::bigger_dem(),
             geo::Coord { x: 6.0, y: 6.0 },
-            backend,
+            crate::run::compute::test::default_config(backend),
         );
 
         assert_viewshed(
@@ -552,7 +552,7 @@ mod test {
         let viewshed = crate::output::ascii::make_viewshed(
             &kernel::tests::dems::bigger_dem(),
             geo::Coord { x: 5.0, y: 6.0 },
-            backend.clone(),
+            crate::run::compute::test::default_config(backend.clone()),
         );
 
         let expected = &[
@@ -580,6 +580,35 @@ mod test {
         }
     }
 
+    fn viewshed_in_hole_tall_observer(backend: crate::config::Backend) {
+        let viewshed = crate::output::ascii::make_viewshed(
+            &kernel::tests::dems::bigger_dem(),
+            geo::Coord { x: 5.0, y: 5.0 },
+            run::compute::Config {
+                observer_height: 20.0,
+                ..crate::run::compute::test::default_config(backend)
+            },
+        );
+
+        assert_viewshed(
+            &viewshed,
+            &[
+                "████████████████████████",
+                "█████▀▀ ▄▄▄▄▄ ▀▀████████",
+                "███▀ ▄█████████▄ ▀██████",
+                "██▀ █████████████ ▀█████",
+                "██ ███████████████ █████",
+                "██ ███████████████ █████",
+                "██ ▀█████████████▀ █████",
+                "███ ▀███████████▀ ██████",
+                "████▄ ▀▀█████▀▀ ▄███████",
+                "███████▄▄▄▄▄▄▄██████████",
+                "████████████████████████",
+                "████████████████████████",
+            ],
+        );
+    }
+
     mod gpu {
         #[test]
         fn viewshed_in_hole() {
@@ -594,6 +623,11 @@ mod test {
         #[test]
         fn viewshed_near_summit() {
             super::viewshed_near_summit(&crate::config::Backend::VulkanCPU);
+        }
+
+        #[test]
+        fn viewshed_in_hole_tall_observer() {
+            super::viewshed_in_hole_tall_observer(crate::config::Backend::VulkanCPU);
         }
     }
 
@@ -611,6 +645,11 @@ mod test {
         #[test]
         fn viewshed_near_summit() {
             super::viewshed_near_summit(&crate::config::Backend::CPU);
+        }
+
+        #[test]
+        fn viewshed_in_hole_tall_observer() {
+            super::viewshed_in_hole_tall_observer(crate::config::Backend::CPU);
         }
     }
 }
