@@ -1,5 +1,7 @@
 #!/bin/env bash
 
+set -e
+
 export RUST_BACKTRACE=1
 export RUST_LOG=trace
 
@@ -27,8 +29,9 @@ function geojson_area() {
 # Do the calculations
 export RUSTFLAGS='-Ctarget-cpu=native'
 time cargo run --features ring_data --release -- \
-	compute "$PROJECT_ROOT/benchmarks/cardiff.bt" \
+	compute "$PROJECT_ROOT/benchmarks/cardiff.tiff" \
 	--scale 100 \
+	--centre-from-projection \
 	--rings-per-km 3 \
 	--backend "$backend" \
 	--process all \
@@ -40,6 +43,9 @@ if [[ $backend == "vulkan" ]]; then
 	exit 0
 fi
 
+viewshed_file="output/viewsheds/-3.122999906539917-51.48979949951172.json"
+rm $viewshed_file || true
+
 # Reconstruct a viewshed from the centre of the DEM
 time cargo run --release -- \
 	viewshed output \
@@ -48,7 +54,7 @@ time cargo run --release -- \
 ls -alh output/viewsheds
 
 expected_area=$(geojson_area "benchmarks/cardiff-viewshed.json")
-actual_area=$(geojson_area output/viewsheds/-3.122999906539917-51.48979949951172.json)
+actual_area=$(geojson_area "$viewshed_file")
 
 diff=$(echo "$actual_area - $expected_area" | bc -l | tr -d '-')
 limit=$(echo "$actual_area * 0.01" | bc -l)

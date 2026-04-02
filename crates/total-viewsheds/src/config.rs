@@ -31,7 +31,7 @@ pub enum Commands {
 }
 
 /// Arguments to the `compute` subcommand.
-#[derive(clap::Parser, Debug)]
+#[derive(clap::Parser, Debug, Default)]
 pub struct Compute {
     // TODO: make this "reserved rings" and add support to the kernel so that the user can get
     // feedback of the actual number needed.
@@ -106,12 +106,21 @@ pub struct Compute {
     pub refraction: f32,
 
     /// Thread count used for CPU parallelism
-    #[arg(long, value_name = "thread count", default_value = "8")]
+    #[arg(long, value_name = "Thread count", default_value = "8")]
     pub thread_count: usize,
 
     /// Controls line of sight and total viewshed image generation
-    #[arg(long, value_name = "render image", default_value = "false")]
+    #[arg(long, value_name = "Render image", default_value = "false")]
     pub disable_image_render: bool,
+
+    /// Derive the tile's centre from the tile's anchored projection. This can be more accurate for
+    /// large metric-projected tiles.
+    #[arg(
+        long,
+        value_name = "Get centre from projection",
+        default_value = "false"
+    )]
+    pub centre_from_projection: bool,
 }
 
 #[derive(clap::Parser, Debug)]
@@ -144,13 +153,14 @@ fn parse_coords(string: &str) -> Result<(f32, f32)> {
 }
 
 /// Where to run the computations.
-#[derive(clap::ValueEnum, Clone, Debug)]
+#[derive(clap::ValueEnum, Clone, Debug, Default)]
 pub enum Backend {
     /// A SPIRV shader run on the GPU via Vulkan.
     Vulkan,
     /// Vulkan shader but run on the CPU.
     VulkanCPU,
     /// Optimised cache-efficient CPU kernel
+    #[default]
     CPU,
     /// TBC
     Cuda,
@@ -172,11 +182,12 @@ pub enum Process {
 }
 
 /// Where to run the computations.
-#[derive(clap::ValueEnum, Clone, Debug, Copy)]
+#[derive(clap::ValueEnum, Clone, Debug, Copy, Default)]
 pub enum HeatmapNormalisation {
     /// Just scale between 0 and 1
     UnitScale,
     /// Scale between 0 and 1 with an exponential factor.
+    #[default]
     Exponential,
     #[expect(clippy::doc_markdown, reason = "This is displayed on the CLI")]
     /// Use Z-score normalisation based on Welford's algorithm. This basically means that the

@@ -28,15 +28,11 @@ There are 2 kernels; a CPU SIMD-based one and a GPU-based one. The CPU kernel is
 The primary use case for this project is to find the longest line of sight on the planet. We present our results at [alltheviews.world](https://alltheviews.world).
 
 ## Input file format
-Currently only the [`.bt` file format](http://vterrain.org/Implementation/Formats/BT.html) is supported. And must follow this requirements:
+Any file format supported by `gdal` should be supported. It must follow this requirements:
 * It must be perfectly square.
 * The width must be divisible by 48.
-* It must be in an AEQD or similar metric projection whose anchor is the centre of the tile.
+* It should be in an AEQD or similar metric projection whose anchor is the centre of the tile.
 * All points must be the same metric distance apart.
-* The tile's extent must be set so that both the bottom-left and top-right are repurposed to define the lon/lat coordinates of the centre.
-
-Example of how to repurpose the extent for the AEQD centre:
-`gdal_edit -a_ullr $CENTER_LON $CENTER_LAT $CENTER_LON $CENTER_LAT path/to/tile.bt`
 
 The best source of elevation data I have found is here: https://www.viewfinderpanoramas.org/Coverage%20map%20viewfinderpanoramas_org3.htm It's mostly in the `.hgt` format, but can easily be converted to `.bt` using `gdal_translate`.
 

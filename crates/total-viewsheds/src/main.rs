@@ -26,13 +26,6 @@ use clap::Parser as _;
 use color_eyre::eyre::Result;
 use tracing_subscriber::{layer::SubscriberExt as _, util::SubscriberInitExt as _, Layer as _};
 
-/// The `.bt` file type for reading and writing the data we consume and output.
-mod bt {
-    pub mod header;
-    pub use header::BinaryTerrain;
-    pub mod read;
-    pub mod write;
-}
 /// Handling the running of computations.
 mod run {
     pub mod compute;
@@ -40,22 +33,38 @@ mod run {
     pub mod serial;
 }
 mod config;
+/// cpu implements a CPU kernel for the longest line of sight
+mod cpu {
+    /// los contains all the traits necessary for implementing a line of sight algorithm
+    mod los;
+
+    mod rotation;
+
+    /// kernel is the exported kernel module
+    pub mod kernel;
+
+    /// `unrolled_los` holds a fully implemented los trait for unrolled vectorization
+    mod unrolled_los;
+
+    /// `vector_intrinsics` holds all the vector-related LOS intrinsics
+    mod vector_intrinsics;
+
+    pub use kernel::kernel;
+}
 mod dem;
 mod dump_usage;
 mod los_pack;
+mod tile;
 mod vulkan;
 /// Various ways to output data.
 mod output {
     pub mod ascii;
     pub mod bresenham;
-    pub mod bt;
     pub mod png;
     pub mod ring_data;
+    pub mod tiff;
     pub mod viewshed;
 }
-
-/// cpu implements a CPU kernel for the longest line of sight
-mod cpu;
 
 mod projection;
 
@@ -103,8 +112,8 @@ fn setup_logging() -> Result<()> {
 
 /// Run computations
 fn compute(config: &config::Compute) -> Result<()> {
-    let tile = bt::BinaryTerrain::read(&config.input)?;
-    let scale = config.scale.unwrap_or_else(|| tile.scale());
+    let tile = tile::Tile::load(config)?;
+    let scale = config.scale.unwrap_or(tile.scale);
 
     #[expect(
         clippy::as_conversions,
@@ -113,17 +122,11 @@ fn compute(config: &config::Compute) -> Result<()> {
         clippy::cast_precision_loss,
         reason = "Sign loss and truncation aren't relevant"
     )]
-    let max_line_of_sight = (tile.header.width.div_euclid(3) as f32 * scale) as u32;
+    let max_line_of_sight = (tile.width.div_euclid(3) as f32 * scale) as u32;
 
-    let mut dem = crate::dem::DEM::new(tile.centre(), tile.header.width, scale, max_line_of_sight)?;
+    let mut dem = crate::dem::DEM::new(tile.centre, tile.width, scale, max_line_of_sight)?;
 
-    tracing::info!("Converting DEM data to `f32`");
-    match &tile.data {
-        bt::header::Data::Int16(points) => dem.elevations.clone_from(points),
-        bt::header::Data::Float32(_) => {
-            color_eyre::eyre::bail!("Float `.bt` files aren't supported yet.")
-        }
-    }
+    dem.elevations.clone_from(&tile.data);
 
     // Free up RAM
     drop(tile);
