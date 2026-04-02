@@ -182,18 +182,28 @@ mod test {
     use crate::cpu::kernel as cpu_kernel;
 
     #[test]
-    fn test_kernel() {
+    fn total_surfaces() {
         let dem = &kernel::tests::dems::bigger_dem();
 
-        let forward = cpu_kernel(&dem, 4, 0.0, 0.13, 1.0, 0.8);
-        let backward = cpu_kernel(&dem, 4, 180.0, 0.13, 1.0, 0.8);
+        let forward = cpu_kernel(dem, 4, 0.0, 0.13, 1.0, 0.8);
+        let backward = cpu_kernel(dem, 4, 180.0, 0.13, 1.0, 0.8);
 
-        let res = forward
+        let result = forward
             .surfaces
             .iter()
             .zip(backward.surfaces.iter())
-            .map(|(l, r)| l + r)
+            .map(|(left, right)| left + right)
             .collect::<Vec<_>>();
-        println!("{:#?}", res);
+
+        #[rustfmt::skip]
+        assert_eq!(
+            result,
+            [
+                0.0, 0.0,        0.0,       0.0,
+                0.0, 0.0349066,  0.1570797, 0.0,
+                0.0, 0.19198631, 0.34906602,0.0,
+                0.0, 0.0,        0.0,       0.0,
+            ]
+        );
     }
 }
