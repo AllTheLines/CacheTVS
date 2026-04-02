@@ -211,10 +211,10 @@ impl<'compute> Compute<'compute> {
             return Ok(());
         };
 
-        crate::output::bt::save(
+        crate::output::tiff::save(
             self.dem,
             &self.total_surfaces,
-            &output_dir.join("total_surfaces.bt"),
+            &output_dir.join("total_surfaces.tiff"),
         )?;
 
         if self.config.disable_render_image {
@@ -245,10 +245,10 @@ impl<'compute> Compute<'compute> {
             .map(crate::los_pack::LineOfSightPacked::as_f32)
             .collect::<Vec<_>>();
 
-        crate::output::bt::save(
+        crate::output::tiff::save(
             self.dem,
             &packed_lines,
-            &output_dir.join("longest_lines.bt"),
+            &output_dir.join("longest_lines.tiff"),
         )?;
 
         if self.config.disable_render_image {

@@ -14,7 +14,7 @@ pub struct Converter {
 
 impl Converter {
     /// The projection description for lat/lon.
-    fn degrees_projection() -> Result<proj4rs::Proj> {
+    pub fn degrees_projection() -> Result<proj4rs::Proj> {
         let string = "+proj=latlong +datum=WGS84";
         Ok(proj4rs::Proj::from_proj_string(string)?)
     }

@@ -33,6 +33,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_VERSION }}
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install libgdal-dev gdal-bin
       - uses: Swatinem/rust-cache@v2
       - name: Build
         run: cargo build --verbose --all
@@ -87,6 +91,7 @@ jobs:
             libvulkan1 \
             vulkan-tools \
             vulkan-validationlayers \
+            libgdal-dev \
             gdal-bin
           vulkaninfo
       - name: Run end to end tests
@@ -107,6 +112,10 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-shear, cargo-msrv
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install libgdal-dev gdal-bin
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
