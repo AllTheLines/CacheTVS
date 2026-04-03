@@ -10,8 +10,10 @@ const METADATA_KEY: &str = "metadata";
 
 /// Whether the data is coming from disk or RAM.
 pub enum Source {
-    /// The path to the data on disk.
+    /// The path to the data on disk in flat files.
     Directory(std::path::PathBuf),
+    /// The path to the data on disk in an Sqlite DB.
+    SQLite(std::path::PathBuf),
     #[cfg(test)]
     RAM(AllData),
 }
@@ -21,26 +23,38 @@ pub enum SectorData {
     /// Data represents all sectors.
     #[cfg(test)]
     AllSectors(Vec<Vec<u32>>),
-    /// Data only represents a single sector.
-    Sector(Storage),
+    /// Data only represents a single sector from Fjall.
+    FjallSector(FjallStorage),
+    /// Data represents all segemnts for a given DEM ID.
+    SQLiteSegments,
 }
 
 /// All the data. Includes both sector data and metadata.
 pub struct AllData {
     /// Metadata for the data.
-    pub metadata: MetaData,
+    pub metadata: crate::cpu::storage::metadata::MetaData,
     /// The actual data by organised by sectors.
     pub ring_data: SectorData,
 }
 
 impl AllData {
-    /// Instantiate with data from disk.
-    pub fn new_from_storage(output_directory: &std::path::Path) -> Result<Self> {
-        let storage = Storage::new(output_directory)?;
+    /// Instantiate with data from flat files.
+    pub fn new_from_fjall(output_directory: &std::path::Path) -> Result<Self> {
+        let storage = FjallStorage::new(output_directory)?;
         let metadata = storage.load_metadata()?;
         Ok(Self {
             metadata,
-            ring_data: SectorData::Sector(storage),
+            ring_data: SectorData::FjallSector(storage),
+        })
+    }
+
+    /// Instantiate with data from Sqlite.
+    pub fn new_from_sqlite(db_path: &std::path::Path) -> Result<Self> {
+        let db = crate::cpu::storage::db::DB::new(db_path)?;
+        let metadata = db.load_metadata()?;
+        Ok(Self {
+            metadata,
+            ring_data: SectorData::SQLiteSegments,
         })
     }
 
@@ -52,34 +66,21 @@ impl AllData {
                 .get(usize::from(angle))
                 .context("Couldn't find sector data.")?
                 .clone()),
-            SectorData::Sector(storage) => {
+            SectorData::FjallSector(storage) => {
                 let sector = storage.load_sector(angle)?;
                 Ok(sector)
+            }
+            SectorData::SQLiteSegments => {
+                color_eyre::eyre::bail!(
+                    "Our Sqlite implementation can be queried directly by DEM ID"
+                )
             }
         }
     }
 }
 
-/// Metadata about the main data.
-#[derive(serde::Serialize, serde::Deserialize, Default, Debug, Clone)]
-pub struct MetaData {
-    /// The width of the 2D grid of elevation data. The algorithm requires that the grid be square,
-    /// so there is no need for a height field.
-    pub width: u32,
-    /// The diameter in meters each point of the data covers.
-    pub scale: f32,
-    /// The maximum line of sight that was used to calculate the ring data. It is needed to
-    /// instantiate the `DEM` struct and therefore reconstruct the bands of sight used to create
-    /// the ring data.
-    pub max_line_of_sight: u32,
-    /// The number of items reserved to place ring DEM IDs in.
-    pub reserved_ring_size: usize,
-    /// The lat/lon coordinates for the centre of the 2D DEM grid. Used for accurately converting
-    /// between degree and metric coordinate systems.
-    pub centre: crate::projection::LatLonCoord,
-}
-
-pub struct Storage {
+/// In-memory DB for Vulkan's ring data storage. To be deprecated soon
+pub struct FjallStorage {
     /// An active handle to the database.
     db: fjall::PartitionHandle,
 
@@ -87,7 +88,7 @@ pub struct Storage {
     _keyspace: fjall::Keyspace,
 }
 
-impl Storage {
+impl FjallStorage {
     /// Instantitate.
     pub fn new(output_directory: &std::path::Path) -> Result<Self> {
         let ring_data_directory = output_directory.join("ring_data");
@@ -107,7 +108,7 @@ impl Storage {
     }
 
     /// Load the metadata.
-    pub fn load_metadata(&self) -> Result<MetaData> {
+    pub fn load_metadata(&self) -> Result<crate::cpu::storage::metadata::MetaData> {
         tracing::debug!("Loading metadata from {:?}...", self.db.path());
 
         let metadata_bytes = self
@@ -121,7 +122,7 @@ impl Storage {
     }
 
     /// Save the metadata.
-    pub fn save_metadata(&self, metadata: &MetaData) -> Result<()> {
+    pub fn save_metadata(&self, metadata: &crate::cpu::storage::metadata::MetaData) -> Result<()> {
         tracing::debug!("Saving metadata...");
         let start = std::time::Instant::now();
 
@@ -161,149 +162,30 @@ impl Storage {
     }
 }
 
-#[expect(
-    clippy::indexing_slicing,
-    reason = "This is both temporary and used mostly for testing/verification."
-)]
-/// Convert a bitmap of visibilities to an array of opening/closing IDs. Or in other words
-/// convert the ring data of the CPU kernel to the same format of the ring data of the GPU
-/// kernel. There is no inherent reason that the formats should be different, so we should decide
-/// on one over the other, likely the bitmap.
-///
-/// The CPU algorithm handles one angle at a time, so this will be called 360 times. But the GPU
-/// algorighm handles one _sector_ at a time, so is only called 180 times. It combines opposite
-/// angles into forward and backward lines of sight.
-///
-/// # Input CPU format
-///   * Array shape: `[ [boolean visibility; max_line_of_sight]; tvs_points_count ]`.
-///
-/// [
-///   // Point 0,0:
-///   [
-///     true, true, false, false, true, false,
-///   ],
-///
-///   // Point 1,0:
-///   [
-///     true, true, true, true, true, false,
-///   ],
-///
-///   ...
-/// ]
-///
-///
-/// # Output GPU format
-///   * Array is of length `tvs_points_count * reserved_ring_data_size`.
-///   * Ring data size in this example is 10.
-///
-/// Note how the first ID is always a closing ID because we can always assume that the point from
-/// where the observer stands is always visible.
-///
-///   | Size of used reserved ring data | closing | opening | closing ...
-/// [
-///
-///     // Point 0,0:
-///     4,                                2,        4,        5,        0,0,0,0,0,0,
-///     // Point 1,0:
-///     2,                                5,                            0,0,0,0,0,0,0,0
-///
-///   ...
-///
-///   // Then the whole thing is repeated for "backward" lines of sight.
-/// ]
-pub fn convert_bitmap_to_ids(
-    bitmap: &[Vec<bool>],
-    reserved_ring_data_size: usize,
-    width: u32,
-) -> Result<Vec<u32>> {
-    let total_points = usize::try_from(width * width)?;
-    let mut ring_data = vec![0; total_points * reserved_ring_data_size];
-    let mut start = 0;
-
-    for line_of_sight in bitmap {
-        let mut is_currently_visible = true;
-        let mut is_previously_visible = true;
-        let mut closing = false;
-        let mut cursor = 1;
-
-        for (index, visibility) in line_of_sight
-            .iter()
-            // Skip the first visibility because we assume the PoV is always visibile
-            .skip(1)
-            .enumerate()
-        {
-            is_currently_visible = *visibility;
-            let opening = is_currently_visible && !is_previously_visible;
-            closing = is_previously_visible && !is_currently_visible;
-
-            if opening || closing {
-                ring_data[start + cursor] = u32::try_from(index + 1)?;
-                cursor += 1;
-            }
-
-            is_previously_visible = is_currently_visible;
-        }
-
-        if is_currently_visible && !closing {
-            ring_data[start + cursor] = width;
-            cursor += 1;
-        }
-
-        ring_data[start] = u32::try_from(cursor)?;
-        start += reserved_ring_data_size;
-    }
-
-    Ok(ring_data)
-}
-
-#[expect(clippy::indexing_slicing, reason = "Just tests")]
 #[cfg(test)]
 mod test {
     use super::*;
-    use googletest::prelude::*;
 
     #[test]
-    fn save_and_load() {
+    fn save_and_load_fjall() {
         let temporary_directory = tempfile::tempdir().unwrap();
         let directory = temporary_directory.path();
-        let storage = Storage::new(directory).unwrap();
+        let storage = FjallStorage::new(directory).unwrap();
         storage.save_sector(0, &[42]).unwrap();
-        let metadata = MetaData {
+        let metadata = crate::cpu::storage::metadata::MetaData {
             width: 69,
-            ..MetaData::default()
+            ..crate::cpu::storage::metadata::MetaData::default()
         };
         storage.save_metadata(&metadata).unwrap();
-        let all_data = AllData::new_from_storage(directory).unwrap();
+        let all_data = AllData::new_from_fjall(directory).unwrap();
         assert_eq!(all_data.metadata.width, 69);
         match all_data.ring_data {
-            SectorData::AllSectors(_) => panic!("Expected `SectorData::Sector(_)`"),
-            SectorData::Sector(ring_data) => {
+            SectorData::AllSectors(_) | SectorData::SQLiteSegments => {
+                panic!("We're only testing Fjall")
+            }
+            SectorData::FjallSector(ring_data) => {
                 assert_eq!(ring_data.load_sector(0).unwrap(), vec![42]);
             }
         }
-    }
-
-    #[gtest]
-    fn convert_bitmap() {
-        fn run(bitmap: &[Vec<bool>]) -> Vec<u32> {
-            let reserved_ring_size = 3;
-            let result = convert_bitmap_to_ids(bitmap, reserved_ring_size, 4).unwrap();
-            let size = bitmap.len() * reserved_ring_size;
-            result[0..size].to_vec()
-        }
-
-        expect_eq!(run(&[vec![true, true, true, false]]), vec![2, 3, 0]);
-
-        expect_eq!(run(&[vec![true, false, false, false]]), vec![2, 1, 0]);
-
-        expect_eq!(
-            run(&[
-                vec![true, true, true, false],
-                vec![true, false, false, false]
-            ]),
-            vec![2, 3, 0, 2, 1, 0]
-        );
-
-        expect_eq!(run(&[vec![true, true, true, true]]), vec![2, 4, 0]);
     }
 }

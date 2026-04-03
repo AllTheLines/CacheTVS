@@ -39,7 +39,15 @@ mod cpu {
     mod los;
 
     mod rotation;
-    pub mod storage;
+
+    /// Database for viewsheds
+    pub mod storage {
+        pub mod db;
+        pub mod engine;
+        pub mod metadata;
+        pub mod segments;
+        pub mod worker;
+    }
 
     /// kernel is the exported kernel module
     pub mod kernel;
@@ -82,10 +90,15 @@ fn main() -> Result<()> {
                 let geo_coord = projection::LatLonCoord(
                     geo::coord! {x: f64::from(coordinate.0), y: f64::from(coordinate.1)},
                 );
-                let viewshed = crate::output::viewshed::Viewshed::reconstruct(
-                    &output::ring_data::Source::Directory(viewshed_config.output_dir.clone()),
-                    geo_coord,
-                )?;
+
+                let is_sqlite = rusqlite::Connection::open(viewshed_config.db_path.clone()).is_ok();
+                let source = if is_sqlite {
+                    output::ring_data::Source::SQLite(viewshed_config.db_path.clone())
+                } else {
+                    output::ring_data::Source::Directory(viewshed_config.db_path.clone())
+                };
+
+                let viewshed = crate::output::viewshed::Viewshed::reconstruct(&source, geo_coord)?;
                 crate::output::viewshed::Reconstructor::save(
                     viewshed,
                     &viewshed_config.output_dir,
@@ -146,7 +159,7 @@ fn compute(config: &config::Compute) -> Result<()> {
         refraction: config.refraction,
         thread_count: config.thread_count,
         disable_render_image: config.disable_image_render,
-        viewshed_out: config.viewshed_out.clone(),
+        viewsheds_db_path: config.viewsheds_db_path.clone(),
     };
     let mut compute = run::compute::Compute::new(compute_config, &mut dem)?;
     compute.run()?;
