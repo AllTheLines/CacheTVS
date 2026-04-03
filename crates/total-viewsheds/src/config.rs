@@ -122,15 +122,24 @@ pub struct Compute {
         default_value = "false"
     )]
     pub centre_from_projection: bool,
-    /// Where to store the viewshed data
-    #[arg(long, value_name = "viewshed storage path")]
-    pub viewshed_out: Option<PathBuf>,
+
+    /// Where to store the viewshed data. Requires build with `--features=ring_data`.
+    #[arg(
+        long,
+        value_name = "viewshed storage path",
+        default_value = "./viewsheds.db"
+    )]
+    pub viewsheds_db_path: PathBuf,
 }
 
 #[derive(clap::Parser, Debug)]
 pub struct Viewshed {
-    /// Directory where compute output was saved.
-    #[arg(value_name = "Path to existing output directory")]
+    /// Path or directory where viewshed DB was saved.
+    #[arg(value_name = "Path to existing database")]
+    pub db_path: std::path::PathBuf,
+
+    /// Directory to save viewshed in.
+    #[arg(value_name = "Viewshed output directory")]
     pub output_dir: std::path::PathBuf,
 
     /// Coordinates to reconstruct viewsheds for.

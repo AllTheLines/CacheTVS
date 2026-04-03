@@ -13,7 +13,7 @@ pub struct Compute<'compute> {
     /// Vulkan GPU manager
     pub vulkan: Option<crate::vulkan::Vulkan>,
     /// Storage interface for conputed ring (viewshed) data.
-    storage: Option<crate::output::ring_data::Storage>,
+    fjall_storage: Option<crate::output::ring_data::FjallStorage>,
     /// The Digital Elevation Model that we're computing.
     pub dem: &'compute mut crate::dem::DEM,
     /// The constants for each kernel computation.
@@ -28,6 +28,7 @@ pub struct Compute<'compute> {
     pub longest_lines: Vec<crate::los_pack::LineOfSightPacked>,
 }
 
+#[derive(Clone)]
 /// Configuration for computing.
 pub struct Config {
     /// The height of the observer that views viewsheds.
@@ -51,7 +52,7 @@ pub struct Config {
     /// Disables the rendering of PNG images (good for long runs)
     pub disable_render_image: bool,
     /// Where to store the viewshed
-    pub viewshed_out: Option<PathBuf>,
+    pub viewsheds_db_path: PathBuf,
 }
 
 impl<'compute> Compute<'compute> {
@@ -70,21 +71,21 @@ impl<'compute> Compute<'compute> {
             1
         };
 
-        let storage = if Self::is_process_viewsheds(&config.process) {
+        let fjall_storage = if Self::is_process_viewsheds(&config.process) {
             match &config.output_directory {
-                Some(output_directory) => {
-                    Some(crate::output::ring_data::Storage::new(output_directory)?)
-                }
+                Some(output_directory) => Some(crate::output::ring_data::FjallStorage::new(
+                    output_directory,
+                )?),
                 None => None,
             }
         } else {
             None
         };
 
-        // only allow viewshed_out to be used with the ring_data feature
-        if config.viewshed_out.is_some() && !cfg!(any(test, feature = "ring_data")) {
+        if Self::is_process_viewsheds(&config.process) && !cfg!(any(test, feature = "ring_data")) {
             color_eyre::eyre::bail!(
-                "Viewshed storage is only supported with the ring_data feature, please recompile with --feature=ring_data"
+                "Viewshed storage is only supported with the ring_data feature, \
+                please recompile with --features=ring_data"
             );
         }
 
@@ -120,7 +121,7 @@ impl<'compute> Compute<'compute> {
         Ok(Self {
             config,
             vulkan,
-            storage,
+            fjall_storage,
             dem,
             constants,
             total_reserved_rings,
@@ -184,8 +185,8 @@ impl<'compute> Compute<'compute> {
     }
 
     /// The metadata needed to reconstruct viewsheds based on the DEM and reserved rings.
-    pub fn metadata(&self) -> Result<crate::output::ring_data::MetaData> {
-        Ok(crate::output::ring_data::MetaData {
+    pub fn metadata(&self) -> Result<crate::cpu::storage::metadata::MetaData> {
+        Ok(crate::cpu::storage::metadata::MetaData {
             width: self.dem.width,
             scale: self.dem.scale,
             max_line_of_sight: self.dem.max_los_as_points * self.dem.scale_u32(),
@@ -196,7 +197,7 @@ impl<'compute> Compute<'compute> {
 
     /// Save band deltas to cache.
     pub fn save_sector_ring_data(&self, sector: u16, ring_data: &[u32]) -> Result<()> {
-        let Some(storage) = self.storage.as_ref() else {
+        let Some(storage) = self.fjall_storage.as_ref() else {
             color_eyre::eyre::bail!("Tried to save sector ring data without any active storage.");
         };
 
@@ -206,7 +207,7 @@ impl<'compute> Compute<'compute> {
 
     /// Save the metadata for the ring data (aka viewsheds).
     pub fn save_ring_metadata(&self) -> Result<()> {
-        let Some(storage) = self.storage.as_ref() else {
+        let Some(storage) = self.fjall_storage.as_ref() else {
             color_eyre::eyre::bail!("Tried to save ring metadata without any active storage.");
         };
 
@@ -310,7 +311,10 @@ pub mod test {
         dem
     }
 
-    pub fn default_config(backend: crate::config::Backend) -> Config {
+    pub fn default_config(
+        backend: crate::config::Backend,
+        temp_db: &tempfile::NamedTempFile,
+    ) -> Config {
         Config {
             observer_height: 0.8,
             scale: 1.0,
@@ -326,7 +330,7 @@ pub mod test {
             refraction: 0.13f32,
             thread_count: 1, // single thread it for consistency
             disable_render_image: false,
-            viewshed_out: None,
+            viewsheds_db_path: temp_db.path().into(),
         }
     }
 
@@ -338,7 +342,8 @@ pub mod test {
 
     fn total_surfaces(backend: crate::config::Backend) {
         let mut dem = make_dem(&kernel::tests::dems::bigger_dem());
-        let compute = compute(&mut dem, default_config(backend));
+        let temp_db = tempfile::NamedTempFile::new().unwrap();
+        let compute = compute(&mut dem, default_config(backend, &temp_db));
         #[rustfmt::skip]
         assert_eq!(
             compute.total_surfaces,
@@ -358,7 +363,8 @@ pub mod test {
     )]
     fn longest_lines(backend: crate::config::Backend) {
         let mut dem = make_dem(&kernel::tests::dems::bigger_dem());
-        let compute = compute(&mut dem, default_config(backend));
+        let temp_db = tempfile::NamedTempFile::new().unwrap();
+        let compute = compute(&mut dem, default_config(backend, &temp_db));
 
         #[rustfmt::skip]
         expect_eq!(
@@ -417,7 +423,8 @@ pub mod test {
         #[test]
         fn total_surfaces() {
             let mut dem = make_dem(&kernel::tests::dems::bigger_dem());
-            let compute = compute(&mut dem, super::default_config(Backend::CPU));
+            let temp_db = tempfile::NamedTempFile::new().unwrap();
+            let compute = compute(&mut dem, super::default_config(Backend::CPU, &temp_db));
             assert_eq!(compute.total_surfaces, EXPECTED_SURFACES);
         }
 
@@ -429,6 +436,7 @@ pub mod test {
         #[gtest]
         fn refraction_affects_visibility() {
             let mut dem_for_no_refraction = make_dem(&kernel::tests::dems::bigger_dem());
+            let temp_db_for_no_refraction = tempfile::NamedTempFile::new().unwrap();
             let compute_no_refraction = super::compute(
                 &mut dem_for_no_refraction,
                 super::Config {
@@ -436,17 +444,18 @@ pub mod test {
                     // affect. We already test for default refraction above, so may as well test for
                     // 0.0 refraction here just in case there's some unexpected divergence.
                     refraction: 0.0,
-                    ..super::default_config(Backend::CPU)
+                    ..super::default_config(Backend::CPU, &temp_db_for_no_refraction)
                 },
             );
             expect_eq!(compute_no_refraction.total_surfaces, EXPECTED_SURFACES);
 
             let mut dem_for_very_refraction = make_dem(&kernel::tests::dems::bigger_dem());
+            let temp_db_for_very_refraction = tempfile::NamedTempFile::new().unwrap();
             let compute_very_refraction = super::compute(
                 &mut dem_for_very_refraction,
                 super::Config {
                     refraction: -kernel::kernel::EARTH_DIAMETER,
-                    ..super::default_config(Backend::CPU)
+                    ..super::default_config(Backend::CPU, &temp_db_for_very_refraction)
                 },
             );
             #[rustfmt::skip]
@@ -464,11 +473,12 @@ pub mod test {
         #[gtest]
         fn scale_affects_visibility() {
             let mut dem_for_small_scale = make_dem(&kernel::tests::dems::bigger_dem());
+            let temp_db_for_small_scale = tempfile::NamedTempFile::new().unwrap();
             let compute_small_scale = super::compute(
                 &mut dem_for_small_scale,
                 super::Config {
                     scale: 0.01,
-                    ..super::default_config(Backend::CPU)
+                    ..super::default_config(Backend::CPU, &temp_db_for_small_scale)
                 },
             );
             #[rustfmt::skip]
@@ -483,11 +493,12 @@ pub mod test {
             );
 
             let mut dem_for_big_scale = make_dem(&kernel::tests::dems::bigger_dem());
+            let temp_db_for_big_scale = tempfile::NamedTempFile::new().unwrap();
             let compute_big_scale = super::compute(
                 &mut dem_for_big_scale,
                 super::Config {
                     scale: 100.0,
-                    ..super::default_config(Backend::CPU)
+                    ..super::default_config(Backend::CPU, &temp_db_for_big_scale)
                 },
             );
             #[rustfmt::skip]
