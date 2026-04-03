@@ -26,7 +26,10 @@ impl Viewshed<'_> {
     ) -> Result<geo::MultiPolygon> {
         let ring_data = match source {
             crate::output::ring_data::Source::Directory(directory) => {
-                &super::ring_data::AllData::new_from_storage(directory)?
+                &super::ring_data::AllData::new_from_fjall(directory)?
+            }
+            crate::output::ring_data::Source::SQLite(db_path) => {
+                &super::ring_data::AllData::new_from_sqlite(db_path)?
             }
             #[cfg(test)]
             crate::output::ring_data::Source::RAM(data) => data,
@@ -52,13 +55,31 @@ impl Viewshed<'_> {
             pov_coord: pov_dem_coord,
         };
 
-        for angle_integer in 0..crate::run::compute::SECTOR_STEPS {
-            let angle = f32::from(angle_integer);
-            let mut reconstructor =
-                Reconstructor::new(&viewshed, ring_data.metadata.reserved_ring_size, angle)?;
-            reconstructor.sector_ring_data = ring_data.get_sector(angle_integer)?;
-            polygon = reconstructor.reconstruct_sector(polygon)?;
-        }
+        let constructor_by_sectors = || -> Result<geo::MultiPolygon> {
+            for angle_integer in 0..crate::run::compute::SECTOR_STEPS {
+                let angle = f32::from(angle_integer);
+                let mut reconstructor =
+                    Reconstructor::new(&viewshed, ring_data.metadata.reserved_ring_size, angle)?;
+                reconstructor.sector_ring_data = ring_data.get_sector(angle_integer)?;
+                polygon = reconstructor.reconstruct_sector(polygon)?;
+            }
+
+            Ok(polygon)
+        };
+
+        polygon = match source {
+            crate::output::ring_data::Source::Directory(_) => constructor_by_sectors()?,
+            crate::output::ring_data::Source::SQLite(db_path) => {
+                let db = crate::cpu::storage::db::DB::new(db_path)?;
+                let mut reconstructor =
+                    Reconstructor::new(&viewshed, ring_data.metadata.reserved_ring_size, 0.0)?;
+
+                let segments = db.load_segments_for_tvs_id(reconstructor.pov_id)?;
+                reconstructor.parse_polar_segments(&segments)
+            }
+            #[cfg(test)]
+            crate::output::ring_data::Source::RAM(_) => constructor_by_sectors()?,
+        };
 
         Ok(polygon)
     }
@@ -143,7 +164,7 @@ impl<'viewshed> Reconstructor<'viewshed> {
             self.current_angle,
             self.sector_ring_data.len()
         );
-        self.parse_sector(viewshed)
+        self.parse_fjall_sector(viewshed)
     }
 
     /// Read the next value in the ring data array.
@@ -157,7 +178,7 @@ impl<'viewshed> Reconstructor<'viewshed> {
     }
 
     /// Parse an entire sector (angle) of ring data.
-    fn parse_sector(
+    fn parse_fjall_sector(
         &mut self,
         mut viewshed_so_far: geo::MultiPolygon,
     ) -> Result<geo::MultiPolygon> {
@@ -215,6 +236,36 @@ impl<'viewshed> Reconstructor<'viewshed> {
         }
 
         Ok(viewshed_so_far)
+    }
+
+    /// Convert polar segements to `GeoJson`.
+    pub fn parse_polar_segments(
+        &mut self,
+        data: &[Vec<crate::cpu::storage::segments::Segment>],
+    ) -> geo::MultiPolygon {
+        let mut viewshed_so_far = geo::MultiPolygon::empty();
+        for (angle, segments) in data.iter().enumerate() {
+            #[expect(
+                clippy::as_conversions,
+                clippy::cast_precision_loss,
+                reason = "The angle will always fit in `f32`"
+            )]
+            {
+                self.current_angle = angle as f32;
+            };
+            for segment in segments {
+                let opening = u32::from(segment.start());
+                let closing = u32::from(segment.start() + segment.distance());
+                let polygon = self.make_visible_polygon(
+                    opening,
+                    closing,
+                    &kernel::elevations::Direction::Forward,
+                );
+                viewshed_so_far = viewshed_so_far.union(&polygon);
+            }
+        }
+
+        viewshed_so_far
     }
 
     /// Convert an index along a line of sight into a coordinate.
@@ -491,10 +542,11 @@ mod test {
     }
 
     fn viewshed_in_hole(backend: &crate::config::Backend) {
+        let temp_db = tempfile::NamedTempFile::new().unwrap();
         let viewshed = crate::output::ascii::make_viewshed(
             &kernel::tests::dems::bigger_dem(),
             geo::Coord { x: 5.0, y: 5.0 },
-            crate::run::compute::test::default_config(backend.clone()),
+            crate::run::compute::test::default_config(backend.clone(), &temp_db),
         );
 
         let expected = &[
@@ -523,10 +575,11 @@ mod test {
     }
 
     fn viewshed_on_summit(backend: crate::config::Backend) {
+        let temp_db = tempfile::NamedTempFile::new().unwrap();
         let viewshed = crate::output::ascii::make_viewshed(
             &kernel::tests::dems::bigger_dem(),
             geo::Coord { x: 6.0, y: 6.0 },
-            crate::run::compute::test::default_config(backend),
+            crate::run::compute::test::default_config(backend, &temp_db),
         );
 
         assert_viewshed(
@@ -549,10 +602,11 @@ mod test {
     }
 
     fn viewshed_near_summit(backend: &crate::config::Backend) {
+        let temp_db = tempfile::NamedTempFile::new().unwrap();
         let viewshed = crate::output::ascii::make_viewshed(
             &kernel::tests::dems::bigger_dem(),
             geo::Coord { x: 5.0, y: 6.0 },
-            crate::run::compute::test::default_config(backend.clone()),
+            crate::run::compute::test::default_config(backend.clone(), &temp_db),
         );
 
         let expected = &[
@@ -581,12 +635,13 @@ mod test {
     }
 
     fn viewshed_in_hole_tall_observer(backend: crate::config::Backend) {
+        let temp_db = tempfile::NamedTempFile::new().unwrap();
         let viewshed = crate::output::ascii::make_viewshed(
             &kernel::tests::dems::bigger_dem(),
             geo::Coord { x: 5.0, y: 5.0 },
             run::compute::Config {
                 observer_height: 20.0,
-                ..crate::run::compute::test::default_config(backend)
+                ..crate::run::compute::test::default_config(backend, &temp_db)
             },
         );
 

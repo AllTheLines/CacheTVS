@@ -1,11 +1,7 @@
 //! For kernels that run each angle in parallel.
 
-use crate::cpu::storage::Storage;
 use crate::los_pack::LineOfSightPacked;
-use color_eyre::{
-    Result,
-    eyre::{ContextCompat as _, eyre},
-};
+use color_eyre::{Result, eyre::eyre};
 use rayon::iter::{IntoParallelIterator as _, ParallelIterator as _};
 
 impl super::compute::Compute<'_> {
@@ -18,18 +14,36 @@ impl super::compute::Compute<'_> {
         let max_los = usize::try_from(self.dem.max_los_as_points)?;
         let tvs_size = max_los * max_los;
 
-        #[expect(unused, reason = "We'll use this bit of code soon")]
-        let is_process_ring_data = Self::is_process_viewsheds(&self.config.process);
-
         let mut surfaces = vec![0.0f32; tvs_size];
         let mut longest = vec![(0u16, 0u32); tvs_size];
 
-        let storage = if let Some(viewshed_out) = &self.config.viewshed_out {
-            Storage::new(viewshed_out)
-        } else {
-            Storage::new_noop()
-        };
+        let db_worker = if Self::is_process_viewsheds(&self.config.process) {
+            if std::fs::exists(&self.config.viewsheds_db_path)? {
+                std::fs::remove_file(&self.config.viewsheds_db_path)?;
+            }
 
+            #[expect(
+                clippy::as_conversions,
+                clippy::cast_precision_loss,
+                clippy::cast_sign_loss,
+                clippy::cast_possible_truncation,
+                reason = "Should always fit in `u32`"
+            )]
+            let max_los_metric = (self.dem.max_los_as_points as f32 * self.dem.scale) as u32;
+
+            let db = crate::cpu::storage::db::DB::new(&self.config.viewsheds_db_path)?;
+            db.save_metadata(&crate::cpu::storage::metadata::MetaData {
+                width: self.dem.width,
+                scale: self.dem.scale,
+                max_line_of_sight: max_los_metric,
+                reserved_ring_size: 0,
+                centre: self.dem.centre,
+            })?;
+
+            crate::cpu::storage::worker::Worker::new(&self.config.viewsheds_db_path)
+        } else {
+            crate::cpu::storage::worker::Worker::new_noop()
+        };
 
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.config.thread_count)
@@ -42,9 +56,7 @@ impl super::compute::Compute<'_> {
             };
 
             let elevations = &self.dem.elevations;
-            let refraction = self.config.refraction;
-            let scale = self.config.scale;
-            let observer_height = self.config.observer_height;
+            let config = self.config.clone();
 
             pool.install(move || {
                 (0u16..360u16)
@@ -54,13 +66,11 @@ impl super::compute::Compute<'_> {
                         tracing::info!("starting angle: {angle}");
 
                         let output = crate::cpu::kernel(
-                            &storage,
+                            &db_worker,
                             elevations,
                             max_los,
                             f32::from(angle),
-                            refraction,
-                            scale,
-                            observer_height,
+                            &config,
                         );
 
                         tracing::info!("finished angle in {:?}", start.elapsed());
@@ -88,19 +98,6 @@ impl super::compute::Compute<'_> {
 
         self.render_total_surfaces()?;
         self.render_longest_lines()?;
-
-        if Self::is_process_viewsheds(&self.config.process)
-            && self.config.output_directory.is_some()
-        {
-            for sector in 0..crate::run::compute::SECTOR_STEPS {
-                self.save_sector_ring_data(
-                    sector,
-                    self.ring_data
-                        .get(usize::from(sector))
-                        .context("Sector not found in final ring data")?,
-                )?;
-            }
-        }
 
         Ok(())
     }

@@ -35,6 +35,7 @@ time cargo run --features ring_data --release -- \
 	--rings-per-km 3 \
 	--backend "$backend" \
 	--process all \
+	--viewsheds-db-path ./output/viewsheds.db \
 	--thread-count 1
 
 if [[ $backend == "vulkan" ]]; then
@@ -47,9 +48,15 @@ viewshed_file="output/viewsheds/-3.122999906539917-51.48979949951172.json"
 rm $viewshed_file || true
 
 # Reconstruct a viewshed from the centre of the DEM
-time cargo run --release -- \
-	viewshed output \
-	-- -3.1230,51.4898
+if [[ $backend == "cpu" ]]; then
+	time cargo run --release -- \
+		viewshed ./output/viewsheds.db ./output \
+		-- -3.1230,51.4898
+else
+	time cargo run --release -- \
+		viewshed ./output ./output \
+		-- -3.1230,51.4898
+fi
 
 ls -alh output/viewsheds
 

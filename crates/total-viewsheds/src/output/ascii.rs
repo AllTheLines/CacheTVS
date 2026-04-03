@@ -18,16 +18,22 @@ pub fn make_viewshed(
         .to_degrees(viewshed_pov_metric)
         .unwrap();
 
-    let compute = crate::run::compute::test::compute(&mut dem, config);
+    let compute = crate::run::compute::test::compute(&mut dem, config.clone());
 
-    let mut viewshed = crate::output::viewshed::Viewshed::reconstruct(
-        &super::ring_data::Source::RAM(crate::output::ring_data::AllData {
-            metadata: compute.metadata().unwrap(),
-            ring_data: crate::output::ring_data::SectorData::AllSectors(compute.ring_data),
-        }),
-        coord_lonlat,
-    )
-    .unwrap();
+    let polygon = match config.backend.clone() {
+        #[expect(clippy::unimplemented, reason = "One day...")]
+        crate::config::Backend::Cuda => unimplemented!("CUDA not supported yet"),
+        crate::config::Backend::Vulkan | crate::config::Backend::VulkanCPU => {
+            &super::ring_data::Source::RAM(crate::output::ring_data::AllData {
+                metadata: compute.metadata().unwrap(),
+                ring_data: crate::output::ring_data::SectorData::AllSectors(compute.ring_data),
+            })
+        }
+        crate::config::Backend::CPU => &super::ring_data::Source::SQLite(config.viewsheds_db_path),
+    };
+
+    let mut viewshed =
+        crate::output::viewshed::Viewshed::reconstruct(polygon, coord_lonlat).unwrap();
 
     let viewsheder = crate::output::viewshed::Viewshed {
         dem: &dem,
@@ -88,7 +94,7 @@ pub fn make_viewshed(
 
     let mut ascii = Vec::new();
     let row_count = raster_width.div_euclid(2);
-    #[expect(clippy::needless_range_loop, reason="clippy is wrong")]
+    #[expect(clippy::needless_range_loop, reason = "clippy is wrong")]
     for row in 0..row_count {
         let mut viewshed_line = String::new();
         for x in 0..raster_width {
