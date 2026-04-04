@@ -2,6 +2,7 @@
 
 use color_eyre::Result;
 
+// TODO: Rename to `LonLatCoord`.
 /// A latitude/longtitude coordinate.
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Default)]
 pub struct LatLonCoord(pub geo::Coord);

@@ -89,6 +89,10 @@ impl super::compute::Compute<'_> {
             });
         };
 
+        if Self::is_process_viewsheds(&self.config.process) {
+            crate::cpu::storage::db::DB::new(&self.config.viewsheds_db_path)?.create_indexes()?;
+        }
+
         self.total_surfaces = surfaces;
         let packed: Result<Vec<LineOfSightPacked>> = longest
             .iter()
