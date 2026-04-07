@@ -116,22 +116,28 @@ impl Tile {
         let (centre_x, centre_y) = (width as f64 / 2.0f64, height as f64 / 2.0f64);
 
         let raster = dataset.geo_transform()?;
+        let x_top_left = raster[0];
+        let pixel_width = raster[1].abs();
+        let y_top_left = raster[3];
+        let pixel_height = raster[5].abs();
         #[expect(clippy::suboptimal_flops, reason = "Not relevant")]
         let (x_world, y_world) = (
-            raster[0] + centre_x * raster[1] + centre_y * raster[2],
-            raster[3] + centre_x * raster[4] + centre_y * raster[5],
+            x_top_left + (centre_x * pixel_width),
+            y_top_left - (centre_y * pixel_height),
         );
+        let crs = &dataset.spatial_ref()?.to_proj4()?;
 
         let mut converted = (x_world, y_world, 0.0f64);
         proj4rs::transform::transform(
-            &proj4rs::Proj::from_proj_string(&dataset.spatial_ref()?.to_proj4()?)?,
+            &proj4rs::Proj::from_proj_string(crs)?,
             &projection::Converter::degrees_projection()?,
             &mut converted,
         )?;
 
-        Ok(crate::projection::LatLonCoord(
-            geo::coord! { x: converted.0, y: converted.1 },
-        ))
+        Ok(crate::projection::LatLonCoord(geo::coord! {
+            x: converted.0.to_degrees(),
+            y: converted.1.to_degrees()
+        }))
     }
 
     /// Get the lat/lon centre of the tile by querying the projection's definition. This is more
@@ -183,7 +189,7 @@ mod test {
     #[test]
     fn get_centre_by_raster() {
         let config = crate::config::Compute {
-            input: "../../benchmarks/samples/4326_10x10.tiff".into(),
+            input: "../../benchmarks/samples/aeqd_10x10.tiff".into(),
             ..Default::default()
         };
         let tile = Tile::load(&config).unwrap();
@@ -191,7 +197,7 @@ mod test {
             tile.centre,
             crate::projection::LatLonCoord(geo::Coord {
                 x: -0.1278,
-                y: 51.507400000000004
+                y: 51.5074
             })
         );
     }
