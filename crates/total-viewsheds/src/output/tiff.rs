@@ -6,7 +6,7 @@ use color_eyre::Result;
 pub fn save(dem: &crate::dem::DEM, data: &[f32], path: &std::path::PathBuf) -> Result<()> {
     let driver = gdal::DriverManager::get_driver_by_name("GTiff")?;
 
-    let mut dataset = driver.create(
+    let mut dataset = driver.create_with_band_type::<f32, _>(
         path,
         usize::try_from(dem.tvs_width)?,
         usize::try_from(dem.tvs_width)?,
@@ -15,7 +15,7 @@ pub fn save(dem: &crate::dem::DEM, data: &[f32], path: &std::path::PathBuf) -> R
 
     // Set the origin and resolution
     let scale = f64::from(dem.scale);
-    let top_left = f64::from(dem.tvs_width) * scale;
+    let top_left = (f64::from(dem.tvs_width) * scale) / 2.0f64;
     // [top_left_x, pixel_width, rotation_x, top_left_y, rotation_y, pixel_height]
     let geotransform = [-top_left, scale, 0.0f64, top_left, 0.0f64, -scale];
     dataset.set_geo_transform(&geotransform)?;
