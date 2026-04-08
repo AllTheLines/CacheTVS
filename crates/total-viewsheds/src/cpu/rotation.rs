@@ -1,6 +1,7 @@
 //! Rotate the DEM, but just the so-called "chocolate bar" region.
 
 use kernel::rotation::ANGLE_SHIFT;
+use std::collections::HashMap;
 
 /// `generate_rotation` generates a rotation "map" for a given elevation list
 /// Adapted from [this stack overflow answer](https://stackoverflow.com/a/71901621)
@@ -11,7 +12,7 @@ use kernel::rotation::ANGLE_SHIFT;
     clippy::cast_precision_loss,
     reason = "so long as max_los^2 < 2^24, the following `as` conversions are entirely safe"
 )]
-pub fn generate_rotation(elevs: &[i16], angle: f32, max_los: usize) -> (Vec<i32>, Vec<i16>) {
+pub fn generate_rotation(elevs: &[i16], angle: f32, max_los: usize) -> (HashMap<usize, Vec<usize>>, Vec<i16>) {
     let width = (max_los * 3) as isize;
     #[expect(clippy::integer_division, reason = "we don't need precision here")]
     {
@@ -55,6 +56,43 @@ pub fn generate_rotation(elevs: &[i16], angle: f32, max_los: usize) -> (Vec<i32>
         }
     }
 
+    // rotate "forwards" guaranteeing each TVS_id has a destination
+    let radius = (max_los - 1) as f32 / 2.0;
+    let mut store_destination = HashMap::new();
+
+    let (sin, cos) = (
+        f32::sin(-(angle + ANGLE_SHIFT).to_radians()),
+        f32::cos(-(angle + ANGLE_SHIFT).to_radians()),
+    );
+
+    for x in 0..max_los {
+        let x_sin = (x as f32 - x_center) * sin;
+        let x_cos = (x as f32 - x_center) * cos;
+        for y in 0..max_los {
+            let circ_x = x as f32 - radius;
+            let circ_y = y as f32 - radius;
+
+            if circ_x.hypot(circ_y) < radius {
+                continue;
+            }
+
+            let y_sin = (y as f32 - radius) * sin;
+            let y_cos = (y as f32 - radius) * cos;
+
+            let x_rot = (x_cos - y_sin + radius).round() as usize;
+            let y_rot = (y_cos + x_sin + radius).round() as usize;
+
+            // add the tvs_id to the new_idx's "locations to store" so that when this new index is calculated
+            // inside of the kernel, it can
+            let from = x_rot.clamp(0, max_los - 1) * max_los + y_rot.clamp(0, max_los - 1);
+
+            let to = x * (max_los - 1) + y;
+
+            store_destination.entry(from).or_insert(vec![]).push(to)
+
+        }
+    }
+
     debug_assert_eq!(
         rotation.len() as isize,
         max_los as isize * (2 * max_los as isize),
@@ -79,7 +117,7 @@ pub fn generate_rotation(elevs: &[i16], angle: f32, max_los: usize) -> (Vec<i32>
         })
         .collect::<Vec<i16>>();
 
-    (rotation, fill_in_elevations(&elevations, max_los))
+    (store_destination, fill_in_elevations(&elevations, max_los))
 }
 
 /// `fill_in_elevations` will fill in "blank" elevations from NASA data with the last seen elevation

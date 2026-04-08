@@ -81,11 +81,8 @@ pub fn kernel(
         config.refraction,
         config.scale,
     );
-    for (line, line_indexes) in izip!(
-        rotated_elevations.chunks_exact(width),
-        indexes.chunks_exact(width),
-    ) {
-        for (pov, (&pov_height, &result_dem_id)) in
+    for (y, line) in rotated_elevations.chunks_exact(width).enumerate() {
+        for (pov, (&pov_height, &res)) in
             izip!(line.iter().take(max_los), line_indexes.iter().take(max_los)).enumerate()
         {
             let result_tvs_id = dem_id_to_tvs_id(result_dem_id, 3 * max_los, max_los);
@@ -130,6 +127,7 @@ pub fn kernel(
                 if cfg!(any(test, feature = "ring_data"))
                     && crate::run::compute::Compute::is_process_viewsheds(&config.process)
                 {
+                    for
                     db_worker.store_bitmap(result_dem_id as u32, angle as u16, &point_visibility);
                 }
             }
