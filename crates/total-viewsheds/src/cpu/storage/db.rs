@@ -1,5 +1,6 @@
 //! Conventional API for the DB. See `worker.rs` for how to write to the DB from the kernel.
 
+use std::path::Path;
 use color_eyre::Result;
 
 /// Sqlite DB connection details.
@@ -10,7 +11,7 @@ pub struct DB {
 
 impl DB {
     /// Instantitate.
-    pub fn new(db_path: &std::path::Path) -> Result<Self> {
+    pub fn new<P: AsRef<Path>>(db_path: P) -> Result<Self> {
         let connection = rusqlite::Connection::open(db_path)?;
         Ok(Self { connection })
     }

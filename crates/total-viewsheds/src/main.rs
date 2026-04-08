@@ -1,6 +1,7 @@
 //! Total Viewshed Calculator
 #![feature(portable_simd)]
 #![feature(specialization)]
+#![feature(mpmc_channel)]
 #![expect(
     incomplete_features,
     reason = "our usage isn't crazy and unlikely to break"
@@ -22,6 +23,7 @@
 
 extern crate core;
 
+use std::mem;
 use clap::Parser as _;
 use color_eyre::eyre::Result;
 use tracing_subscriber::{Layer as _, layer::SubscriberExt as _, util::SubscriberInitExt as _};
@@ -115,7 +117,7 @@ fn main() -> Result<()> {
 /// Setup logging.
 fn setup_logging() -> Result<()> {
     let filters = tracing_subscriber::EnvFilter::builder()
-        .with_default_directive("total_viewsheds=info".parse()?)
+        .with_default_directive("total_viewsheds=debug".parse()?)
         .from_env_lossy();
     let filter_layer = tracing_subscriber::fmt::layer().with_filter(filters);
     let tracing_setup = tracing_subscriber::registry().with(filter_layer);
@@ -126,7 +128,11 @@ fn setup_logging() -> Result<()> {
 
 /// Run computations
 fn compute(config: &config::Compute) -> Result<()> {
-    let tile = tile::Tile::load(config)?;
+    if !config.output_dir.exists() {
+        std::fs::create_dir_all(&config.output_dir)?;
+    }
+
+    let mut tile = tile::Tile::load(config)?;
     let scale = config.scale.unwrap_or(tile.scale);
 
     #[expect(
@@ -140,7 +146,7 @@ fn compute(config: &config::Compute) -> Result<()> {
 
     let mut dem = crate::dem::DEM::new(tile.centre, tile.width, scale, max_line_of_sight)?;
 
-    dem.elevations.clone_from(&tile.data);
+    dem.elevations = mem::take(&mut tile.data);
 
     // Free up RAM
     drop(tile);
@@ -161,6 +167,7 @@ fn compute(config: &config::Compute) -> Result<()> {
         disable_render_image: config.disable_image_render,
         viewsheds_db_path: config.viewsheds_db_path.clone(),
     };
+
     let mut compute = run::compute::Compute::new(compute_config, &mut dem)?;
     compute.run()?;
     Ok(())

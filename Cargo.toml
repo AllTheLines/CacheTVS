@@ -84,3 +84,6 @@ integer_division_remainder_used = "allow"
 modulo_arithmetic = "allow"
 
 multiple_unsafe_ops_per_block = "allow"
+
+# i dont write docs with punctuation but you can still tell what im saying
+doc_paragraphs_missing_punctuation = "allow"

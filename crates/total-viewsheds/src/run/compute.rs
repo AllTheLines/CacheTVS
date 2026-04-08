@@ -7,7 +7,9 @@ use std::path::PathBuf;
 pub const SECTOR_STEPS: u16 = 180;
 
 /// Handles all the computations.
-pub struct Compute<'compute> {
+pub struct Compute<'compute>
+where 'static: 'compute
+{
     /// User configuration.
     pub config: Config,
     /// Vulkan GPU manager
@@ -382,7 +384,7 @@ pub mod test {
         #[rustfmt::skip]
         expect_eq!(
             compute.longest_lines.iter()
-            .map(|los| los.angle().unwrap())
+            .map(|los| los.angle())
             .collect::<Vec<_>>(),
             [
                 0, 0,  0,  0,
