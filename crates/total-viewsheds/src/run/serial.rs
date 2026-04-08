@@ -186,7 +186,7 @@ impl super::compute::Compute<'_> {
             // the forward lines (0-179°) angles with the backward lines (180-359°). This means
             // we have to have this awkward check here where a forward line takes precedence over
             // an equally long backward line.
-            if absolute == existing.distance() && candidate > &0.0 && existing.angle()? >= 180 {
+            if absolute == existing.distance() && candidate > &0.0 && existing.angle() >= 180 {
                 let packed = crate::los_pack::LineOfSightPacked::new(absolute, sector)?;
                 *existing = packed;
             }

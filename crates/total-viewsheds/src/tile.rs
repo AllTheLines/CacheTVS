@@ -23,6 +23,10 @@ pub struct Tile {
 impl Tile {
     /// Load a tile.
     pub fn load(config: &crate::config::Compute) -> Result<Self> {
+        if !config.input.exists() {
+            color_eyre::eyre::bail!("Input file not found: {}", config.input.display());
+        }
+
         let dataset = gdal::Dataset::open(&config.input)?;
         let (width_usize, height_usize) = dataset.raster_size();
         if width_usize != height_usize {

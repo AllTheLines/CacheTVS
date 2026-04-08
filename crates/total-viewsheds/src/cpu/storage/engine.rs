@@ -11,13 +11,13 @@ where
     Self: Send + Sync,
 {
     /// The
-    fn store_segments(&self, tvs_id: u32, segments: super::segments::PolarSegments);
+    fn store_segments(&self, tvs_id: u64, segments: super::segments::PolarSegments);
 }
 
 /// `NoopEngine` stores no `PolarSegments`, it exists for testing purposes
 pub struct Noop;
 impl Engine for Noop {
-    fn store_segments(&self, _tvs_id: u32, _segments: super::segments::PolarSegments) {}
+    fn store_segments(&self, _tvs_id: u64, _segments: super::segments::PolarSegments) {}
 }
 
 /// Stores all `PolarSegments` in a sqlite database. It uses a channel to communicate with a worker thread
@@ -44,13 +44,13 @@ pub struct Sqlite {
     /// meaning so long as `SqliteEngine` isn't being dropped it is `Some`
     worker_handle: Option<thread::JoinHandle<Result<(), rusqlite::Error>>>,
     /// `sender` is a mpsc channel that communicates segments to store to the `worker_handle`
-    sender: mpsc::Sender<(u32, super::segments::PolarSegments)>,
+    sender: mpsc::SyncSender<(u64, super::segments::PolarSegments)>,
 }
 
 impl Sqlite {
     /// Create a new `SqliteEngine` storing the database at `path`
     pub fn new<P: AsRef<Path>>(path: P) -> Self {
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = mpsc::sync_channel(1024);
 
         // make an owned copy of Path so that it can be moved into the worker
         let db_path = PathBuf::from(path.as_ref());
@@ -66,7 +66,7 @@ impl Sqlite {
 }
 
 impl Engine for Sqlite {
-    fn store_segments(&self, tvs_id: u32, segments: super::segments::PolarSegments) {
+    fn store_segments(&self, tvs_id: u64, segments: super::segments::PolarSegments) {
         #[expect(
             clippy::expect_used,
             reason = "we should crash to make sure not to deadlock"
@@ -94,7 +94,7 @@ impl Drop for Sqlite {
         //
         // Once the sender is dropped the thread will be unblocked and complete, and we
         // `join` it to make sure the thread runs its cleanup code (mainly committing open transactions)
-        let (tx, _) = mpsc::channel();
+        let (tx, _) = mpsc::sync_channel(1);
         let orig = std::mem::replace(&mut self.sender, tx);
         drop(orig);
 

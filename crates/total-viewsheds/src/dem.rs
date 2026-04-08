@@ -26,7 +26,7 @@ pub struct DEM {
     /// point further inside the DEM.
     pub tvs_width: u32,
     /// The total number of points in the DEM.
-    pub size: u32,
+    pub size: u64,
     /// The size of each point in meters.
     pub scale: f32,
     /// The geographic location of the centre of the DEM tile.
@@ -45,7 +45,7 @@ impl DEM {
         scale: f32,
         max_line_of_sight: u32,
     ) -> Result<Self> {
-        let size = width * width;
+        let size: u64 = u64::from(width) * u64::from(width);
         #[expect(
             clippy::cast_possible_truncation,
             clippy::as_conversions,

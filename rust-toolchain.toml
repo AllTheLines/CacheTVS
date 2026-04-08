@@ -1,5 +1,5 @@
 # Nigtly is required for the specialization, const generic exprs, and portable SIMD.
 # Once all are stabilized we can move to a stable toolchain
 [toolchain]
-channel = "nightly-2025-10-20"
+channel = "nightly-2026-04-02"
 components = ["rustfmt", "clippy"]
