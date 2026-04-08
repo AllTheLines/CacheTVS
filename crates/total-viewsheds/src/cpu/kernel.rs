@@ -22,10 +22,10 @@ pub struct OutputData {
     clippy::integer_division,
     reason = "i32 is constructed from (i32, i32) converting back should succeed"
 )]
-/// Turns the `dem_id` to the `tvs_id` so that the result can be stored in a heatmap
-fn dem_id_to_tvs_id(dem_id: i32, width: usize, max_los: usize) -> i32 {
-    let dem_x = (dem_id / width as i32) - max_los as i32;
-    let dem_y = (dem_id % width as i32) - max_los as i32;
+/// `dem_to_pov` turns the `dem_id` to the `pov_id` so that the result can be stored in a heatmap
+fn dem_id_to_tvs_id(dem_id: i64, width: usize, max_los: usize) -> i64 {
+    let dem_x = (dem_id / width as i64) - max_los as i64;
+    let dem_y = (dem_id % width as i64) - max_los as i64;
 
     let radius = (max_los - 1) as f32 / 2.0;
     let circ_x = dem_x as f32 - radius;
@@ -33,7 +33,7 @@ fn dem_id_to_tvs_id(dem_id: i32, width: usize, max_los: usize) -> i32 {
 
     let dist = circ_x.hypot(circ_y);
     if dist < radius {
-        dem_x * (max_los as i32) + dem_y
+        dem_x * (max_los as i64) + dem_y
     } else {
         -1
     }
@@ -66,7 +66,7 @@ pub fn kernel(
     let mut longest = vec![0.0f32; max_los * max_los];
 
     let (indexes, rotated_elevations) =
-        super::rotation::generate_rotation(elevation_map, angle, max_los);
+        super::rotation::generate_rotation(elevation_map, f64::from(angle), max_los);
 
     assert_eq!(
         rotated_elevations.len(),
@@ -97,7 +97,7 @@ pub fn kernel(
                 clippy::cast_possible_truncation,
                 reason = "max_los^2 < 2^31"
             )]
-            if result_tvs_id < 0i32 || result_tvs_id >= (max_los * max_los) as i32 {
+            if result_tvs_id < 0i64 || result_tvs_id >= (max_los * max_los) as i64 {
                 continue;
             }
 
