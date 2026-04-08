@@ -1,159 +1,161 @@
 //! For kernels that run each angle in parallel.
 
+use crate::cpu::kernel::OutputData;
+use crate::cpu::{kernel, storage};
 use crate::los_pack::LineOfSightPacked;
-use color_eyre::{Result, eyre::eyre};
-use rayon::iter::{IntoParallelIterator as _, ParallelIterator as _};
+use color_eyre::Result;
+use std::sync::{mpmc, mpsc};
+use std::thread::JoinHandle;
+use std::{thread, time};
+use std::fmt::format;
 
-impl super::compute::Compute<'_> {
-    #[expect(
-        clippy::panic_in_result_fn,
-        reason = "It's too complicated and of no benefit to get the errors from the threads"
-    )]
-    /// `run_parallel` runs the CPU kernel in parallel
-    pub fn run_parallel(&mut self) -> Result<()> {
-        let max_los = usize::try_from(self.dem.max_los_as_points)?;
-        let tvs_size = max_los * max_los;
+/// `Work` holds all data needed for a worker to do a line of sight
+/// calculation
+struct Work {
+    /// angle of rotation for line of sight
+    angle: u16,
+}
 
-        let mut surfaces = vec![0.0f32; tvs_size];
-        let mut longest = vec![(0u16, 0u32); tvs_size];
+fn kernel_worker(
+    storage_worker: &storage::worker::Worker,
+    elevations: &[i16],
+    work_todo: mpmc::Receiver<Work>,
+    res: &mpsc::Sender<OutputData>,
+    config: &crate::run::compute::Config,
+    max_los: usize,
+) {
+    let mut output = OutputData {
+        surfaces: vec![0.0f32; max_los * max_los],
+        longest: vec![LineOfSightPacked::new(0, 0).unwrap(); max_los * max_los],
+    };
 
-        let db_worker = if Self::is_process_viewsheds(&self.config.process) {
-            if std::fs::exists(&self.config.viewsheds_db_path)? {
-                std::fs::remove_file(&self.config.viewsheds_db_path)?;
-            }
-
-            #[expect(
-                clippy::as_conversions,
-                clippy::cast_precision_loss,
-                clippy::cast_sign_loss,
-                clippy::cast_possible_truncation,
-                reason = "Should always fit in `u32`"
-            )]
-            let max_los_metric = (self.dem.max_los_as_points as f32 * self.dem.scale) as u32;
-
-            let db = crate::cpu::storage::db::DB::new(&self.config.viewsheds_db_path)?;
-            db.save_metadata(&crate::cpu::storage::metadata::MetaData {
-                width: self.dem.width,
-                scale: self.dem.scale,
-                max_line_of_sight: max_los_metric,
-                reserved_ring_size: 0,
-                centre: self.dem.centre,
-            })?;
-
-            crate::cpu::storage::worker::Worker::new(&self.config.viewsheds_db_path)
-        } else {
-            crate::cpu::storage::worker::Worker::new_noop()
-        };
-
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(self.config.thread_count)
-            .build()?;
-
-        {
-            let accumulating = AccumulatingData {
-                surfaces: std::sync::Mutex::new(&mut surfaces),
-                longest: std::sync::Mutex::new(&mut longest),
-            };
-
-            let elevations = &self.dem.elevations;
-            let config = self.config.clone();
-
-            pool.install(move || {
-                (0u16..360u16)
-                    .into_par_iter()
-                    .map(|angle| {
-                        let start = std::time::Instant::now();
-                        tracing::info!("starting angle: {angle}");
-
-                        let output = crate::cpu::kernel(
-                            &db_worker,
-                            elevations,
-                            max_los,
-                            f32::from(angle),
-                            &config,
-                        );
-
-                        tracing::info!("finished angle in {:?}", start.elapsed());
-                        (angle, output)
-                    })
-                    .for_each(|(angle, output)| {
-                        let result = accumulating.handle_parallel_per_angle_output(angle, output);
-                        #[expect(
-                            clippy::panic,
-                            reason = "No point accumulating errors and returning them"
-                        )]
-                        if let Err(error) = result {
-                            panic!("{error:?}");
-                        }
-                    });
-            });
-        };
-
-        if Self::is_process_viewsheds(&self.config.process) {
-            crate::cpu::storage::db::DB::new(&self.config.viewsheds_db_path)?.create_indexes()?;
-        }
-
-        self.total_surfaces = surfaces;
-        let packed: Result<Vec<LineOfSightPacked>> = longest
-            .iter()
-            .map(|&(angle, distance): &(u16, u32)| LineOfSightPacked::new(distance, angle))
-            .collect();
-        self.longest_lines = packed?;
-
-        self.render_total_surfaces()?;
-        self.render_longest_lines()?;
-
-        Ok(())
+    for work in work_todo {
+        tracing::info!("starting work on {}", work.angle);
+        let now = time::Instant::now();
+        kernel(
+            storage_worker,
+            elevations,
+            &mut output,
+            max_los,
+            f32::from(work.angle),
+            config,
+        );
+        tracing::info!("finished {} in {:?}", work.angle, now.elapsed());
     }
+    res.send(output).expect("");
 }
 
-/// A struct to accumulate data as it comes from the angle compute threads.
-struct AccumulatingData<'accumulating> {
-    /// Total surfaces.
-    surfaces: std::sync::Mutex<&'accumulating mut Vec<f32>>,
-    /// Longest lines.
-    longest: std::sync::Mutex<&'accumulating mut Vec<(u16, u32)>>,
-}
+fn compilation_worker(
+    work: mpsc::Receiver<OutputData>,
+    max_los: usize,
+) -> (Vec<f32>, Vec<LineOfSightPacked>) {
+    let mut surfaces = vec![0.0f32; max_los * max_los];
+    let mut longest = vec![LineOfSightPacked::new(0, 0).unwrap(); max_los * max_los];
 
-impl AccumulatingData<'_> {
-    /// Handle output from angle threads.
-    fn handle_parallel_per_angle_output(
-        &self,
-        angle: u16,
-        output: crate::cpu::kernel::OutputData,
-    ) -> Result<()> {
-        self.surfaces
-            .lock()
-            .map_err(|err| eyre!("{err:?}"))?
+    for data in work {
+        surfaces
             .iter_mut()
-            .zip(output.surfaces)
+            .zip(data.surfaces)
             .for_each(|(to, from)| {
                 *to += from;
             });
 
-        self.longest
-            .lock()
-            .map_err(|err| eyre!("{err:?}"))?
-            .iter_mut()
-            .zip(output.longest)
-            .for_each(|(to, from)| {
-                #[expect(
-                    clippy::as_conversions,
-                    clippy::cast_possible_truncation,
-                    clippy::cast_sign_loss,
-                    reason = "distances always fit in u32"
-                )]
-                let converted = from as u32;
-                if converted > to.1 {
-                    *to = (angle, converted);
-                    return;
-                }
+        longest.iter_mut().zip(data.longest).for_each(|(to, from)| {
+            *to = to.max(from);
+        });
+    }
 
-                // let the smallest angle win due to keep consistent in a multithreaded environment
-                if angle < to.0 && converted != 0 && converted == to.1 {
-                    *to = (angle, converted);
-                }
-            });
+    (surfaces, longest)
+}
+
+impl super::compute::Compute<'_> {
+    /// `run_parallel` runs the CPU kernel in parallel
+    pub fn run_parallel(&mut self) -> Result<()> {
+        let max_los = usize::try_from(self.dem.max_los_as_points)?;
+
+        let elevations = &self.dem.elevations;
+        let config = &self.config;
+
+        let (local_send, kernel_receive) = mpmc::channel();
+        let (kernel_send, compile_receive) = mpsc::channel();
+
+        let borrow_elevations = &elevations;
+
+        let (out_surfaces, out_longest) = thread::scope(|s| {
+            let worker_handles: Result<Vec<_>> = (0..self.config.thread_count).map(|id| {
+                let db_worker = if Self::is_process_viewsheds(&self.config.process) {
+                    #[expect(
+                        clippy::as_conversions,
+                        clippy::cast_precision_loss,
+                        clippy::cast_sign_loss,
+                        clippy::cast_possible_truncation,
+                        reason = "Should always fit in `u32`"
+                    )]
+                    let max_los_metric =
+                        (self.dem.max_los_as_points as f32 * self.dem.scale) as u32;
+
+                    let db_path = self.config
+                        .viewsheds_db_path
+                        .join(format!("{id}.db"));
+
+                    let db = crate::cpu::storage::db::DB::new(&db_path)?;
+                    db.save_metadata(&crate::cpu::storage::metadata::MetaData {
+                        width: self.dem.width,
+                        scale: self.dem.scale,
+                        max_line_of_sight: max_los_metric,
+                        reserved_ring_size: 0,
+                        centre: self.dem.centre,
+                    })?;
+
+                    crate::cpu::storage::worker::Worker::new(&db_path)
+                } else {
+                    crate::cpu::storage::worker::Worker::new_noop()
+                };
+
+                let kernel_send = kernel_send.clone();
+                let kernel_receive = kernel_receive.clone();
+
+                Ok(s.spawn(move || {
+                    kernel_worker(
+                        &db_worker,
+                        borrow_elevations,
+                        kernel_receive,
+                        &kernel_send,
+                        config,
+                        max_los,
+                    );
+                }))
+            })
+            .collect::<Result<Vec<_>>>();
+
+            let handles = worker_handles.expect("");
+
+            for angle in 0u16..360u16 {
+                local_send.send(Work { angle }).unwrap();
+            }
+
+            drop(local_send);
+            drop(kernel_receive);
+            drop(kernel_send);
+
+            let (surfaces, longest) = compilation_worker(compile_receive, max_los);
+
+            for handle in handles {
+                handle.join().unwrap();
+            }
+
+            (surfaces, longest)
+        });
+
+        self.total_surfaces = out_surfaces;
+        self.longest_lines = out_longest;
+
+        self.render_total_surfaces()?;
+        self.render_longest_lines()?;
+
+        // if Self::is_process_viewsheds(&self.config.process) {
+        //     crate::cpu::storage::db::DB::new(&self.config.viewsheds_db_path)?.create_indexes()?;
+        // }
 
         Ok(())
     }
