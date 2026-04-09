@@ -2,6 +2,7 @@ use crate::cpu::los::LineOfSight as _;
 use crate::cpu::unrolled_los::UnrolledVectorLos;
 use crate::cpu::vector_intrinsics::DEFAULT_VECTOR_LENGTH;
 use itertools::izip;
+use crate::cpu::rotation::lines;
 
 /// The data output by a single angle.
 pub struct OutputData {
@@ -65,26 +66,19 @@ pub fn kernel(
     let mut surfaces = vec![0.0f32; max_los * max_los];
     let mut longest = vec![0.0f32; max_los * max_los];
 
-    let (indexes, rotated_elevations) =
-        super::rotation::generate_rotation(elevation_map, f64::from(angle), max_los);
+    // assert_eq!(
+    //     rotated_elevations.len(),
+    //     2 * max_los * max_los,
+    //     "elevations should be 2 * max_los wide, and max_los tall"
+    // );
+    //
+    // let width = 2 * max_los;
 
-    assert_eq!(
-        rotated_elevations.len(),
-        2 * max_los * max_los,
-        "elevations should be 2 * max_los wide, and max_los tall"
-    );
 
-    let width = 2 * max_los;
+    let mut vs =
+        UnrolledVectorLos::<DEFAULT_UNROLL, DEFAULT_VECTOR_LENGTH>::new(max_los, config.refraction, config.scale);
 
-    let mut vs = UnrolledVectorLos::<DEFAULT_UNROLL, DEFAULT_VECTOR_LENGTH>::new(
-        max_los,
-        config.refraction,
-        config.scale,
-    );
-    for (line, line_indexes) in izip!(
-        rotated_elevations.chunks_exact(width),
-        indexes.chunks_exact(width),
-    ) {
+    for (line, line_indexes) in lines(elevation_map, max_los, angle.into()) {
         for (pov, (&pov_height, &result_dem_id)) in
             izip!(line.iter().take(max_los), line_indexes.iter().take(max_los)).enumerate()
         {
