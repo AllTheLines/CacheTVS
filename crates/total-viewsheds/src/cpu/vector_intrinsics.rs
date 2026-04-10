@@ -2,13 +2,12 @@ use crate::cpu::los::{Angle, PrefixMax};
 use itertools::izip;
 use std::iter::zip;
 use std::simd::prelude::{SimdFloat as _, SimdInt as _, SimdPartialOrd as _};
-use std::simd::{LaneCount, Mask, Simd, SupportedLaneCount, f32x4};
+
+use std::simd::{f32x4, Mask, Simd};
 
 /// `VectorMax` performs an element-wise SIMD max of floats, allowing for architecture
 /// specific implementations
 pub trait VectorMax<const WIDTH: usize>
-where
-    LaneCount<WIDTH>: SupportedLaneCount,
 {
     /// `max` computes an element-wise maximum from lhs and rhs, assuming neither contain NaNs
     /// or -0.0
@@ -18,8 +17,6 @@ where
 /// `VectorGreater` performs a SIMD greater than of floats, allowing for architecture
 /// specific implementations
 pub trait VectorGreater<const WIDTH: usize>
-where
-    LaneCount<WIDTH>: SupportedLaneCount,
 {
     /// gt computes an element-wise maximum from lhs and rhs, assuming neither contain NaNs
     /// or -0.0
@@ -29,12 +26,9 @@ where
 /// `VectorLos` is an implementation of the internals of `PrefixMax`, `Angle`,  and `Accumulate`
 /// for Portable SIMD
 pub struct VectorLos<const WIDTH: usize>
-where
-    LaneCount<WIDTH>: SupportedLaneCount;
+;
 
 impl<const WIDTH: usize> VectorMax<WIDTH> for VectorLos<WIDTH>
-where
-    LaneCount<WIDTH>: SupportedLaneCount,
 {
     #[inline]
     default fn max(lhs: Simd<f32, WIDTH>, rhs: Simd<f32, WIDTH>) -> Simd<f32, WIDTH> {
@@ -43,8 +37,6 @@ where
 }
 
 impl<const WIDTH: usize> VectorGreater<WIDTH> for VectorLos<WIDTH>
-where
-    LaneCount<WIDTH>: SupportedLaneCount,
 {
     #[inline]
     default fn gt(lhs: Simd<f32, WIDTH>, rhs: Simd<f32, WIDTH>) -> Mask<i32, WIDTH> {
@@ -72,7 +64,7 @@ impl VectorGreater<4> for VectorLos<4> {
         // thus allowing this to be non IEEE754 compliant
         unsafe {
             let mask = _mm_castps_si128(_mm_cmp_ps::<_CMP_GT_OS>(lhs.into(), rhs.into()));
-            Mask::<i32, 4>::from_int_unchecked(mask.into())
+            Mask::<i32, 4>::from_simd_unchecked(mask.into())
         }
     }
 }
@@ -98,7 +90,7 @@ impl VectorGreater<8> for VectorLos<8> {
         // thus allowing this to be non IEEE754 compliant
         unsafe {
             let mask = _mm256_castps_si256(_mm256_cmp_ps::<_CMP_GT_OS>(lhs.into(), rhs.into()));
-            Mask::<i32, 8>::from_int_unchecked(mask.into())
+            Mask::<i32, 8>::from_simd_unchecked(mask.into())
         }
     }
 }
@@ -297,8 +289,6 @@ impl PrefixMax for VectorLos<16> {
 }
 
 impl<const WIDTH: usize> Angle for VectorLos<WIDTH>
-where
-    LaneCount<WIDTH>: SupportedLaneCount,
 {
     #[inline]
     default fn calculate_angles(

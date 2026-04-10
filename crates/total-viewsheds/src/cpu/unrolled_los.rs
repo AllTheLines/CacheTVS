@@ -2,7 +2,7 @@ use crate::cpu::los::{Accumulate, Angle, LineOfSight, PrefixMax};
 use crate::cpu::vector_intrinsics::{VectorGreater, VectorLos, VectorMax as _};
 use itertools::izip;
 use std::simd::prelude::SimdFloat as _;
-use std::simd::{LaneCount, Simd, SupportedLaneCount};
+use std::simd::{Select, Simd};
 
 /// `EARTH_RADIUS_SQUARED` is the radius of the earth in meters
 const EARTH_DIAMETER: f32 = 12_742_000.0;
@@ -32,7 +32,6 @@ fn generate_distances(max_los: usize, refraction: f32, scale: f32) -> (Vec<f32>,
 pub struct UnrollVector<const UNROLL: usize, const VECTOR_WIDTH: usize>
 where
     [(); UNROLL * VECTOR_WIDTH]:,
-    LaneCount<VECTOR_WIDTH>: SupportedLaneCount,
 {
     /// `heatmap` contains the summation of visible surface areas which will be reduced to a single
     /// surface area at the end
@@ -57,7 +56,6 @@ impl<const UNROLL: usize, const VECTOR_WIDTH: usize> From<UnrollVector<UNROLL, V
     for (f32, f32)
 where
     [(); UNROLL * VECTOR_WIDTH]:,
-    LaneCount<VECTOR_WIDTH>: SupportedLaneCount,
 {
     fn from(val: UnrollVector<UNROLL, VECTOR_WIDTH>) -> Self {
         let (heatmap, _) = val.heatmap.as_chunks::<VECTOR_WIDTH>();
@@ -106,7 +104,6 @@ impl<const UNROLL: usize, const VECTOR_WIDTH: usize>
     for UnrolledVectorLos<UNROLL, VECTOR_WIDTH>
 where
     [(); UNROLL * VECTOR_WIDTH + 1]:,
-    LaneCount<VECTOR_WIDTH>: SupportedLaneCount,
     VectorLos<VECTOR_WIDTH>: PrefixMax + Angle,
 {
     #[expect(
@@ -185,7 +182,6 @@ impl<const UNROLL: usize, const VECTOR_WIDTH: usize> Accumulate<UnrollVector<UNR
     for VectorLos<VECTOR_WIDTH>
 where
     [(); UNROLL * VECTOR_WIDTH]:,
-    LaneCount<VECTOR_WIDTH>: SupportedLaneCount,
     Self: VectorGreater<VECTOR_WIDTH>,
 {
     #[inline]

@@ -45,6 +45,8 @@ impl super::compute::Compute<'_> {
             crate::cpu::storage::worker::Worker::new_noop()
         };
 
+        println!("surfaces: {}, longest: {}", surfaces.len(), longest.len());
+
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.config.thread_count)
             .build()?;

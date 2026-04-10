@@ -6,7 +6,6 @@ use std::io::{BufRead, BufReader};
 use std::rc::Rc;
 
 
-
 pub fn lines(
     elevs: &[i16],
     max_los: usize,
@@ -48,7 +47,7 @@ pub fn lines(
         let mut_elevations = Rc::get_mut(&mut elevations).unwrap();
 
         izip!(
-            ((max_los as isize)..width),
+            (max_los as isize)..width,
             mut_indexes.iter_mut(),
             mut_elevations.iter_mut()
         )
