@@ -5,68 +5,101 @@ use kernel::rotation::ANGLE_SHIFT;
 use std::io::{BufRead, BufReader};
 use std::rc::Rc;
 
+struct LineIter<'map> {
+    sin: f64,
+    cos: f64,
+
+    center: (f64, f64),
+
+    row_index: usize,
+    max_los: usize,
+    width: isize,
+
+    elevations: Rc<Vec<i16>>,
+    indexes: Rc<Vec<i64>>,
+
+    map: &'map [i16],
+}
+
+impl <'map> LineIter<'map> {
+    fn new(max_los: usize, angle: f64, map: &'map [i16]) -> Self {
+        let width = (max_los * 3) as isize;
+
+        let (sin, cos) = (
+            f64::sin((angle + f64::from(ANGLE_SHIFT)).to_radians()),
+            f64::cos((angle + f64::from(ANGLE_SHIFT)).to_radians()),
+        );
+
+        let (x_center, y_center) = ((width - 1) as f64 / 2.0, (width - 1) as f64 / 2.0);
+
+        Self {
+            sin,
+            cos,
+            center: (x_center, y_center),
+
+            row_index: 0,
+            max_los,
+            width,
+
+            elevations: Rc::new(vec![0; 2*max_los]),
+            indexes: Rc::new(vec![0; 2*max_los]),
+
+            map,
+        }
+    }
+}
+
+impl <'map> Iterator for LineIter<'map> {
+    type Item = (Rc<Vec<i16>>, Rc<Vec<i64>>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.row_index >= self.max_los {
+            return None;
+        }
+
+        let x = self.row_index + self.max_los;
+        let (x_center, y_center) = self.center;
+
+        let (sin, cos) = (self.sin, self.cos);
+
+        let mut_indexes = Rc::get_mut(&mut self.indexes).unwrap();
+        let mut_elevations = Rc::get_mut(&mut self.elevations).unwrap();
+
+        let x_sin = (x as f64 - x_center) * self.sin;
+        let x_cos = (x as f64 - x_center) * self.cos;
+
+        let mut_indexes = Rc::get_mut(&mut self.indexes).unwrap();
+        let mut_elevations = Rc::get_mut(&mut self.elevations).unwrap();
+
+        izip!(
+            (self.max_los as isize)..(3*self.max_los as isize),
+            mut_indexes.iter_mut(),
+            mut_elevations.iter_mut()
+        )
+            .for_each(|(y, index, elevation)| {
+                let y_sin = (y as f64 - y_center) * sin;
+                let y_cos = (y as f64 - y_center) * cos;
+
+                let x_rot = (x_cos - y_sin + y_center).round() as isize;
+                let y_rot = (y_cos + x_sin + x_center).round() as isize;
+
+                let new_idx = x_rot.clamp(0, self.width - 1) * self.width + y_rot.clamp(0, self.width - 1);
+
+                *index = new_idx as i64;
+                *elevation = self.map[new_idx as usize];
+            });
+
+        self.row_index += 1;
+        Some((Rc::clone(&self.elevations), Rc::clone(&self.indexes)))
+    }
+}
 
 pub fn lines(
     elevs: &[i16],
     max_los: usize,
     angle: f64,
 ) -> impl Iterator<Item = (Rc<Vec<i16>>, Rc<Vec<i64>>)> + use<'_> {
-    let width = (max_los * 3) as isize;
-    #[expect(clippy::integer_division, reason = "we don't need precision here")]
-    {
-        assert_eq!(
-            elevs.len() as isize % width,
-            0,
-            "Elevations array must be square {}%{width} != 0",
-            elevs.len(),
-        );
-        let elevations_div_width = elevs.len() as isize / width;
-        assert_eq!(
-            elevations_div_width,
-            width,
-            "Elevations array must be square {}/{width} (={elevations_div_width}) != {width}",
-            elevs.len() as isize
-        );
-    };
-
-    let (sin, cos) = (
-        f64::sin((angle + f64::from(ANGLE_SHIFT)).to_radians()),
-        f64::cos((angle + f64::from(ANGLE_SHIFT)).to_radians()),
-    );
-
-    let (x_center, y_center) = ((width - 1) as f64 / 2.0, (width - 1) as f64 / 2.0);
-
-    let mut indexes = Rc::new(vec![0i64; 2*max_los]);
-    let mut elevations = Rc::new(vec![0i16; 2*max_los]);
-
-    ((max_los as isize)..(max_los as isize) * 2).map(move |x| {
-        let x_sin = (x as f64 - x_center) * sin;
-        let x_cos = (x as f64 - x_center) * cos;
-
-        let mut_indexes = Rc::get_mut(&mut indexes).unwrap();
-        let mut_elevations = Rc::get_mut(&mut elevations).unwrap();
-
-        izip!(
-            (max_los as isize)..width,
-            mut_indexes.iter_mut(),
-            mut_elevations.iter_mut()
-        )
-        .for_each(|(y, index, elevation)| {
-            let y_sin = (y as f64 - y_center) * sin;
-            let y_cos = (y as f64 - y_center) * cos;
-
-            let x_rot = (x_cos - y_sin + y_center).round() as isize;
-            let y_rot = (y_cos + x_sin + x_center).round() as isize;
-
-            let new_idx = x_rot.clamp(0, width - 1) * width + y_rot.clamp(0, width - 1);
-            *index = new_idx as i64;
-            *elevation = elevs[new_idx as usize];
-        });
-
-        fill_line_elevations(mut_elevations);
-
-        (Rc::clone(&elevations), Rc::clone(&indexes))
-    })
+    LineIter::new(max_los, angle, elevs)
 }
 
 /// `generate_rotation` generates a rotation "map" for a given elevation list
