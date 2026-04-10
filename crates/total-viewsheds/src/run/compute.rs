@@ -7,7 +7,9 @@ use std::path::PathBuf;
 pub const SECTOR_STEPS: u16 = 180;
 
 /// Handles all the computations.
-pub struct Compute<'compute> {
+pub struct Compute<'compute>
+where 'static: 'compute
+{
     /// User configuration.
     pub config: Config,
     /// Vulkan GPU manager

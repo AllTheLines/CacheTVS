@@ -63,7 +63,6 @@ pub fn kernel(
     angle: f32,
     config: &crate::run::compute::Config,
 ) -> OutputData {
-    println!("{max_los}x{max_los}");
 
     let mut surfaces = vec![0.0f32; max_los * max_los];
     let mut longest = vec![0.0f32; max_los * max_los];

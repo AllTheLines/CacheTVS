@@ -1,8 +1,77 @@
 //! For kernels that run each angle in parallel.
 
+use crate::cpu::{kernel, storage};
+use crate::cpu::kernel::OutputData;
 use crate::los_pack::LineOfSightPacked;
 use color_eyre::{Result, eyre::eyre};
-use rayon::iter::{IntoParallelIterator as _, ParallelIterator as _};
+use std::sync::{mpmc, mpsc, Arc};
+use std::{mem, thread};
+
+struct Work {
+    angle: u16,
+}
+
+fn kernel_worker(
+    storage_worker: &storage::worker::Worker,
+    elevations: &[i16],
+    work_todo: mpmc::Receiver<Work>,
+    res: mpsc::Sender<(u16, OutputData)>,
+    config: &crate::run::compute::Config,
+    max_los: usize,
+) {
+    for work in work_todo {
+        println!("starting work on {}", work.angle);
+        let output = kernel(
+            storage_worker,
+            elevations,
+            0,
+            f32::from(work.angle),
+            &config,
+        );
+
+        res.send((work.angle, output)).expect("work panicked");
+    }
+}
+
+fn compilation_worker(work: mpsc::Receiver<(u16, OutputData)>, max_los: usize) -> (Vec<f32>, Vec<LineOfSightPacked>) {
+    let mut surfaces = vec![0.0f32; max_los * max_los];
+    let mut longest = vec![LineOfSightPacked::new(0, 0).unwrap(); max_los * max_los];
+
+
+    for output in work {
+        let (angle, data) = output;
+        surfaces
+            .iter_mut()
+            .zip(data.surfaces)
+            .for_each(|(to, from)| {
+                *to += from;
+            });
+
+        longest
+            .iter_mut()
+            .zip(data.longest)
+            .for_each(|(to, from)| {
+                #[expect(
+                    clippy::as_conversions,
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss,
+                    reason = "distances always fit in u32"
+                )]
+                let converted = from as u32;
+                if converted > to.distance() {
+                    *to = LineOfSightPacked::new(converted, angle).unwrap();
+                    return;
+                }
+
+                // let the smallest angle win due to keep consistent in a multithreaded environment
+                if angle < to.angle().unwrap() && converted != 0 && converted == to.distance() {
+                    *to = LineOfSightPacked::new(converted, angle).unwrap();
+                }
+            });
+    }
+
+    (surfaces, longest)
+}
 
 impl super::compute::Compute<'_> {
     #[expect(
@@ -14,10 +83,7 @@ impl super::compute::Compute<'_> {
         let max_los = usize::try_from(self.dem.max_los_as_points)?;
         let tvs_size = max_los * max_los;
 
-        let mut surfaces = vec![0.0f32; tvs_size];
-        let mut longest = vec![(0u16, 0u32); tvs_size];
-
-        let db_worker = if Self::is_process_viewsheds(&self.config.process) {
+        let db_worker = &if Self::is_process_viewsheds(&self.config.process) {
             if std::fs::exists(&self.config.viewsheds_db_path)? {
                 std::fs::remove_file(&self.config.viewsheds_db_path)?;
             }
@@ -45,117 +111,56 @@ impl super::compute::Compute<'_> {
             crate::cpu::storage::worker::Worker::new_noop()
         };
 
-        println!("surfaces: {}, longest: {}", surfaces.len(), longest.len());
+        let elevations = &self.dem.elevations;
+        let thread_count = self.config.thread_count;
+        let config = &self.config;
 
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(self.config.thread_count)
-            .build()?;
+        let (local_send, kernel_receive) = mpmc::channel();
+        let (kernel_send, compile_receive) = mpsc::channel();
 
-        {
-            let accumulating = AccumulatingData {
-                surfaces: std::sync::Mutex::new(&mut surfaces),
-                longest: std::sync::Mutex::new(&mut longest),
-            };
+        let borrow_elevations = &elevations;
 
-            let elevations = &self.dem.elevations;
-            let config = self.config.clone();
+        let (out_surfaces, out_longest) = thread::scope(|s| {
+            let db = &db_worker;
 
-            pool.install(move || {
-                (0u16..360u16)
-                    .into_par_iter()
-                    .map(|angle| {
-                        let start = std::time::Instant::now();
-                        tracing::info!("starting angle: {angle}");
-
-                        let output = crate::cpu::kernel(
+            let worker_handles = (0..thread_count)
+                .map(|_| {
+                    let kernel_send = kernel_send.clone();
+                    let kernel_receive = kernel_receive.clone();
+                    s.spawn(move || {
+                        kernel_worker(
                             &db_worker,
-                            elevations,
+                            &borrow_elevations,
+                            kernel_receive.clone(),
+                            kernel_send.clone(),
+                            config,
                             max_los,
-                            f32::from(angle),
-                            &config,
-                        );
-
-                        tracing::info!("finished angle in {:?}", start.elapsed());
-                        (angle, output)
+                        )
                     })
-                    .for_each(|(angle, output)| {
-                        let result = accumulating.handle_parallel_per_angle_output(angle, output);
-                        #[expect(
-                            clippy::panic,
-                            reason = "No point accumulating errors and returning them"
-                        )]
-                        if let Err(error) = result {
-                            panic!("{error:?}");
-                        }
-                    });
-            });
-        };
+                })
+                .collect::<Vec<_>>();
 
-        if Self::is_process_viewsheds(&self.config.process) {
-            crate::cpu::storage::db::DB::new(&self.config.viewsheds_db_path)?.create_indexes()?;
-        }
+            for angle in 0u16..360u16 {
+                local_send
+                    .send(Work {
+                        angle,
+                    })
+                    .unwrap();
+            }
 
-        self.total_surfaces = surfaces;
-        let packed: Result<Vec<LineOfSightPacked>> = longest
-            .iter()
-            .map(|&(angle, distance): &(u16, u32)| LineOfSightPacked::new(distance, angle))
-            .collect();
-        self.longest_lines = packed?;
+            drop(local_send);
+            drop(kernel_receive);
+            drop(kernel_send);
+
+            compilation_worker(compile_receive, max_los)
+        });
+
+
+        self.total_surfaces = out_surfaces;
+        self.longest_lines = out_longest;
 
         self.render_total_surfaces()?;
         self.render_longest_lines()?;
-
-        Ok(())
-    }
-}
-
-/// A struct to accumulate data as it comes from the angle compute threads.
-struct AccumulatingData<'accumulating> {
-    /// Total surfaces.
-    surfaces: std::sync::Mutex<&'accumulating mut Vec<f32>>,
-    /// Longest lines.
-    longest: std::sync::Mutex<&'accumulating mut Vec<(u16, u32)>>,
-}
-
-impl AccumulatingData<'_> {
-    /// Handle output from angle threads.
-    fn handle_parallel_per_angle_output(
-        &self,
-        angle: u16,
-        output: crate::cpu::kernel::OutputData,
-    ) -> Result<()> {
-        self.surfaces
-            .lock()
-            .map_err(|err| eyre!("{err:?}"))?
-            .iter_mut()
-            .zip(output.surfaces)
-            .for_each(|(to, from)| {
-                *to += from;
-            });
-
-        self.longest
-            .lock()
-            .map_err(|err| eyre!("{err:?}"))?
-            .iter_mut()
-            .zip(output.longest)
-            .for_each(|(to, from)| {
-                #[expect(
-                    clippy::as_conversions,
-                    clippy::cast_possible_truncation,
-                    clippy::cast_sign_loss,
-                    reason = "distances always fit in u32"
-                )]
-                let converted = from as u32;
-                if converted > to.1 {
-                    *to = (angle, converted);
-                    return;
-                }
-
-                // let the smallest angle win due to keep consistent in a multithreaded environment
-                if angle < to.0 && converted != 0 && converted == to.1 {
-                    *to = (angle, converted);
-                }
-            });
 
         Ok(())
     }
