@@ -3,9 +3,9 @@
 use crate::cpu::{kernel, storage};
 use crate::cpu::kernel::OutputData;
 use crate::los_pack::LineOfSightPacked;
-use color_eyre::{Result, eyre::eyre};
-use std::sync::{mpmc, mpsc, Arc};
-use std::{mem, thread};
+use color_eyre::Result;
+use std::sync::{mpmc, mpsc};
+use std::{thread, time};
 
 struct Work {
     angle: u16,
@@ -15,20 +15,21 @@ fn kernel_worker(
     storage_worker: &storage::worker::Worker,
     elevations: &[i16],
     work_todo: mpmc::Receiver<Work>,
-    res: mpsc::Sender<(u16, OutputData)>,
+    res: &mpsc::Sender<(u16, OutputData)>,
     config: &crate::run::compute::Config,
     max_los: usize,
 ) {
     for work in work_todo {
-        println!("starting work on {}", work.angle);
+        tracing::info!("starting work on {}", work.angle);
+        let now = time::Instant::now();
         let output = kernel(
             storage_worker,
             elevations,
-            0,
+            max_los,
             f32::from(work.angle),
-            &config,
+            config,
         );
-
+        tracing::info!("finished {} in {:?}", work.angle, now.elapsed());
         res.send((work.angle, output)).expect("work panicked");
     }
 }
@@ -74,14 +75,9 @@ fn compilation_worker(work: mpsc::Receiver<(u16, OutputData)>, max_los: usize) -
 }
 
 impl super::compute::Compute<'_> {
-    #[expect(
-        clippy::panic_in_result_fn,
-        reason = "It's too complicated and of no benefit to get the errors from the threads"
-    )]
     /// `run_parallel` runs the CPU kernel in parallel
     pub fn run_parallel(&mut self) -> Result<()> {
         let max_los = usize::try_from(self.dem.max_los_as_points)?;
-        let tvs_size = max_los * max_los;
 
         let db_worker = &if Self::is_process_viewsheds(&self.config.process) {
             if std::fs::exists(&self.config.viewsheds_db_path)? {
@@ -121,30 +117,26 @@ impl super::compute::Compute<'_> {
         let borrow_elevations = &elevations;
 
         let (out_surfaces, out_longest) = thread::scope(|s| {
-            let db = &db_worker;
 
-            let worker_handles = (0..thread_count)
-                .map(|_| {
+            let worker_handles = std::iter::repeat_with(|| {
                     let kernel_send = kernel_send.clone();
                     let kernel_receive = kernel_receive.clone();
                     s.spawn(move || {
                         kernel_worker(
-                            &db_worker,
-                            &borrow_elevations,
-                            kernel_receive.clone(),
-                            kernel_send.clone(),
+                            db_worker,
+                            borrow_elevations,
+                            kernel_receive,
+                            &kernel_send,
                             config,
                             max_los,
-                        )
+                        );
                     })
-                })
+                }).take(thread_count)
                 .collect::<Vec<_>>();
 
             for angle in 0u16..360u16 {
                 local_send
-                    .send(Work {
-                        angle,
-                    })
+                    .send(Work { angle })
                     .unwrap();
             }
 
@@ -152,7 +144,13 @@ impl super::compute::Compute<'_> {
             drop(kernel_receive);
             drop(kernel_send);
 
-            compilation_worker(compile_receive, max_los)
+            let (surfaces, longest) = compilation_worker(compile_receive, max_los);
+
+            for handle in worker_handles {
+                handle.join().unwrap();
+            }
+
+            (surfaces, longest)
         });
 
 
@@ -161,6 +159,10 @@ impl super::compute::Compute<'_> {
 
         self.render_total_surfaces()?;
         self.render_longest_lines()?;
+
+        if Self::is_process_viewsheds(&self.config.process) {
+            crate::cpu::storage::db::DB::new(&self.config.viewsheds_db_path)?.create_indexes()?;
+        }
 
         Ok(())
     }

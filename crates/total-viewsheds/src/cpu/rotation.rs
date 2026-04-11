@@ -4,11 +4,21 @@ use itertools::izip;
 use kernel::rotation::ANGLE_SHIFT;
 use std::rc::Rc;
 
+/// `lines` generates a rotation "map" for a given elevation list
+/// Adapted from [this stack overflow answer](https://stackoverflow.com/a/71901621)
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    reason = "so long as max_los^2 < 2^24, the following `as` conversions are entirely safe"
+)]
+#[expect(clippy::indexing_slicing, reason="rotation should not be out of bounds")]
 pub fn lines(
     elevs: &[i16],
     max_los: usize,
     angle: f64,
-) -> impl Iterator<Item = (Rc<Vec<i16>>, Rc<Vec<i64>>)> + use<'_> {
+) -> impl Iterator<Item = (Rc<Vec<i16>>, Rc<Vec<i64>>)> {
     let width = (max_los * 3) as isize;
     #[expect(clippy::integer_division, reason = "we don't need precision here")]
     {
@@ -32,7 +42,7 @@ pub fn lines(
         f64::cos((angle + f64::from(ANGLE_SHIFT)).to_radians()),
     );
 
-    let (x_center, y_center) = ((width - 1) as f64 / 2.0, (width - 1) as f64 / 2.0);
+    let (x_center, y_center) = ((width - 1) as f64 / 2.0, (width - 1) as f64 / 2.0f64);
 
     let mut indexes = Rc::new(vec![0i64; 2 * max_los]);
     let mut elevations = Rc::new(vec![0i16; 2 * max_los]);
@@ -58,7 +68,7 @@ pub fn lines(
 
             let new_idx = x_rot.clamp(0, width - 1) * width + y_rot.clamp(0, width - 1);
             *index = new_idx as i64;
-            *elevation = elevs[new_idx as usize];
+            *elevation = elevs[new_idx.cast_unsigned()];
         });
 
         fill_line_elevations(mut_elevations);
@@ -67,114 +77,20 @@ pub fn lines(
     })
 }
 
-/// `generate_rotation` generates a rotation "map" for a given elevation list
-/// Adapted from [this stack overflow answer](https://stackoverflow.com/a/71901621)
-// #[expect(
-//     clippy::as_conversions,
-//     clippy::cast_possible_truncation,
-//     clippy::cast_possible_wrap,
-//     clippy::cast_precision_loss,
-//     reason = "so long as max_los^2 < 2^24, the following `as` conversions are entirely safe"
-// )]
-// pub fn generate_rotation(elevs: &[i16], angle: f64, max_los: usize) -> (Vec<i64>, Vec<i16>) {
-//     let width = (max_los * 3) as isize;
-//     #[expect(clippy::integer_division, reason = "we don't need precision here")]
-//     {
-//         assert_eq!(
-//             elevs.len() as isize % width,
-//             0,
-//             "Elevations array must be square {}%{width} != 0",
-//             elevs.len(),
-//         );
-//         let elevations_div_width = elevs.len() as isize / width;
-//         assert_eq!(
-//             elevations_div_width,
-//             width,
-//             "Elevations array must be square {}/{width} (={elevations_div_width}) != {width}",
-//             elevs.len() as isize
-//         );
-//     };
-//
-//     let (sin, cos) = (
-//         f64::sin((angle + f64::from(ANGLE_SHIFT)).to_radians()),
-//         f64::cos((angle + f64::from(ANGLE_SHIFT)).to_radians()),
-//     );
-//
-//     let (x_center, y_center) = ((width - 1) as f64 / 2.0, (width - 1) as f64 / 2.0);
-//
-//     let mut rotation: Vec<i64> = Vec::with_capacity(2 * max_los * max_los);
-//
-//     for x in (max_los as isize)..(max_los as isize) * 2 {
-//         let x_sin = (x as f64 - x_center) * sin;
-//         let x_cos = (x as f64 - x_center) * cos;
-//         for y in (max_los as isize)..width {
-//             let y_sin = (y as f64 - y_center) * sin;
-//             let y_cos = (y as f64 - y_center) * cos;
-//
-//             let x_rot = (x_cos - y_sin + y_center).round() as isize;
-//             let y_rot = (y_cos + x_sin + x_center).round() as isize;
-//
-//             let new_idx = x_rot.clamp(0, width - 1) * width + y_rot.clamp(0, width - 1);
-//
-//             rotation.push(new_idx as i64);
-//         }
-//     }
-//
-//     debug_assert_eq!(
-//         rotation.len() as isize,
-//         max_los as isize * (2 * max_los as isize),
-//         "the rotation should be 2 * max_los wide, max_los tall"
-//     );
-//
-//     // map the indexes to their elevations
-//     let elevations = rotation
-//         .iter()
-//         .map(|&idx| {
-//             if idx < 0i32 {
-//                 i16::MIN
-//             } else {
-//                 #[expect(
-//                     clippy::as_conversions,
-//                     reason = "elevations start out as i16s, and i16 -> f32 -> i16 is lossless"
-//                 )]
-//                 #[expect(clippy::cast_sign_loss, reason = "idx < 2^31, idx >= 0")]
-//                 // safety: idx is clamped so a get will always be in-bounds
-//                 *unsafe { elevs.get_unchecked(idx as usize) }
-//             }
-//         })
-//         .collect::<Vec<i16>>();
-//
-//     (rotation, fill_in_elevations(&elevations, max_los))
-// }
-
 /// `fill_in_elevations` will fill in "blank" elevations from NASA data with the last seen elevation
 /// in the line of sight
-fn fill_in_elevations(elevs: &[i16], max_los: usize) -> Vec<i16> {
-    elevs
-        .chunks_exact(2 * max_los)
-        .flat_map(|line| {
-            line.iter()
-                .scan(0, |last_seen, &elevation| match elevation {
-                    i16::MIN => Some(*last_seen),
-                    _ => {
-                        *last_seen = elevation;
-                        Some(elevation)
-                    }
-                })
-        })
-        .collect::<Vec<i16>>()
-}
-
 fn fill_line_elevations(line: &mut [i16]) {
     let mut last_seen: i16 = 0;
-    line.iter_mut().for_each(|elevation| match *elevation {
-        i16::MIN => {
-            *elevation = last_seen;
+    for elevation in line.iter_mut() {
+        match *elevation {
+            i16::MIN => {
+                *elevation = last_seen;
+            }
+            _ => {
+                last_seen = *elevation;
+            }
         }
-        _ => {
-            last_seen = *elevation;
-        }
-    });
+    }
 }
 
 // #[cfg(test)]

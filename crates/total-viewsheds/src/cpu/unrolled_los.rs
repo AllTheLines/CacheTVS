@@ -2,7 +2,7 @@ use crate::cpu::los::{Accumulate, Angle, LineOfSight, PrefixMax};
 use crate::cpu::vector_intrinsics::{VectorGreater, VectorLos, VectorMax as _};
 use itertools::izip;
 use std::simd::prelude::SimdFloat as _;
-use std::simd::{Select, Simd};
+use std::simd::{Select as _, Simd};
 
 /// `EARTH_RADIUS_SQUARED` is the radius of the earth in meters
 const EARTH_DIAMETER: f32 = 12_742_000.0;
@@ -57,6 +57,7 @@ impl<const UNROLL: usize, const VECTOR_WIDTH: usize> From<UnrollVector<UNROLL, V
 where
     [(); UNROLL * VECTOR_WIDTH]:,
 {
+    #[inline]
     fn from(val: UnrollVector<UNROLL, VECTOR_WIDTH>) -> Self {
         let (heatmap, _) = val.heatmap.as_chunks::<VECTOR_WIDTH>();
         let (longest, _) = val.longest.as_chunks::<VECTOR_WIDTH>();

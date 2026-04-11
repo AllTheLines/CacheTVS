@@ -14,7 +14,6 @@ pub struct OutputData {
 
 #[expect(
     clippy::as_conversions,
-    clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
     clippy::cast_precision_loss,
     reason = "so long as max_los < 2^24, the following as conversions are entirely safe"
@@ -89,7 +88,6 @@ pub fn kernel(
             #[expect(
                 clippy::as_conversions,
                 clippy::cast_possible_wrap,
-                clippy::cast_possible_truncation,
                 reason = "max_los^2 < 2^31"
             )]
             if result_tvs_id < 0i64 || result_tvs_id >= (max_los * max_los) as i64 {
