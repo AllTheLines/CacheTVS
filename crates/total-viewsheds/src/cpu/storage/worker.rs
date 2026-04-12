@@ -66,7 +66,7 @@ pub fn writer<P: AsRef<std::path::Path>>(
         (),
     )?;
     conn.pragma_update(None, "synchronous", "OFF")?;
-    conn.pragma_update(None, "journal_mode", "MEMORY")?;
+    conn.pragma_update(None, "journal_mode", "OFF")?;
 
     let tx = conn.transaction()?;
 

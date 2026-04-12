@@ -50,7 +50,7 @@ pub struct Sqlite {
 impl Sqlite {
     /// Create a new `SqliteEngine` storing the database at `path`
     pub fn new<P: AsRef<Path>>(path: P) -> Self {
-        let (tx, rx) = mpsc::sync_channel(1024);
+        let (tx, rx) = mpsc::sync_channel(1);
 
         // make an owned copy of Path so that it can be moved into the worker
         let db_path = PathBuf::from(path.as_ref());
