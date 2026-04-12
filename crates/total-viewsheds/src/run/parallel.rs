@@ -90,7 +90,7 @@ impl super::compute::Compute<'_> {
         };
 
         if Self::is_process_viewsheds(&self.config.process) {
-            crate::cpu::storage::db::DB::new(&self.config.viewsheds_db_path)?.create_indexes()?;
+            crate::cpu::storage::db::DB::new(&self.config.viewsheds_db_path)?.optimise_db()?;
         }
 
         self.total_surfaces = surfaces;
