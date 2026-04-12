@@ -58,7 +58,7 @@ pub fn writer<P: AsRef<std::path::Path>>(
 
     conn.execute(
         "
-        CREATE TABLE IF NOT EXISTS polar_segments (
+        CREATE TABLE IF NOT EXISTS polar_segments_staging (
             dem_id INTEGER,
             angle_id INTEGER,
             visible_segments BLOB
@@ -72,7 +72,11 @@ pub fn writer<P: AsRef<std::path::Path>>(
 
     {
         let mut stmt = tx.prepare(
-            "INSERT INTO polar_segments(dem_id, angle_id, visible_segments) VALUES (?1, ?2, ?3)",
+            "
+            INSERT INTO
+            polar_segments_staging(dem_id, angle_id, visible_segments)
+            VALUES (?1, ?2, ?3)
+            ",
         )?;
 
         for (tvs_id, segments) in recv {
