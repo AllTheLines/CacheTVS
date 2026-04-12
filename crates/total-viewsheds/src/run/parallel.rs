@@ -61,15 +61,7 @@ fn compilation_worker(work: mpsc::Receiver<OutputData>, max_los: usize) -> (Vec<
             .iter_mut()
             .zip(data.longest)
             .for_each(|(to, from)| {
-                if from.distance() > to.distance() {
-                    *to = from;
-                    return;
-                }
-
-                // let the smallest angle win due to keep consistent in a multithreaded environment
-                if from.angle() < to.angle() && from.distance() == to.distance() {
-                    *to = from
-                }
+                *to = to.max(from);
             });
     }
 

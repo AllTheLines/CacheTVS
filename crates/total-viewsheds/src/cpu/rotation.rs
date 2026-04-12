@@ -115,7 +115,7 @@ fn fill_line_elevations(line: &mut [i16]) {
 //             14, 15, 16, 17,
 //             20, 21, 22, 23
 //         ];
-//         let (rotations, _) = generate_rotation(&DEM, 0.0, 2);
+//         let (rotations, _) = lines(&DEM, 0.0, 2).collect();
 //         expect_eq!(&rotations, &expected);
 //     }
 //

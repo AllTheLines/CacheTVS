@@ -120,11 +120,12 @@ pub fn kernel(
             {
                 // safety: result_tvs_id is guaranteed to be within [0..max_los^2)
                 unsafe {
-                    *surfaces.get_unchecked_mut(result_tvs_id as usize) = point_surface;
+                    *surfaces.get_unchecked_mut(result_tvs_id as usize) += point_surface;
                 };
                 // safety: result_tvs_id is guaranteed to be within [0..max_los^2)
                 unsafe {
-                    *longest.get_unchecked_mut(result_tvs_id as usize) = LineOfSightPacked::new_unchecked(point_longest as u32, angle as u16)
+                    let longest_ptr = longest.get_unchecked_mut(result_tvs_id as usize);
+                    *longest_ptr = longest_ptr.max(LineOfSightPacked::new_unchecked(point_longest as u32, angle as u16));
                 };
                 if cfg!(any(test, feature = "ring_data"))
                     && crate::run::compute::Compute::is_process_viewsheds(&config.process)

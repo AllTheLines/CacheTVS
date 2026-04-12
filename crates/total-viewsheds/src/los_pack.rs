@@ -8,7 +8,7 @@ const U22_MAX: u32 = (1 << 22) - 1;
 /// The max and bitmask for a u10: 1023.
 const U10_MAX: u32 = (1 << 10) - 1;
 
-#[derive(Default, Debug, Clone)]
+#[derive(Default, Debug, Clone, Copy)]
 /// Line of sight data that can be packed within 32 bits.
 pub struct LineOfSightPacked(f32);
 
@@ -68,6 +68,19 @@ impl LineOfSightPacked {
     /// packed data.
     pub const fn as_f32(&self) -> f32 {
         self.0
+    }
+
+    pub fn max(&self, rhs: Self) -> Self {
+        if rhs.distance() > self.distance() {
+            return rhs
+        }
+
+        // let the smallest angle win due to keep consistent in a multithreaded environment
+        if rhs.angle() < rhs.angle() && rhs.distance() == self.distance() {
+            return rhs
+        }
+
+        *self
     }
 }
 
