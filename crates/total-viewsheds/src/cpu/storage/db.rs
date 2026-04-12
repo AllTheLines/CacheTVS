@@ -50,13 +50,46 @@ impl DB {
         Ok(metadata)
     }
 
-    /// Create indexes.
-    pub fn create_indexes(&self) -> Result<()> {
-        tracing::debug!("Creating indexes for {:?}...", self.connection.path());
-
+    /// Optimise DB for reads.
+    pub fn optimise_db(&self) -> Result<()> {
+        tracing::info!("Optimising final DB {:?}...", self.connection.path());
+        self.connection.pragma_update(None, "synchronous", "OFF")?;
         self.connection
-            .execute("CREATE INDEX dem_id_idx on polar_segments(dem_id)", ())?;
-        tracing::info!("DB indexes created");
+            .pragma_update(None, "journal_mode", "MEMORY")?;
+        self.connection
+            .pragma_update(None, "temp_store", "MEMORY")?;
+        self.connection.pragma_update(None, "page_size", "8192")?;
+        self.connection
+            .pragma_update(None, "cache_size", "-1000000")?;
+        self.connection.execute(
+            "
+            CREATE TABLE polar_segments (
+                dem_id INTEGER,
+                angle_id INTEGER,
+                visible_segments BLOB,
+                PRIMARY KEY (dem_id, angle_id)
+            ) WITHOUT ROWID
+            ",
+            (),
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO polar_segments 
+            SELECT dem_id, angle_id, visible_segments 
+            FROM polar_segments_staging 
+            ORDER BY dem_id, angle_id
+            ",
+            (),
+        )?;
+        self.connection.execute(
+            "
+            DROP TABLE polar_segments_staging
+            ",
+            (),
+        )?;
+        self.connection.execute("ANALYZE", ())?;
+        self.connection.execute("VACUUM", ())?;
+        tracing::info!("DB optimised");
 
         Ok(())
     }
