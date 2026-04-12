@@ -1,10 +1,11 @@
 //! For kernels that run each angle in parallel.
 
-use crate::cpu::{kernel, storage};
 use crate::cpu::kernel::OutputData;
+use crate::cpu::{kernel, storage};
 use crate::los_pack::LineOfSightPacked;
 use color_eyre::Result;
 use std::sync::{mpmc, mpsc};
+use std::thread::JoinHandle;
 use std::{thread, time};
 
 /// `Work` holds all data needed for a worker to do a line of sight
@@ -23,8 +24,8 @@ fn kernel_worker(
     max_los: usize,
 ) {
     let mut output = OutputData {
-        surfaces: vec![0.0f32; max_los*max_los],
-        longest: vec![LineOfSightPacked::new(0, 0).unwrap(); max_los*max_los]
+        surfaces: vec![0.0f32; max_los * max_los],
+        longest: vec![LineOfSightPacked::new(0, 0).unwrap(); max_los * max_los],
     };
 
     for work in work_todo {
@@ -41,13 +42,14 @@ fn kernel_worker(
         tracing::info!("finished {} in {:?}", work.angle, now.elapsed());
     }
     res.send(output).expect("");
-
 }
 
-fn compilation_worker(work: mpsc::Receiver<OutputData>, max_los: usize) -> (Vec<f32>, Vec<LineOfSightPacked>) {
+fn compilation_worker(
+    work: mpsc::Receiver<OutputData>,
+    max_los: usize,
+) -> (Vec<f32>, Vec<LineOfSightPacked>) {
     let mut surfaces = vec![0.0f32; max_los * max_los];
     let mut longest = vec![LineOfSightPacked::new(0, 0).unwrap(); max_los * max_los];
-
 
     for data in work {
         surfaces
@@ -57,12 +59,9 @@ fn compilation_worker(work: mpsc::Receiver<OutputData>, max_los: usize) -> (Vec<
                 *to += from;
             });
 
-        longest
-            .iter_mut()
-            .zip(data.longest)
-            .for_each(|(to, from)| {
-                *to = to.max(from);
-            });
+        longest.iter_mut().zip(data.longest).for_each(|(to, from)| {
+            *to = to.max(from);
+        });
     }
 
     (surfaces, longest)
@@ -111,11 +110,11 @@ impl super::compute::Compute<'_> {
         let borrow_elevations = &elevations;
 
         let (out_surfaces, out_longest) = thread::scope(|s| {
-
-            let worker_handles = std::iter::repeat_with(|| {
+            let worker_handles: Result<Vec<_>> = std::iter::repeat_with(|| {
                     let kernel_send = kernel_send.clone();
                     let kernel_receive = kernel_receive.clone();
-                    s.spawn(move || {
+
+                    Ok(s.spawn(move || {
                         kernel_worker(
                             db_worker,
                             borrow_elevations,
@@ -124,14 +123,14 @@ impl super::compute::Compute<'_> {
                             config,
                             max_los,
                         );
-                    })
+                    }))
                 }).take(thread_count)
-                .collect::<Vec<_>>();
+                .collect::<Result<Vec<_>>>();
+
+            let handles = worker_handles.expect("");
 
             for angle in 0u16..360u16 {
-                local_send
-                    .send(Work { angle })
-                    .unwrap();
+                local_send.send(Work { angle }).unwrap();
             }
 
             drop(local_send);
@@ -140,13 +139,12 @@ impl super::compute::Compute<'_> {
 
             let (surfaces, longest) = compilation_worker(compile_receive, max_los);
 
-            for handle in worker_handles {
+            for handle in handles {
                 handle.join().unwrap();
             }
 
             (surfaces, longest)
         });
-
 
         self.total_surfaces = out_surfaces;
         self.longest_lines = out_longest;

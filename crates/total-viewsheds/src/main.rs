@@ -128,6 +128,10 @@ fn setup_logging() -> Result<()> {
 
 /// Run computations
 fn compute(config: &config::Compute) -> Result<()> {
+    if !config.output_dir.exists() {
+        std::fs::create_dir_all(&config.output_dir)?;
+    }
+
     let mut tile = tile::Tile::load(config)?;
     let scale = config.scale.unwrap_or(tile.scale);
 
@@ -163,6 +167,7 @@ fn compute(config: &config::Compute) -> Result<()> {
         disable_render_image: config.disable_image_render,
         viewsheds_db_path: config.viewsheds_db_path.clone(),
     };
+
     let mut compute = run::compute::Compute::new(compute_config, &mut dem)?;
     compute.run()?;
     Ok(())
