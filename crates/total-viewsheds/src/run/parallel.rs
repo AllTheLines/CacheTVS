@@ -7,6 +7,7 @@ use color_eyre::Result;
 use std::sync::{mpmc, mpsc};
 use std::thread::JoinHandle;
 use std::{thread, time};
+use std::fmt::format;
 
 /// `Work` holds all data needed for a worker to do a line of sight
 /// calculation
@@ -72,36 +73,7 @@ impl super::compute::Compute<'_> {
     pub fn run_parallel(&mut self) -> Result<()> {
         let max_los = usize::try_from(self.dem.max_los_as_points)?;
 
-        let db_worker = &if Self::is_process_viewsheds(&self.config.process) {
-            if std::fs::exists(&self.config.viewsheds_db_path)? {
-                std::fs::remove_file(&self.config.viewsheds_db_path)?;
-            }
-
-            #[expect(
-                clippy::as_conversions,
-                clippy::cast_precision_loss,
-                clippy::cast_sign_loss,
-                clippy::cast_possible_truncation,
-                reason = "Should always fit in `u32`"
-            )]
-            let max_los_metric = (self.dem.max_los_as_points as f32 * self.dem.scale) as u32;
-
-            let db = crate::cpu::storage::db::DB::new(&self.config.viewsheds_db_path)?;
-            db.save_metadata(&crate::cpu::storage::metadata::MetaData {
-                width: self.dem.width,
-                scale: self.dem.scale,
-                max_line_of_sight: max_los_metric,
-                reserved_ring_size: 0,
-                centre: self.dem.centre,
-            })?;
-
-            crate::cpu::storage::worker::Worker::new(&self.config.viewsheds_db_path)
-        } else {
-            crate::cpu::storage::worker::Worker::new_noop()
-        };
-
         let elevations = &self.dem.elevations;
-        let thread_count = self.config.thread_count;
         let config = &self.config;
 
         let (local_send, kernel_receive) = mpmc::channel();
@@ -110,22 +82,51 @@ impl super::compute::Compute<'_> {
         let borrow_elevations = &elevations;
 
         let (out_surfaces, out_longest) = thread::scope(|s| {
-            let worker_handles: Result<Vec<_>> = std::iter::repeat_with(|| {
-                    let kernel_send = kernel_send.clone();
-                    let kernel_receive = kernel_receive.clone();
+            let worker_handles: Result<Vec<_>> = (0..self.config.thread_count).map(|id| {
+                let db_worker = if Self::is_process_viewsheds(&self.config.process) {
+                    #[expect(
+                        clippy::as_conversions,
+                        clippy::cast_precision_loss,
+                        clippy::cast_sign_loss,
+                        clippy::cast_possible_truncation,
+                        reason = "Should always fit in `u32`"
+                    )]
+                    let max_los_metric =
+                        (self.dem.max_los_as_points as f32 * self.dem.scale) as u32;
 
-                    Ok(s.spawn(move || {
-                        kernel_worker(
-                            db_worker,
-                            borrow_elevations,
-                            kernel_receive,
-                            &kernel_send,
-                            config,
-                            max_los,
-                        );
-                    }))
-                }).take(thread_count)
-                .collect::<Result<Vec<_>>>();
+                    let db_path = self.config
+                        .viewsheds_db_path
+                        .join(format!("{id}.db"));
+
+                    let db = crate::cpu::storage::db::DB::new(&db_path)?;
+                    db.save_metadata(&crate::cpu::storage::metadata::MetaData {
+                        width: self.dem.width,
+                        scale: self.dem.scale,
+                        max_line_of_sight: max_los_metric,
+                        reserved_ring_size: 0,
+                        centre: self.dem.centre,
+                    })?;
+
+                    crate::cpu::storage::worker::Worker::new(&db_path)
+                } else {
+                    crate::cpu::storage::worker::Worker::new_noop()
+                };
+
+                let kernel_send = kernel_send.clone();
+                let kernel_receive = kernel_receive.clone();
+
+                Ok(s.spawn(move || {
+                    kernel_worker(
+                        &db_worker,
+                        borrow_elevations,
+                        kernel_receive,
+                        &kernel_send,
+                        config,
+                        max_los,
+                    );
+                }))
+            })
+            .collect::<Result<Vec<_>>>();
 
             let handles = worker_handles.expect("");
 
