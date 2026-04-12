@@ -384,7 +384,7 @@ pub mod test {
         #[rustfmt::skip]
         expect_eq!(
             compute.longest_lines.iter()
-            .map(|los| los.angle().unwrap())
+            .map(|los| los.angle())
             .collect::<Vec<_>>(),
             [
                 0, 0,  0,  0,

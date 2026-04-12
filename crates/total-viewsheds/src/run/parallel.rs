@@ -7,7 +7,10 @@ use color_eyre::Result;
 use std::sync::{mpmc, mpsc};
 use std::{thread, time};
 
+/// `Work` holds all data needed for a worker to do a line of sight
+/// calculation
 struct Work {
+    /// angle of rotation for line of sight
     angle: u16,
 }
 
@@ -15,32 +18,38 @@ fn kernel_worker(
     storage_worker: &storage::worker::Worker,
     elevations: &[i16],
     work_todo: mpmc::Receiver<Work>,
-    res: &mpsc::Sender<(u16, OutputData)>,
+    res: &mpsc::Sender<OutputData>,
     config: &crate::run::compute::Config,
     max_los: usize,
 ) {
+    let mut output = OutputData {
+        surfaces: vec![0.0f32; max_los*max_los],
+        longest: vec![LineOfSightPacked::new(0, 0).unwrap(); max_los*max_los]
+    };
+
     for work in work_todo {
         tracing::info!("starting work on {}", work.angle);
         let now = time::Instant::now();
-        let output = kernel(
+        kernel(
             storage_worker,
             elevations,
+            &mut output,
             max_los,
             f32::from(work.angle),
             config,
         );
         tracing::info!("finished {} in {:?}", work.angle, now.elapsed());
-        res.send((work.angle, output)).expect("work panicked");
     }
+    res.send(output).expect("");
+
 }
 
-fn compilation_worker(work: mpsc::Receiver<(u16, OutputData)>, max_los: usize) -> (Vec<f32>, Vec<LineOfSightPacked>) {
+fn compilation_worker(work: mpsc::Receiver<OutputData>, max_los: usize) -> (Vec<f32>, Vec<LineOfSightPacked>) {
     let mut surfaces = vec![0.0f32; max_los * max_los];
     let mut longest = vec![LineOfSightPacked::new(0, 0).unwrap(); max_los * max_los];
 
 
-    for output in work {
-        let (angle, data) = output;
+    for data in work {
         surfaces
             .iter_mut()
             .zip(data.surfaces)
@@ -52,21 +61,14 @@ fn compilation_worker(work: mpsc::Receiver<(u16, OutputData)>, max_los: usize) -
             .iter_mut()
             .zip(data.longest)
             .for_each(|(to, from)| {
-                #[expect(
-                    clippy::as_conversions,
-                    clippy::cast_possible_truncation,
-                    clippy::cast_sign_loss,
-                    reason = "distances always fit in u32"
-                )]
-                let converted = from as u32;
-                if converted > to.distance() {
-                    *to = LineOfSightPacked::new(converted, angle).unwrap();
+                if from.distance() > to.distance() {
+                    *to = from;
                     return;
                 }
 
                 // let the smallest angle win due to keep consistent in a multithreaded environment
-                if angle < to.angle().unwrap() && converted != 0 && converted == to.distance() {
-                    *to = LineOfSightPacked::new(converted, angle).unwrap();
+                if from.angle() < to.angle() && from.distance() == to.distance() {
+                    *to = from
                 }
             });
     }

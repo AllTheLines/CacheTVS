@@ -1,6 +1,7 @@
 use crate::cpu::los::LineOfSight as _;
 use crate::cpu::unrolled_los::UnrolledVectorLos;
 use crate::cpu::vector_intrinsics::DEFAULT_VECTOR_LENGTH;
+use crate::los_pack::LineOfSightPacked;
 use itertools::izip;
 use crate::cpu::rotation::lines;
 
@@ -9,7 +10,7 @@ pub struct OutputData {
     /// The visibile surface area.
     pub surfaces: Vec<f32>,
     /// The longest lines of sight.
-    pub longest: Vec<f32>,
+    pub longest: Vec<LineOfSightPacked>,
 }
 
 #[expect(
@@ -53,27 +54,32 @@ const DEFAULT_UNROLL: usize = const {
     }
 };
 
+
+
 /// `kernel` will calculate the longest line of sight heatmap for a given angle and elevation map
 /// assuming that the maximum line of sight is `max_los`
 pub fn kernel(
     db_worker: &super::storage::worker::Worker,
     elevation_map: &[i16],
+    output: &mut OutputData,
     max_los: usize,
     angle: f32,
     config: &crate::run::compute::Config,
-) -> OutputData {
+) {
+    let surfaces = &mut output.surfaces;
+    let longest = &mut output.longest;
 
-    let mut surfaces = vec![0.0f32; max_los * max_los];
-    let mut longest = vec![0.0f32; max_los * max_los];
+    assert_eq!(
+         surfaces.len(),
+         max_los * max_los,
+         "surfaces should be max_los squared length"
+    );
 
-    // assert_eq!(
-    //     rotated_elevations.len(),
-    //     2 * max_los * max_los,
-    //     "elevations should be 2 * max_los wide, and max_los tall"
-    // );
-    //
-    // let width = 2 * max_los;
-
+    assert_eq!(
+        longest.len(),
+        max_los*max_los,
+        "longest lines should be max_los squared length"
+    );
 
     let mut vs =
         UnrolledVectorLos::<DEFAULT_UNROLL, DEFAULT_VECTOR_LENGTH>::new(max_los, config.refraction, config.scale);
@@ -118,7 +124,7 @@ pub fn kernel(
                 };
                 // safety: result_tvs_id is guaranteed to be within [0..max_los^2)
                 unsafe {
-                    *longest.get_unchecked_mut(result_tvs_id as usize) = point_longest;
+                    *longest.get_unchecked_mut(result_tvs_id as usize) = LineOfSightPacked::new_unchecked(point_longest as u32, angle as u16)
                 };
                 if cfg!(any(test, feature = "ring_data"))
                     && crate::run::compute::Compute::is_process_viewsheds(&config.process)
@@ -128,13 +134,12 @@ pub fn kernel(
             }
         }
     }
-
-    OutputData { surfaces, longest }
 }
 
 #[cfg(test)]
 mod test {
-    use crate::{cpu::kernel as cpu_kernel, run::compute::test::default_config};
+    use crate::{cpu::kernel as cpu_kernel, los_pack::LineOfSightPacked, run::compute::test::default_config};
+    use crate::cpu::kernel::OutputData;
 
     #[test]
     fn total_surfaces() {
@@ -145,8 +150,19 @@ mod test {
             &tempfile::NamedTempFile::new().unwrap(),
         );
 
-        let forward = cpu_kernel(&db_worker, dem, 4, 0.0, &config);
-        let backward = cpu_kernel(&db_worker, dem, 4, 180.0, &config);
+        let mut forward = OutputData {
+            surfaces: vec![0.0f32; 4*4],
+            longest: vec![LineOfSightPacked::new(0, 0).unwrap(); 4 * 4]
+        };
+
+        cpu_kernel(&db_worker, dem, &mut forward, 4, 0.0, &config);
+
+        let mut backward = OutputData {
+            surfaces: vec![0.0f32; 4*4],
+            longest: vec![LineOfSightPacked::new(0, 0).unwrap(); 4 * 4]
+        };
+
+        cpu_kernel(&db_worker, dem, &mut backward, 4, 180.0, &config);
 
         let result = forward
             .surfaces

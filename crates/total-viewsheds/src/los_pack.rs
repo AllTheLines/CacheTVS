@@ -23,19 +23,30 @@ impl LineOfSightPacked {
     /// that floats are just more widely recognised in general. At the end of the day, they're just
     /// bits that are neither valid f32 nor u32.
     pub fn new(distance: u32, angle: u16) -> Result<Self> {
-        let angle_u32 = u32::from(angle);
         if distance > U22_MAX {
             color_eyre::eyre::bail!("{} is greater than u22 max {U22_MAX}", distance);
         }
-        if angle_u32 > U10_MAX {
+        if u32::from(angle) > U10_MAX {
             color_eyre::eyre::bail!("{} is greater than u10 max {U10_MAX}", angle);
         }
+
+        let packed = unsafe {
+            Self::new_unchecked(distance, angle)
+        };
+
+        Ok(packed)
+    }
+
+    pub unsafe fn new_unchecked(distance: u32, angle: u16) -> Self {
+        let angle_u32 = u32::from(angle);
 
         let distance_bits = (distance & U22_MAX) << 10u32;
         let angle_bits = angle_u32 & U10_MAX;
         let packed_integer_u32 = distance_bits | angle_bits;
         let packed_float_f32 = f32::from_be_bytes(packed_integer_u32.to_be_bytes());
-        Ok(Self(packed_float_f32))
+
+        Self(packed_float_f32)
+
     }
 
     /// Transmute to `u32` in order to do the bitshifting.
@@ -49,8 +60,8 @@ impl LineOfSightPacked {
     }
 
     /// The angle of the line of sight from the point of view.
-    pub fn angle(&self) -> Result<u16> {
-        Ok((self.to_u32() & U10_MAX).try_into()?)
+    pub fn angle(&self) -> u16 {
+        (self.to_u32() & U10_MAX) as u16
     }
 
     /// Get the raw f32 value. It doesn't represent any useful data, it's just the f32 view of the
@@ -59,6 +70,7 @@ impl LineOfSightPacked {
         self.0
     }
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -70,7 +82,7 @@ mod tests {
         let line_of_sight = LineOfSightPacked::new(123, 45).unwrap();
 
         assert_eq!(line_of_sight.distance(), 123);
-        assert_eq!(line_of_sight.angle().unwrap(), 45);
+        assert_eq!(line_of_sight.angle(), 45);
     }
 
     #[test]
@@ -79,7 +91,7 @@ mod tests {
         let line_of_sight = LineOfSightPacked::new(U22_MAX, max_angle).unwrap();
 
         assert_eq!(line_of_sight.distance(), U22_MAX);
-        assert_eq!(line_of_sight.angle().unwrap(), max_angle);
+        assert_eq!(line_of_sight.angle(), max_angle);
     }
 
     #[gtest]
