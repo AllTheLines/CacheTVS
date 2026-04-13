@@ -125,7 +125,12 @@ where
             &mut self.angles[1..],
         );
 
-        let mut output: Vec<bool> = vec![];
+        let mut output: Vec<bool> = if cfg!(any(test, feature = "ring_data")) {
+            Vec::with_capacity(line.len())
+        } else {
+            vec![]
+        };
+
 
         let (chunked_prefix_angles, rest_prefix_angles) =
             self.angles[..self.angles.len() - 1].as_chunks::<{ UNROLL * VECTOR_WIDTH }>();

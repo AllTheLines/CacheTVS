@@ -1,6 +1,8 @@
 //! A "segment" is a single area of visibility for a given angle on a viewshed. There may be many
 //! segments per angle.
 
+use std::mem;
+
 /// `Segment` is the rho portion of a line segment in polar coordinates
 /// as (`rho`: u16, `delta_rho`: u16) which are packed into a single u32 for storage
 #[derive(Clone)]
@@ -63,31 +65,25 @@ impl PolarSegments {
         reason = "We assume everything fits in a u16, we want a panic if it doesn't"
     )]
     pub fn from_bools(degree: u16, bitmap: &[bool]) -> Self {
-        let mut visible_segments: Vec<Segment> = vec![];
+        let mut visible_segments: Vec<Segment> = Vec::with_capacity(1);
+
+        let char_slice: &[u8] = bytemuck::cast_slice(bitmap);
 
         let mut cur_index = 0;
-        while let Some(visible) = bitmap.get(cur_index) {
-            if !visible {
-                cur_index += 1;
-                continue;
-            }
+        while let Some(_) = char_slice.get(cur_index) {
+            let zero = memchr::memchr(0, &char_slice[cur_index..])
+                .unwrap_or(char_slice.len()-cur_index);
 
-            // it must be the case it is visible, scan the list
-            // until we find the last visible
-            let mut to_index = cur_index + 1;
-            while let Some(next_visible) = bitmap.get(to_index) {
-                if !next_visible {
-                    break;
-                }
+            visible_segments.push(Segment::new(cur_index as u16, zero as u16));
 
-                to_index += 1;
-            }
+            cur_index += zero;
 
-            visible_segments.push(Segment::new(
-                u16::try_from(cur_index).expect("bitmap too long!"),
-                u16::try_from(to_index - cur_index).expect("distance in bitmap too long!"),
-            ));
-            cur_index = to_index;
+
+            let next = memchr::memchr(1, &char_slice[cur_index..])
+                .unwrap_or(char_slice.len()-cur_index);
+
+
+            cur_index += next;
         }
 
         Self {
@@ -124,10 +120,10 @@ mod test {
         };
 
         {
-            let test_visibility = vec![false, true, true, true, true, false];
+            let test_visibility = vec![true, false, true, true, true, true, false];
             let angles = PolarSegments::from_bools(0, &test_visibility);
-            assert_eq!(angles.visible_segments.len(), 1);
-            assert_eq!(angles.visible_segments[0].distance(), 4);
+            assert_eq!(angles.visible_segments.len(), 2);
+            assert_eq!(angles.visible_segments[1].distance(), 4);
         }
     }
 }
