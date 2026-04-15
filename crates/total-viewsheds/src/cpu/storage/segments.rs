@@ -1,7 +1,6 @@
 //! A "segment" is a single area of visibility for a given angle on a viewshed. There may be many
 //! segments per angle.
 
-use std::mem;
 
 /// `Segment` is the rho portion of a line segment in polar coordinates
 /// as (`rho`: u16, `delta_rho`: u16) which are packed into a single u32 for storage

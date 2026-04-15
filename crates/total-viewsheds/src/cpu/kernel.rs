@@ -130,7 +130,7 @@ pub fn kernel(
                 if cfg!(any(test, feature = "ring_data"))
                     && crate::run::compute::Compute::is_process_viewsheds(&config.process)
                 {
-                    db_worker.store_bitmap(result_dem_id as u32, angle as u16, &point_visibility);
+                    db_worker.store_bitmap(result_dem_id as u64, angle as u16, &point_visibility);
                 }
             }
         }

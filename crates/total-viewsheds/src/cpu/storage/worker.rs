@@ -36,7 +36,7 @@ impl Worker {
     }
 
     /// `store_bitmap` converts a bitmap into `PolarSegments` and uses its `Engine` to store it
-    pub fn store_bitmap(&self, dem_id: u32, angle: u16, bitmap: &[bool]) {
+    pub fn store_bitmap(&self, dem_id: u64, angle: u16, bitmap: &[bool]) {
         self.engine.store_segments(
             dem_id,
             super::segments::PolarSegments::from_bools(angle, bitmap),
@@ -52,7 +52,7 @@ impl Worker {
 /// overhead. This means that any panic or error will end in a corrupted database
 pub fn writer<P: AsRef<std::path::Path>>(
     path: P,
-    recv: std::sync::mpsc::Receiver<(u32, super::segments::PolarSegments)>,
+    recv: std::sync::mpsc::Receiver<(u64, super::segments::PolarSegments)>,
 ) -> Result<(), rusqlite::Error> {
     let mut conn = rusqlite::Connection::open(path)?;
 
@@ -83,7 +83,7 @@ pub fn writer<P: AsRef<std::path::Path>>(
                 .flat_map(|vector| vector.0.to_be_bytes())
                 .collect::<Vec<_>>();
 
-            let params = (&tvs_id, &segments.degree, &vec_bytes);
+            let params = (&(tvs_id as i64), &segments.degree, &vec_bytes);
             stmt.execute(params)?;
         }
     }
