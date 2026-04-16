@@ -133,26 +133,6 @@ impl DEM {
             (yish + x) as u32
         }
     }
-
-    /// Convert a lat/lon to a DEM coordinate.
-    pub fn latlon_to_dem_coord(
-        &self,
-        latlon: crate::projection::LonLatCoord,
-    ) -> Result<crate::dem::Coordinate> {
-        let width = f64::from(self.width - 1);
-        let scale = f64::from(self.scale);
-        let coord_metric = crate::projection::Converter { base: self.centre }.to_meters(latlon)?;
-        let offset = (width * scale) / 2.0f64;
-        let dem_coord = crate::dem::Coordinate(
-            geo::coord! {
-                x: coord_metric.x + offset,
-                // Invert the y coordinate because geographic coordinates are anchored to the bottom left
-                // and DEM coordinates are anchored to the top right.
-                y: -coord_metric.y + offset
-            } / scale,
-        );
-        Ok(dem_coord)
-    }
 }
 
 /// Serialise for Debugging.
@@ -171,21 +151,5 @@ impl std::fmt::Debug for DEM {
             .field("max_los_as_points", &self.max_los_as_points)
             .field("computable_points_count", &self.computable_points_count)
             .finish()
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn latlon_to_dem_coord() {
-        let centre = crate::projection::LonLatCoord((-33.33f64, 12.34f64).into());
-        let dem = DEM::new(centre, 102, 5.0, 250).unwrap();
-
-        assert_eq!(
-            dem.latlon_to_dem_coord(centre).unwrap(),
-            Coordinate((50.5f64, 50.5f64).into())
-        );
     }
 }

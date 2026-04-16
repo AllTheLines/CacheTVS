@@ -5,9 +5,7 @@ use crate::cpu::{kernel, storage};
 use crate::los_pack::LineOfSightPacked;
 use color_eyre::Result;
 use std::sync::{mpmc, mpsc};
-use std::thread::JoinHandle;
 use std::{thread, time};
-use std::fmt::format;
 
 /// `Work` holds all data needed for a worker to do a line of sight
 /// calculation
@@ -22,11 +20,11 @@ fn kernel_worker(
     work_todo: mpmc::Receiver<Work>,
     res: &mpsc::Sender<OutputData>,
     config: &crate::run::compute::Config,
-    max_los: usize,
 ) {
+    let size = config.metadata.max_line_of_sight.pow(2) as usize;
     let mut output = OutputData {
-        surfaces: vec![0.0f32; max_los * max_los],
-        longest: vec![LineOfSightPacked::new(0, 0).unwrap(); max_los * max_los],
+        surfaces: vec![0.0f32; size],
+        longest: vec![LineOfSightPacked::new(0, 0).unwrap(); size],
     };
 
     for work in work_todo {
@@ -36,7 +34,6 @@ fn kernel_worker(
             storage_worker,
             elevations,
             &mut output,
-            max_los,
             f32::from(work.angle),
             config,
         );
@@ -82,51 +79,33 @@ impl super::compute::Compute<'_> {
         let borrow_elevations = &elevations;
 
         let (out_surfaces, out_longest) = thread::scope(|s| {
-            let worker_handles: Result<Vec<_>> = (0..self.config.thread_count).map(|id| {
-                let db_worker = if Self::is_process_viewsheds(&self.config.process) {
-                    #[expect(
-                        clippy::as_conversions,
-                        clippy::cast_precision_loss,
-                        clippy::cast_sign_loss,
-                        clippy::cast_possible_truncation,
-                        reason = "Should always fit in `u32`"
-                    )]
-                    let max_los_metric =
-                        (self.dem.max_los_as_points as f32 * self.dem.scale) as u32;
+            let worker_handles: Result<Vec<_>> = (0..self.config.thread_count)
+                .map(|id| {
+                    let db_worker = if Self::is_process_viewsheds(&self.config.process) {
+                        let db_path = self.config.viewsheds_db_path.join(format!("{id}.db"));
 
-                    let db_path = self.config
-                        .viewsheds_db_path
-                        .join(format!("{id}.db"));
+                        let db = crate::cpu::storage::db::DB::new(&db_path)?;
+                        db.save_metadata(&config.metadata)?;
 
-                    let db = crate::cpu::storage::db::DB::new(&db_path)?;
-                    db.save_metadata(&crate::cpu::storage::metadata::MetaData {
-                        width: self.dem.width,
-                        scale: self.dem.scale,
-                        max_line_of_sight: max_los_metric,
-                        reserved_ring_size: 0,
-                        centre: self.dem.centre,
-                    })?;
+                        crate::cpu::storage::worker::Worker::new(&db_path)
+                    } else {
+                        crate::cpu::storage::worker::Worker::new_noop()
+                    };
 
-                    crate::cpu::storage::worker::Worker::new(&db_path)
-                } else {
-                    crate::cpu::storage::worker::Worker::new_noop()
-                };
+                    let kernel_send = kernel_send.clone();
+                    let kernel_receive = kernel_receive.clone();
 
-                let kernel_send = kernel_send.clone();
-                let kernel_receive = kernel_receive.clone();
-
-                Ok(s.spawn(move || {
-                    kernel_worker(
-                        &db_worker,
-                        borrow_elevations,
-                        kernel_receive,
-                        &kernel_send,
-                        config,
-                        max_los,
-                    );
-                }))
-            })
-            .collect::<Result<Vec<_>>>();
+                    Ok(s.spawn(move || {
+                        kernel_worker(
+                            &db_worker,
+                            borrow_elevations,
+                            kernel_receive,
+                            &kernel_send,
+                            config,
+                        );
+                    }))
+                })
+                .collect::<Result<Vec<_>>>();
 
             let handles = worker_handles.expect("");
 

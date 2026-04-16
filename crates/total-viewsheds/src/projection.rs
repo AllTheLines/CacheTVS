@@ -55,6 +55,29 @@ impl Converter {
         ))
     }
 
+    /// Convert a lat/lon to a DEM coordinate.
+    pub fn lonlat_to_dem_coord(
+        metadata: &crate::cpu::storage::metadata::MetaData,
+        latlon: crate::projection::LonLatCoord,
+    ) -> Result<crate::dem::Coordinate> {
+        let width = f64::from(metadata.width - 1);
+        let scale = f64::from(metadata.scale);
+        let coord_metric = Self {
+            base: metadata.centre,
+        }
+        .to_meters(latlon)?;
+        let offset = (width * scale) / 2.0f64;
+        let dem_coord = crate::dem::Coordinate(
+            geo::coord! {
+                x: coord_metric.x + offset,
+                // Invert the y coordinate because geographic coordinates are anchored to the bottom left
+                // and DEM coordinates are anchored to the top right.
+                y: -coord_metric.y + offset
+            } / scale,
+        );
+        Ok(dem_coord)
+    }
+
     #[cfg(test)]
     /// Chante the anchor of the AEQD projection. This just gives slightly more accuracy when
     /// reconstructing larger viewsheds on larger DEMs.
@@ -165,6 +188,23 @@ mod test {
                 x: -2.573510680530247,
                 y: 51.463487311585936
             })
+        );
+    }
+
+    #[test]
+    fn latlon_to_dem_coord() {
+        let centre = crate::projection::LonLatCoord((-33.33f64, 12.34f64).into());
+        let metadata = crate::cpu::storage::metadata::MetaData {
+            width: 102,
+            scale: 5.0,
+            max_line_of_sight: 250,
+            reserved_ring_size: 0,
+            centre,
+        };
+
+        assert_eq!(
+            Converter::lonlat_to_dem_coord(&metadata, centre).unwrap(),
+            crate::dem::Coordinate((50.5f64, 50.5f64).into())
         );
     }
 }

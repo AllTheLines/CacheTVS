@@ -130,8 +130,19 @@ pub struct Compute {
         default_value = "./viewsheds.db"
     )]
     pub viewsheds_db_path: PathBuf,
+
+    /// Lon/lat coordinates for a polygon that represents an Area of Interest within the DEM.
+    /// Points outside this polygon will be ignored.
+    #[arg(
+        long,
+        allow_hyphen_values(true),
+        value_parser = parse_coords,
+        value_name = "Lon/lat coords of region")
+    ]
+    pub aoi_point: Vec<(f32, f32)>,
 }
 
+/// Arguments to the `viewshed` subcommand.
 #[derive(clap::Parser, Debug)]
 pub struct Viewshed {
     /// Path or directory where viewshed DB was saved.
@@ -147,6 +158,7 @@ pub struct Viewshed {
     pub coordinates: Vec<(f32, f32)>,
 }
 
+/// Parse args like "123.456,-987.654" to floats.
 fn parse_coords(string: &str) -> Result<(f32, f32)> {
     let mut coordinates = Vec::new();
 
