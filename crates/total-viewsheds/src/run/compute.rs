@@ -44,8 +44,6 @@ pub struct Config {
     pub process: Vec<crate::config::Process>,
     /// Output directory
     pub output_directory: Option<std::path::PathBuf>,
-    /// The number of reserved rings per km.
-    pub rings_per_km: f32,
     /// How to normalise the heatmap data.
     pub heatmap: crate::config::HeatmapNormalisation,
     /// Refractoin coefficient
@@ -56,6 +54,11 @@ pub struct Config {
     pub disable_render_image: bool,
     /// Where to store the viewshed
     pub viewsheds_db_path: PathBuf,
+    /// Metadata about the DEM and compute run.
+    // TODO: Remove other fields in favour of this.
+    pub metadata: crate::cpu::storage::metadata::MetaData,
+    /// Polygon for Area of Interest
+    pub area_of_interest: geo::Polygon,
 }
 
 impl<'compute> Compute<'compute> {
@@ -64,7 +67,7 @@ impl<'compute> Compute<'compute> {
         let total_bands = dem.computable_points_count * 2;
 
         let rings_per_band = if Self::is_process_viewsheds(&config.process) {
-            Self::ring_count_per_band(config.rings_per_km, dem.max_los_as_points * dem.scale_u32())
+            config.metadata.reserved_ring_size
         } else {
             1
         };
@@ -318,6 +321,11 @@ pub mod test {
         backend: crate::config::Backend,
         temp_db: &tempfile::NamedTempFile,
     ) -> Config {
+        let metadata = crate::cpu::storage::metadata::MetaData {
+            reserved_ring_size: 100,
+            ..Default::default()
+        };
+
         Config {
             observer_height: 0.8,
             scale: 1.0,
@@ -328,12 +336,13 @@ pub mod test {
                 crate::config::Process::LongestLines,
             ],
             output_directory: None,
-            rings_per_km: 5000.0,
             heatmap: crate::config::HeatmapNormalisation::UnitScale,
             refraction: 0.13f32,
             thread_count: 1, // single thread it for consistency
             disable_render_image: false,
             viewsheds_db_path: temp_db.path().into(),
+            metadata,
+            area_of_interest: geo::Polygon::empty(),
         }
     }
 

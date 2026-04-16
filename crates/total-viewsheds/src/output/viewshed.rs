@@ -22,7 +22,7 @@ impl Viewshed<'_> {
     /// Reconstruct a viewshed.
     pub fn reconstruct(
         source: &super::ring_data::Source,
-        pov_coord_latlon: crate::projection::LonLatCoord,
+        pov_coord_lonlat: crate::projection::LonLatCoord,
     ) -> Result<geo::MultiPolygon> {
         let ring_data = match source {
             crate::output::ring_data::Source::Directory(directory) => {
@@ -44,7 +44,10 @@ impl Viewshed<'_> {
             ring_data.metadata.max_line_of_sight,
         )?;
 
-        let pov_dem_coord = dem.latlon_to_dem_coord(pov_coord_latlon)?;
+        let pov_dem_coord = crate::projection::Converter::lonlat_to_dem_coord(
+            &ring_data.metadata,
+            pov_coord_lonlat,
+        )?;
         tracing::info!(
             "Reconstructing viewshed for DEM-relative coord: {:?}.",
             pov_dem_coord
