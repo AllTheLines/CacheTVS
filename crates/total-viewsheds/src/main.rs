@@ -43,6 +43,7 @@ mod cpu {
     mod los;
 
     mod rotation;
+    mod rotator;
 
     /// Database for viewsheds
     pub mod storage {
