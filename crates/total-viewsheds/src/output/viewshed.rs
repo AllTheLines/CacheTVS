@@ -22,7 +22,7 @@ impl Viewshed<'_> {
     /// Reconstruct a viewshed.
     pub fn reconstruct(
         source: &super::ring_data::Source,
-        pov_coord_latlon: crate::projection::LatLonCoord,
+        pov_coord_latlon: crate::projection::LonLatCoord,
     ) -> Result<geo::MultiPolygon> {
         let ring_data = match source {
             crate::output::ring_data::Source::Directory(directory) => {
@@ -341,7 +341,7 @@ impl<'viewshed> Reconstructor<'viewshed> {
     pub fn save(
         mut viewshed: geo::MultiPolygon,
         output_directory: &std::path::Path,
-        viewshed_latlon: crate::projection::LatLonCoord,
+        viewshed_latlon: crate::projection::LonLatCoord,
     ) -> Result<()> {
         let filename = format!("{}-{}.json", viewshed_latlon.0.x, viewshed_latlon.0.y);
         let directory = output_directory.join("viewsheds");
