@@ -23,9 +23,9 @@
 
 extern crate core;
 
-use std::mem;
 use clap::Parser as _;
 use color_eyre::eyre::Result;
+use std::mem;
 use tracing_subscriber::{Layer as _, layer::SubscriberExt as _, util::SubscriberInitExt as _};
 
 /// Handling the running of computations.
@@ -37,6 +37,8 @@ mod run {
 mod config;
 /// cpu implements a CPU kernel for the longest line of sight
 mod cpu {
+    pub mod area_of_interest;
+
     /// los contains all the traits necessary for implementing a line of sight algorithm
     mod los;
 
@@ -142,9 +144,9 @@ fn compute(config: &config::Compute) -> Result<()> {
         clippy::cast_precision_loss,
         reason = "Sign loss and truncation aren't relevant"
     )]
-    let max_line_of_sight = (tile.width.div_euclid(3) as f32 * scale) as u32;
+    let max_line_of_sight_metres = (tile.width.div_euclid(3) as f32 * scale) as u32;
 
-    let mut dem = crate::dem::DEM::new(tile.centre, tile.width, scale, max_line_of_sight)?;
+    let mut dem = crate::dem::DEM::new(tile.centre, tile.width, scale, max_line_of_sight_metres)?;
 
     dem.elevations = mem::take(&mut tile.data);
 
@@ -153,6 +155,23 @@ fn compute(config: &config::Compute) -> Result<()> {
 
     tracing::debug!("Created DEM: {dem:?}");
 
+    let max_line_of_sight = if matches!(config.backend, config::Backend::CPU) {
+        dem.max_los_as_points
+    } else {
+        max_line_of_sight_metres
+    };
+
+    let metadata = crate::cpu::storage::metadata::MetaData {
+        width: dem.width,
+        scale: dem.scale,
+        max_line_of_sight,
+        reserved_ring_size: run::compute::Compute::ring_count_per_band(
+            config.rings_per_km,
+            dem.max_los_as_points * dem.scale_u32(),
+        ),
+        centre: dem.centre,
+    };
+
     tracing::info!("Starting computations");
     let compute_config = run::compute::Config {
         observer_height: config.observer_height,
@@ -160,12 +179,16 @@ fn compute(config: &config::Compute) -> Result<()> {
         backend: config.backend.clone(),
         process: config.process.clone(),
         output_directory: Some(config.output_dir.clone()),
-        rings_per_km: config.rings_per_km,
         heatmap: config.heatmap,
         refraction: config.refraction,
         thread_count: config.thread_count,
         disable_render_image: config.disable_image_render,
         viewsheds_db_path: config.viewsheds_db_path.clone(),
+        area_of_interest: crate::cpu::area_of_interest::Pruner::lonlat_coords_to_polygon(
+            config.aoi_point.clone(),
+            &metadata,
+        )?,
+        metadata,
     };
 
     let mut compute = run::compute::Compute::new(compute_config, &mut dem)?;

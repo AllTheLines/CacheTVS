@@ -8,9 +8,7 @@ pub struct MetaData {
     pub width: u32,
     /// The diameter in meters each point of the data covers.
     pub scale: f32,
-    /// The maximum line of sight (in meters) that was used to calculate the ring data. It is needed
-    /// to instantiate the `DEM` struct and therefore reconstruct the bands of sight used to create
-    /// the ring data.
+    /// The maximum line of sight (in points). Unit is metres for Vulkan, to be deprecated soon.
     pub max_line_of_sight: u32,
     /// The number of items reserved to place ring DEM IDs in.
     pub reserved_ring_size: usize,
