@@ -1,16 +1,12 @@
 //! Rotate the DEM, but just the so-called "chocolate bar" region.
 
 use itertools::izip;
-use kernel::rotation::ANGLE_SHIFT;
 use std::rc::Rc;
 
-/// `lines` generates a rotation "map" for a given elevation list
-/// Adapted from [this stack overflow answer](https://stackoverflow.com/a/71901621)
+/// Rotate lines of elevation data.
 #[expect(
     clippy::as_conversions,
-    clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
-    clippy::cast_precision_loss,
     reason = "so long as max_los^2 < 2^24, the following `as` conversions are entirely safe"
 )]
 #[expect(
@@ -40,20 +36,12 @@ pub fn lines(
         );
     };
 
-    let (sin, cos) = (
-        f64::sin((angle + f64::from(ANGLE_SHIFT)).to_radians()),
-        f64::cos((angle + f64::from(ANGLE_SHIFT)).to_radians()),
-    );
-
-    let (x_center, y_center) = ((width - 1) as f64 / 2.0, (width - 1) as f64 / 2.0f64);
+    let rotator = super::rotator::Rotator::new(angle, width);
 
     let mut indexes = Rc::new(vec![0i64; 2 * max_los]);
     let mut elevations = Rc::new(vec![0i16; 2 * max_los]);
 
     ((max_los as isize)..(max_los as isize) * 2).map(move |x| {
-        let x_sin = (x as f64 - x_center) * sin;
-        let x_cos = (x as f64 - x_center) * cos;
-
         let mut_indexes = Rc::get_mut(&mut indexes).unwrap();
         let mut_elevations = Rc::get_mut(&mut elevations).unwrap();
 
@@ -63,13 +51,8 @@ pub fn lines(
             mut_elevations.iter_mut()
         )
         .for_each(|(y, index, elevation)| {
-            let y_sin = (y as f64 - y_center) * sin;
-            let y_cos = (y as f64 - y_center) * cos;
-
-            let x_rot = (x_cos - y_sin + y_center).round() as isize;
-            let y_rot = (y_cos + x_sin + x_center).round() as isize;
-
-            let new_idx = x_rot.clamp(0, width - 1) * width + y_rot.clamp(0, width - 1);
+            let (x_rotated, y_rotated) = rotator.rotate(x, y);
+            let new_idx = y_rotated * width + x_rotated;
             *index = new_idx as i64;
             *elevation = elevs[new_idx.cast_unsigned()];
         });
