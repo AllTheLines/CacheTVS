@@ -5,12 +5,12 @@ use color_eyre::Result;
 // TODO: Rename to `LonLatCoord`.
 /// A latitude/longtitude coordinate.
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Default)]
-pub struct LatLonCoord(pub geo::Coord);
+pub struct LonLatCoord(pub geo::Coord);
 
 /// Convert between different coordinate system.
 pub struct Converter {
     /// The lat/lon base coordinates for the AEQD mercator projected coordinates.
-    pub base: LatLonCoord,
+    pub base: LonLatCoord,
 }
 
 impl Converter {
@@ -30,7 +30,7 @@ impl Converter {
     }
 
     /// Convert from degrees to the AEQD metric projection.
-    pub fn to_meters(&self, source: LatLonCoord) -> Result<geo::Coord> {
+    pub fn to_meters(&self, source: LonLatCoord) -> Result<geo::Coord> {
         let mut converted = (source.0.x.to_radians(), source.0.y.to_radians(), 0.0f64);
         proj4rs::transform::transform(
             &Self::degrees_projection()?,
@@ -42,7 +42,7 @@ impl Converter {
     }
 
     /// Convert from the AEQD metric projection to degrees.
-    pub fn to_degrees(&self, source: geo::Coord) -> Result<LatLonCoord> {
+    pub fn to_degrees(&self, source: geo::Coord) -> Result<LonLatCoord> {
         let mut converted = (source.x, source.y, 0.0f64);
         proj4rs::transform::transform(
             &self.meters_projection()?,
@@ -50,7 +50,7 @@ impl Converter {
             &mut converted,
         )?;
 
-        Ok(LatLonCoord(
+        Ok(LonLatCoord(
             geo::coord! { x: converted.0.to_degrees(), y: converted.1.to_degrees() },
         ))
     }
@@ -60,7 +60,7 @@ impl Converter {
     /// reconstructing larger viewsheds on larger DEMs.
     pub fn change_metric_origin(
         // The lat/lon of the DEM's top-left corner
-        source_degrees_anchor: LatLonCoord,
+        source_degrees_anchor: LonLatCoord,
         // The AEQD coordinates of a viewshed's centre.
         target_metric_anchor: geo::Coord,
         // The point in the viewshed, in metric coordinates, to be converted.
@@ -99,7 +99,7 @@ mod test {
 
     #[test]
     fn bristol_to_meters() {
-        let base = LatLonCoord(geo::Coord {
+        let base = LonLatCoord(geo::Coord {
             x: -2.5879,
             y: 51.4545,
         });
@@ -112,14 +112,14 @@ mod test {
 
     #[test]
     fn bristolish_to_meters() {
-        let base = LatLonCoord(geo::Coord {
+        let base = LonLatCoord(geo::Coord {
             x: -2.5879,
             y: 51.4545,
         });
         let converter = Converter { base };
         assert_eq!(
             converter
-                .to_meters(LatLonCoord(geo::Coord {
+                .to_meters(LonLatCoord(geo::Coord {
                     x: -2.573510680530247,
                     y: 51.463487311585936
                 }))
@@ -133,14 +133,14 @@ mod test {
 
     #[test]
     fn bristol_to_degrees() {
-        let base = LatLonCoord(geo::Coord {
+        let base = LonLatCoord(geo::Coord {
             x: -2.5879,
             y: 51.4545,
         });
         let converter = Converter { base };
         assert_eq!(
             converter.to_degrees(geo::Coord { x: 0.0, y: 0.0 }).unwrap(),
-            LatLonCoord(geo::Coord {
+            LonLatCoord(geo::Coord {
                 x: -2.5879,
                 y: 51.45450000000001
             })
@@ -149,7 +149,7 @@ mod test {
 
     #[test]
     fn bristolish_to_degrees() {
-        let base = LatLonCoord(geo::Coord {
+        let base = LonLatCoord(geo::Coord {
             x: -2.5879,
             y: 51.4545,
         });
@@ -161,7 +161,7 @@ mod test {
                     y: 1000.0
                 })
                 .unwrap(),
-            LatLonCoord(geo::Coord {
+            LonLatCoord(geo::Coord {
                 x: -2.573510680530247,
                 y: 51.463487311585936
             })
