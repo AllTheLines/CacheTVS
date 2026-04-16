@@ -89,7 +89,7 @@ fn main() -> Result<()> {
         config::Commands::Compute(compute_config) => compute(compute_config)?,
         config::Commands::Viewshed(viewshed_config) => {
             for coordinate in &viewshed_config.coordinates {
-                let geo_coord = projection::LatLonCoord(
+                let geo_coord = projection::LonLatCoord(
                     geo::coord! {x: f64::from(coordinate.0), y: f64::from(coordinate.1)},
                 );
 

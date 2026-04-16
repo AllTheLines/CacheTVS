@@ -16,5 +16,5 @@ pub struct MetaData {
     pub reserved_ring_size: usize,
     /// The lat/lon coordinates for the centre of the 2D DEM grid. Used for accurately converting
     /// between degree and metric coordinate systems.
-    pub centre: crate::projection::LatLonCoord,
+    pub centre: crate::projection::LonLatCoord,
 }

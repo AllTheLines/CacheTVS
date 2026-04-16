@@ -8,7 +8,8 @@ pub const SECTOR_STEPS: u16 = 180;
 
 /// Handles all the computations.
 pub struct Compute<'compute>
-where 'static: 'compute
+where
+    'static: 'compute,
 {
     /// User configuration.
     pub config: Config,
@@ -303,7 +304,7 @@ pub mod test {
     pub fn make_dem(elevations: &[i16]) -> crate::dem::DEM {
         let width = elevations.len().isqrt() as u32;
         let mut dem = crate::dem::DEM::new(
-            crate::projection::LatLonCoord((33.33, 33.33).into()),
+            crate::projection::LonLatCoord((33.33, 33.33).into()),
             width,
             1.0,
             width / 3,
