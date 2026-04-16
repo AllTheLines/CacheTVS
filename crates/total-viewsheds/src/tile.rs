@@ -17,7 +17,7 @@ pub struct Tile {
     /// All the elevation data.
     pub data: Vec<i16>,
     /// The lat/lon coordinates of the centre of the tile.
-    pub centre: crate::projection::LatLonCoord,
+    pub centre: crate::projection::LonLatCoord,
 }
 
 impl Tile {
@@ -109,7 +109,7 @@ impl Tile {
     /// Get the lat/lon of the centre of the tile simply by dividing the extent in half. This isn't
     /// ideal as there's no guarantee that it's the same centre that the creator used to generate
     /// the tile.
-    fn get_centre_by_raster(dataset: &gdal::Dataset) -> Result<crate::projection::LatLonCoord> {
+    fn get_centre_by_raster(dataset: &gdal::Dataset) -> Result<crate::projection::LonLatCoord> {
         let (width, height) = dataset.raster_size();
 
         #[expect(
@@ -138,7 +138,7 @@ impl Tile {
             &mut converted,
         )?;
 
-        Ok(crate::projection::LatLonCoord(geo::coord! {
+        Ok(crate::projection::LonLatCoord(geo::coord! {
             x: converted.0.to_degrees(),
             y: converted.1.to_degrees()
         }))
@@ -146,7 +146,7 @@ impl Tile {
 
     /// Get the lat/lon centre of the tile by querying the projection's definition. This is more
     /// likely to guarantee that the tile's centre matches the creator's intended centre.
-    fn get_centre_by_projection(dataset: &gdal::Dataset) -> Result<crate::projection::LatLonCoord> {
+    fn get_centre_by_projection(dataset: &gdal::Dataset) -> Result<crate::projection::LonLatCoord> {
         let projection = &dataset.spatial_ref()?.to_proj4()?;
 
         let lat_0: f64 = projection
@@ -163,7 +163,7 @@ impl Tile {
             .and_then(|value| value.parse::<f64>().ok())
             .context("Couldn't find `lon_0` in projection defintion")?;
 
-        Ok(crate::projection::LatLonCoord(
+        Ok(crate::projection::LonLatCoord(
             geo::coord! { x: lon_0, y: lat_0 },
         ))
     }
@@ -183,7 +183,7 @@ mod test {
         let tile = Tile::load(&config).unwrap();
         assert_eq!(
             tile.centre,
-            crate::projection::LatLonCoord(geo::Coord {
+            crate::projection::LonLatCoord(geo::Coord {
                 x: -0.1278,
                 y: 51.5074
             })
@@ -199,7 +199,7 @@ mod test {
         let tile = Tile::load(&config).unwrap();
         assert_eq!(
             tile.centre,
-            crate::projection::LatLonCoord(geo::Coord {
+            crate::projection::LonLatCoord(geo::Coord {
                 x: -0.1278,
                 y: 51.5074
             })

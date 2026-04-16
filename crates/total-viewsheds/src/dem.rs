@@ -30,7 +30,7 @@ pub struct DEM {
     /// The size of each point in meters.
     pub scale: f32,
     /// The geographic location of the centre of the DEM tile.
-    pub centre: crate::projection::LatLonCoord,
+    pub centre: crate::projection::LonLatCoord,
     /// The maximum distance in terms of points to search.
     pub max_los_as_points: u32,
     /// The total number of points that can have full viewsheds calculated for them.
@@ -40,7 +40,7 @@ pub struct DEM {
 impl DEM {
     /// `Instantiate`
     pub fn new(
-        centre_latlon: crate::projection::LatLonCoord,
+        centre_latlon: crate::projection::LonLatCoord,
         width: u32,
         scale: f32,
         max_line_of_sight: u32,
@@ -137,7 +137,7 @@ impl DEM {
     /// Convert a lat/lon to a DEM coordinate.
     pub fn latlon_to_dem_coord(
         &self,
-        latlon: crate::projection::LatLonCoord,
+        latlon: crate::projection::LonLatCoord,
     ) -> Result<crate::dem::Coordinate> {
         let width = f64::from(self.width - 1);
         let scale = f64::from(self.scale);
@@ -180,7 +180,7 @@ mod test {
 
     #[test]
     fn latlon_to_dem_coord() {
-        let centre = crate::projection::LatLonCoord((-33.33f64, 12.34f64).into());
+        let centre = crate::projection::LonLatCoord((-33.33f64, 12.34f64).into());
         let dem = DEM::new(centre, 102, 5.0, 250).unwrap();
 
         assert_eq!(
