@@ -3,6 +3,7 @@ use crate::cpu::rotation::lines;
 use crate::cpu::unrolled_los::UnrolledVectorLos;
 use crate::cpu::vector_intrinsics::DEFAULT_VECTOR_LENGTH;
 use crate::los_pack::LineOfSightPacked;
+use geo::HasDimensions as _;
 use itertools::izip;
 
 /// The data output by a single angle.
@@ -87,16 +88,17 @@ pub fn kernel(
         config.scale,
     );
 
-    let pruner = super::area_of_interest::Pruner::new(
-        config.metadata.width,
-        config.area_of_interest.clone(),
-    );
+    let maybe_pruner = (!config.area_of_interest.is_empty()).then(|| {
+        super::area_of_interest::Pruner::new(config.metadata.width, config.area_of_interest.clone())
+    });
 
     for (line, line_indexes) in lines(elevation_map, max_los, angle.into()) {
         for (pov, (&pov_height, &result_dem_id)) in
             izip!(line.iter().take(max_los), line_indexes.iter().take(max_los)).enumerate()
         {
-            if pruner.is_prunable(result_dem_id) {
+            if let Some(pruner) = &maybe_pruner
+                && pruner.is_prunable(result_dem_id)
+            {
                 continue;
             }
 
