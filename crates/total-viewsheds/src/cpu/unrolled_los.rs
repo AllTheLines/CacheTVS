@@ -131,7 +131,6 @@ where
             vec![]
         };
 
-
         let (chunked_prefix_angles, rest_prefix_angles) =
             self.angles[..self.angles.len() - 1].as_chunks::<{ UNROLL * VECTOR_WIDTH }>();
         let (chunked_angles, rest_angles) =

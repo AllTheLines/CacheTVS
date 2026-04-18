@@ -13,7 +13,10 @@ use std::rc::Rc;
     clippy::cast_precision_loss,
     reason = "so long as max_los^2 < 2^24, the following `as` conversions are entirely safe"
 )]
-#[expect(clippy::indexing_slicing, reason="rotation should not be out of bounds")]
+#[expect(
+    clippy::indexing_slicing,
+    reason = "rotation should not be out of bounds"
+)]
 pub fn lines(
     elevs: &[i16],
     max_los: usize,
