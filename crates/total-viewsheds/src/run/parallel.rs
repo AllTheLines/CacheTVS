@@ -4,6 +4,7 @@ use crate::cpu::kernel::OutputData;
 use crate::cpu::{kernel, storage};
 use crate::los_pack::LineOfSightPacked;
 use color_eyre::Result;
+use std::path::Path;
 use std::sync::{mpmc, mpsc};
 use std::{thread, time};
 
@@ -65,6 +66,21 @@ fn compilation_worker(
     (surfaces, longest)
 }
 
+pub fn init_worker<P: AsRef<Path>>(
+    path: P,
+    meta_data: &crate::cpu::storage::metadata::MetaData,
+    is_db_worker: bool,
+) -> Result<storage::worker::Worker> {
+    if !is_db_worker {
+        return Ok(storage::worker::Worker::new_noop());
+    }
+
+    let db = crate::cpu::storage::db::DB::new(&path)?;
+    db.save_metadata(meta_data)?;
+
+    Ok(crate::cpu::storage::worker::Worker::new(&path))
+}
+
 impl super::compute::Compute<'_> {
     /// `run_parallel` runs the CPU kernel in parallel
     pub fn run_parallel(&mut self) -> Result<()> {
@@ -78,26 +94,35 @@ impl super::compute::Compute<'_> {
 
         let borrow_elevations = &elevations;
 
+        let should_init_global_db =
+            Self::is_process_viewsheds(&self.config.process) && !self.config.database_per_thread;
+
+        let should_init_local_db =
+            Self::is_process_viewsheds(&self.config.process) && self.config.database_per_thread;
+
+
+        let global_worker = &init_worker(
+            &self.config.viewsheds_db_path,
+            &self.config.metadata,
+            should_init_global_db,
+        )?;
+
         let (out_surfaces, out_longest) = thread::scope(|s| {
             let worker_handles: Result<Vec<_>> = (0..self.config.thread_count)
                 .map(|id| {
-                    let db_worker = if Self::is_process_viewsheds(&self.config.process) {
-                        let db_path = self.config.viewsheds_db_path.join(format!("{id}.db"));
-
-                        let db = crate::cpu::storage::db::DB::new(&db_path)?;
-                        db.save_metadata(&config.metadata)?;
-
-                        crate::cpu::storage::worker::Worker::new(&db_path)
-                    } else {
-                        crate::cpu::storage::worker::Worker::new_noop()
-                    };
+                    let db_path = self.config.viewsheds_db_path.join(format!("{id}.db"));
+                    let local_worker = init_worker(
+                        db_path,
+                        &self.config.metadata,
+                        should_init_local_db,
+                    )?;
 
                     let kernel_send = kernel_send.clone();
                     let kernel_receive = kernel_receive.clone();
 
                     Ok(s.spawn(move || {
                         kernel_worker(
-                            &db_worker,
+                            if should_init_global_db { global_worker } else { &local_worker },
                             borrow_elevations,
                             kernel_receive,
                             &kernel_send,

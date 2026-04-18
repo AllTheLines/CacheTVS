@@ -189,6 +189,7 @@ fn compute(config: &config::Compute) -> Result<()> {
             &metadata,
         )?,
         metadata,
+        database_per_thread: config.database_per_thread,
     };
 
     let mut compute = run::compute::Compute::new(compute_config, &mut dem)?;

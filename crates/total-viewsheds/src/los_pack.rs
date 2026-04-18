@@ -30,9 +30,7 @@ impl LineOfSightPacked {
             color_eyre::eyre::bail!("{} is greater than u10 max {U10_MAX}", angle);
         }
 
-        let packed = unsafe {
-            Self::new_unchecked(distance, angle)
-        };
+        let packed = unsafe { Self::new_unchecked(distance, angle) };
 
         Ok(packed)
     }
@@ -46,7 +44,6 @@ impl LineOfSightPacked {
         let packed_float_f32 = f32::from_be_bytes(packed_integer_u32.to_be_bytes());
 
         Self(packed_float_f32)
-
     }
 
     /// Transmute to `u32` in order to do the bitshifting.
@@ -72,18 +69,17 @@ impl LineOfSightPacked {
 
     pub fn max(&self, rhs: Self) -> Self {
         if rhs.distance() > self.distance() {
-            return rhs
+            return rhs;
         }
 
         // let the smallest angle win due to keep consistent in a multithreaded environment
         if rhs.angle() < rhs.angle() && rhs.distance() == self.distance() {
-            return rhs
+            return rhs;
         }
 
         *self
     }
 }
-
 
 #[cfg(test)]
 mod tests {

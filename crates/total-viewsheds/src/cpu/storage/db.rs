@@ -1,7 +1,7 @@
 //! Conventional API for the DB. See `worker.rs` for how to write to the DB from the kernel.
 
-use std::path::Path;
 use color_eyre::Result;
+use std::path::Path;
 
 /// Sqlite DB connection details.
 pub struct DB {
