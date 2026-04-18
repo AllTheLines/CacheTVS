@@ -65,7 +65,7 @@ pub fn kernel(
     config: &crate::run::compute::Config,
 ) {
     #[expect(clippy::expect_used, reason = "We need to panic on failure")]
-    let max_los = usize::try_from(config.metadata.max_line_of_sight)
+    let max_los = usize::try_from(config.dem_metadata.max_line_of_sight)
         .expect("Line of sight length doesn't fit into `usize`");
     let surfaces = &mut output.surfaces;
     let longest = &mut output.longest;
@@ -85,11 +85,14 @@ pub fn kernel(
     let mut vs = UnrolledVectorLos::<DEFAULT_UNROLL, DEFAULT_VECTOR_LENGTH>::new(
         max_los,
         config.refraction,
-        config.scale,
+        config.dem_metadata.scale,
     );
 
     let maybe_pruner = (!config.area_of_interest.is_empty()).then(|| {
-        super::area_of_interest::Pruner::new(config.metadata.width, config.area_of_interest.clone())
+        super::area_of_interest::Pruner::new(
+            config.dem_metadata.width,
+            config.area_of_interest.clone(),
+        )
     });
 
     for (line, line_indexes) in lines(elevation_map, max_los, angle.into()) {
@@ -174,7 +177,7 @@ mod test {
             centre: crate::projection::LonLatCoord((0.0, 0.0).into()),
         };
         let config = crate::run::compute::Config {
-            metadata,
+            dem_metadata: metadata,
             ..default_config(
                 crate::config::Backend::CPU,
                 &tempfile::NamedTempFile::new().unwrap(),

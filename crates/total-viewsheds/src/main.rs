@@ -162,7 +162,7 @@ fn compute(config: &config::Compute) -> Result<()> {
         max_line_of_sight_metres
     };
 
-    let metadata = crate::cpu::storage::metadata::MetaData {
+    let dem_metadata = crate::cpu::storage::metadata::MetaData {
         width: dem.width,
         scale: dem.scale,
         max_line_of_sight,
@@ -176,7 +176,6 @@ fn compute(config: &config::Compute) -> Result<()> {
     tracing::info!("Starting computations");
     let compute_config = run::compute::Config {
         observer_height: config.observer_height,
-        scale: config.scale.unwrap_or(1.0),
         backend: config.backend.clone(),
         process: config.process.clone(),
         output_directory: Some(config.output_dir.clone()),
@@ -187,9 +186,9 @@ fn compute(config: &config::Compute) -> Result<()> {
         viewsheds_db_path: config.viewsheds_db_path.clone(),
         area_of_interest: crate::cpu::area_of_interest::Pruner::lonlat_coords_to_polygon(
             config.aoi_point.clone(),
-            &metadata,
+            &dem_metadata,
         )?,
-        metadata,
+        dem_metadata,
         database_per_thread: config.database_per_thread,
     };
 
