@@ -59,6 +59,8 @@ pub struct Config {
     pub metadata: crate::cpu::storage::metadata::MetaData,
     /// Polygon for Area of Interest
     pub area_of_interest: geo::Polygon,
+    /// Should a database aggregate per thread?
+    pub database_per_thread: bool,
 }
 
 impl<'compute> Compute<'compute> {
@@ -343,6 +345,7 @@ pub mod test {
             viewsheds_db_path: temp_db.path().into(),
             metadata,
             area_of_interest: geo::Polygon::empty(),
+            database_per_thread: false,
         }
     }
 
