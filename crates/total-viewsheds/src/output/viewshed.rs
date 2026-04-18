@@ -254,7 +254,8 @@ impl<'viewshed> Reconstructor<'viewshed> {
                 reason = "The angle will always fit in `f32`"
             )]
             {
-                self.current_angle = angle as f32;
+                // -45?? This was needed after moving to skew rotation 😬
+                self.current_angle = angle as f32 - 45.0;
             };
             for segment in segments {
                 let opening = u32::from(segment.start());
@@ -549,7 +550,10 @@ mod test {
         let viewshed = crate::output::ascii::make_viewshed(
             &kernel::tests::dems::bigger_dem(),
             geo::Coord { x: 5.0, y: 5.0 },
-            crate::run::compute::test::default_config(backend.clone(), &temp_db),
+            run::compute::Config {
+                metadata: run::compute::test::big_dem_metadata(),
+                ..crate::run::compute::test::default_config(backend.clone(), &temp_db)
+            },
         );
 
         let expected = &[
@@ -582,7 +586,10 @@ mod test {
         let viewshed = crate::output::ascii::make_viewshed(
             &kernel::tests::dems::bigger_dem(),
             geo::Coord { x: 6.0, y: 6.0 },
-            crate::run::compute::test::default_config(backend, &temp_db),
+            run::compute::Config {
+                metadata: run::compute::test::big_dem_metadata(),
+                ..crate::run::compute::test::default_config(backend, &temp_db)
+            },
         );
 
         assert_viewshed(
@@ -609,7 +616,10 @@ mod test {
         let viewshed = crate::output::ascii::make_viewshed(
             &kernel::tests::dems::bigger_dem(),
             geo::Coord { x: 5.0, y: 6.0 },
-            crate::run::compute::test::default_config(backend.clone(), &temp_db),
+            run::compute::Config {
+                metadata: run::compute::test::big_dem_metadata(),
+                ..crate::run::compute::test::default_config(backend.clone(), &temp_db)
+            },
         );
 
         let expected = &[
@@ -644,6 +654,7 @@ mod test {
             geo::Coord { x: 5.0, y: 5.0 },
             run::compute::Config {
                 observer_height: 20.0,
+                metadata: run::compute::test::big_dem_metadata(),
                 ..crate::run::compute::test::default_config(backend, &temp_db)
             },
         );
