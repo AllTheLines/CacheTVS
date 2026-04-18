@@ -319,15 +319,27 @@ pub mod test {
         dem
     }
 
+    pub fn default_metadata() -> crate::cpu::storage::metadata::MetaData {
+        crate::cpu::storage::metadata::MetaData {
+            reserved_ring_size: 100,
+            scale: 1.0,
+            ..Default::default()
+        }
+    }
+
+    pub fn big_dem_metadata() -> crate::cpu::storage::metadata::MetaData {
+        crate::cpu::storage::metadata::MetaData {
+            width: 12,
+            max_line_of_sight: 4,
+            centre: crate::projection::LonLatCoord((33.33, 33.33).into()),
+            ..crate::run::compute::test::default_metadata()
+        }
+    }
+
     pub fn default_config(
         backend: crate::config::Backend,
         temp_db: &tempfile::NamedTempFile,
     ) -> Config {
-        let metadata = crate::cpu::storage::metadata::MetaData {
-            reserved_ring_size: 100,
-            ..Default::default()
-        };
-
         Config {
             observer_height: 0.8,
             scale: 1.0,
@@ -343,7 +355,7 @@ pub mod test {
             thread_count: 1, // single thread it for consistency
             disable_render_image: false,
             viewsheds_db_path: temp_db.path().into(),
-            metadata,
+            metadata: default_metadata(),
             area_of_interest: geo::Polygon::empty(),
             database_per_thread: false,
         }
@@ -376,10 +388,14 @@ pub mod test {
         clippy::cast_precision_loss,
         reason = "Distances always fit in u32"
     )]
-    fn longest_lines(backend: crate::config::Backend) {
+    fn longest_lines(backend: &crate::config::Backend) {
         let mut dem = make_dem(&kernel::tests::dems::bigger_dem());
         let temp_db = tempfile::NamedTempFile::new().unwrap();
-        let compute = compute(&mut dem, default_config(backend, &temp_db));
+        let config = Config {
+            metadata: big_dem_metadata(),
+            ..crate::run::compute::test::default_config(backend.clone(), &temp_db)
+        };
+        let compute = compute(&mut dem, config);
 
         #[rustfmt::skip]
         expect_eq!(
@@ -395,16 +411,32 @@ pub mod test {
         );
 
         #[rustfmt::skip]
+        let nearest_neighbour = [
+            0, 0,  0,  0,
+            0, 0,  12, 0,
+            0, 46, 0,  0,
+            0, 0,  0,  0
+        ];
+
+        #[rustfmt::skip]
+        let skew_rotation = [
+            0, 0,  0,  0,
+            0, 0, 119, 0,
+            0, 0,  0,  0,
+            0, 0,  0,  0
+        ];
+
         expect_eq!(
-            compute.longest_lines.iter()
-            .map(|los| los.angle())
-            .collect::<Vec<_>>(),
-            [
-                0, 0,  0,  0,
-                0, 0,  12, 0,
-                0, 46, 0,  0,
-                0, 0,  0,  0
-            ]
+            compute
+                .longest_lines
+                .iter()
+                .map(crate::los_pack::LineOfSightPacked::angle)
+                .collect::<Vec<_>>(),
+            if matches!(backend, crate::config::Backend::CPU) {
+                skew_rotation
+            } else {
+                nearest_neighbour
+            }
         );
     }
 
@@ -418,7 +450,7 @@ pub mod test {
 
         #[gtest]
         fn longest_lines() {
-            super::longest_lines(crate::config::Backend::VulkanCPU);
+            super::longest_lines(&crate::config::Backend::VulkanCPU);
         }
     }
 
@@ -430,8 +462,8 @@ pub mod test {
         #[rustfmt::skip]
         const EXPECTED_SURFACES: [f32; 16] = [
             0.0, 0.0,      0.0,       0.0,
-            0.0, 6.283163, 29.16455,  0.0,
-            0.0, 48.06648, 62.832096, 0.0,
+            0.0, 6.283163, 21.118547,  0.0,
+            0.0, 47.90945, 62.832096, 0.0,
             0.0, 0.0,      0.0,       0.0
         ];
 
@@ -439,13 +471,17 @@ pub mod test {
         fn total_surfaces() {
             let mut dem = make_dem(&kernel::tests::dems::bigger_dem());
             let temp_db = tempfile::NamedTempFile::new().unwrap();
-            let compute = compute(&mut dem, super::default_config(Backend::CPU, &temp_db));
+            let config = super::Config {
+                metadata: crate::run::compute::test::big_dem_metadata(),
+                ..super::default_config(Backend::CPU, &temp_db)
+            };
+            let compute = compute(&mut dem, config);
             assert_eq!(compute.total_surfaces, EXPECTED_SURFACES);
         }
 
         #[gtest]
         fn longest_lines() {
-            super::longest_lines(crate::config::Backend::CPU);
+            super::longest_lines(&crate::config::Backend::CPU);
         }
 
         #[gtest]
@@ -459,6 +495,7 @@ pub mod test {
                     // affect. We already test for default refraction above, so may as well test for
                     // 0.0 refraction here just in case there's some unexpected divergence.
                     refraction: 0.0,
+                    metadata: crate::run::compute::test::big_dem_metadata(),
                     ..super::default_config(Backend::CPU, &temp_db_for_no_refraction)
                 },
             );
@@ -470,6 +507,7 @@ pub mod test {
                 &mut dem_for_very_refraction,
                 super::Config {
                     refraction: -kernel::kernel::EARTH_DIAMETER,
+                    metadata: crate::run::compute::test::big_dem_metadata(),
                     ..super::default_config(Backend::CPU, &temp_db_for_very_refraction)
                 },
             );
@@ -478,8 +516,8 @@ pub mod test {
                 compute_very_refraction.total_surfaces,
                 [
                     0.0, 0.0,      0.0,       0.0,
-                    0.0, 6.283163, 9.773839,  0.0,
-                    0.0, 15.481036,38.589294, 0.0,
+                    0.0, 6.283163, 9.424777,  0.0,
+                    0.0, 14.468757,38.083126, 0.0,
                     0.0, 0.0,      0.0,       0.0
                 ]
             );
@@ -493,6 +531,7 @@ pub mod test {
                 &mut dem_for_small_scale,
                 super::Config {
                     scale: 0.01,
+                    metadata: crate::run::compute::test::big_dem_metadata(),
                     ..super::default_config(Backend::CPU, &temp_db_for_small_scale)
                 },
             );
@@ -501,8 +540,8 @@ pub mod test {
                 compute_small_scale.total_surfaces,
                 [
                     0.0, 0.0,       0.0,       0.0,
-                    0.0, 0.06283202,0.2916432, 0.0,
-                    0.0, 0.4806646, 0.6283214, 0.0,
+                    0.0, 0.06283202,0.2111851, 0.0,
+                    0.0, 0.47909424,0.6283214, 0.0,
                     0.0, 0.0,       0.0,       0.0
                 ]
             );
@@ -513,6 +552,7 @@ pub mod test {
                 &mut dem_for_big_scale,
                 super::Config {
                     scale: 100.0,
+                    metadata: crate::run::compute::test::big_dem_metadata(),
                     ..super::default_config(Backend::CPU, &temp_db_for_big_scale)
                 },
             );
@@ -521,8 +561,8 @@ pub mod test {
                 compute_big_scale.total_surfaces,
                 [
                     0.0, 0.0,      0.0,       0.0,
-                    0.0, 628.317,  2916.4526, 0.0,
-                    0.0, 4806.6274,6283.1714, 0.0,
+                    0.0, 628.317,  2111.8496, 0.0,
+                    0.0, 4790.928, 6283.1714, 0.0,
                     0.0, 0.0,      0.0,       0.0
                 ]
             );
