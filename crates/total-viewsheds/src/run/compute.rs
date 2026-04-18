@@ -36,8 +36,6 @@ where
 pub struct Config {
     /// The height of the observer that views viewsheds.
     pub observer_height: f32,
-    /// The size of each elevation point in meters.
-    pub scale: f32,
     /// Where to run the kernel computations
     pub backend: crate::config::Backend,
     /// What to compute.
@@ -55,8 +53,7 @@ pub struct Config {
     /// Where to store the viewshed
     pub viewsheds_db_path: PathBuf,
     /// Metadata about the DEM and compute run.
-    // TODO: Remove other fields in favour of this.
-    pub metadata: crate::cpu::storage::metadata::MetaData,
+    pub dem_metadata: crate::cpu::storage::metadata::MetaData,
     /// Polygon for Area of Interest
     pub area_of_interest: geo::Polygon,
     /// Should a database aggregate per thread?
@@ -69,7 +66,7 @@ impl<'compute> Compute<'compute> {
         let total_bands = dem.computable_points_count * 2;
 
         let rings_per_band = if Self::is_process_viewsheds(&config.process) {
-            config.metadata.reserved_ring_size
+            config.dem_metadata.reserved_ring_size
         } else {
             1
         };
@@ -105,7 +102,7 @@ impl<'compute> Compute<'compute> {
             observer_height: config.observer_height,
             reserved_rings_per_band: u32::try_from(rings_per_band)?,
             process: Self::bitmask_flags_for_kernel(&config.process),
-            scale: config.scale,
+            scale: config.dem_metadata.scale,
             refraction: config.refraction,
             ..Default::default()
         };
@@ -342,7 +339,6 @@ pub mod test {
     ) -> Config {
         Config {
             observer_height: 0.8,
-            scale: 1.0,
             backend,
             process: vec![
                 crate::config::Process::TotalSurfaces,
@@ -355,7 +351,7 @@ pub mod test {
             thread_count: 1, // single thread it for consistency
             disable_render_image: false,
             viewsheds_db_path: temp_db.path().into(),
-            metadata: default_metadata(),
+            dem_metadata: default_metadata(),
             area_of_interest: geo::Polygon::empty(),
             database_per_thread: false,
         }
@@ -392,7 +388,7 @@ pub mod test {
         let mut dem = make_dem(&kernel::tests::dems::bigger_dem());
         let temp_db = tempfile::NamedTempFile::new().unwrap();
         let config = Config {
-            metadata: big_dem_metadata(),
+            dem_metadata: big_dem_metadata(),
             ..crate::run::compute::test::default_config(backend.clone(), &temp_db)
         };
         let compute = compute(&mut dem, config);
@@ -472,7 +468,7 @@ pub mod test {
             let mut dem = make_dem(&kernel::tests::dems::bigger_dem());
             let temp_db = tempfile::NamedTempFile::new().unwrap();
             let config = super::Config {
-                metadata: crate::run::compute::test::big_dem_metadata(),
+                dem_metadata: crate::run::compute::test::big_dem_metadata(),
                 ..super::default_config(Backend::CPU, &temp_db)
             };
             let compute = compute(&mut dem, config);
@@ -495,7 +491,7 @@ pub mod test {
                     // affect. We already test for default refraction above, so may as well test for
                     // 0.0 refraction here just in case there's some unexpected divergence.
                     refraction: 0.0,
-                    metadata: crate::run::compute::test::big_dem_metadata(),
+                    dem_metadata: crate::run::compute::test::big_dem_metadata(),
                     ..super::default_config(Backend::CPU, &temp_db_for_no_refraction)
                 },
             );
@@ -507,7 +503,7 @@ pub mod test {
                 &mut dem_for_very_refraction,
                 super::Config {
                     refraction: -kernel::kernel::EARTH_DIAMETER,
-                    metadata: crate::run::compute::test::big_dem_metadata(),
+                    dem_metadata: crate::run::compute::test::big_dem_metadata(),
                     ..super::default_config(Backend::CPU, &temp_db_for_very_refraction)
                 },
             );
@@ -530,8 +526,10 @@ pub mod test {
             let compute_small_scale = super::compute(
                 &mut dem_for_small_scale,
                 super::Config {
-                    scale: 0.01,
-                    metadata: crate::run::compute::test::big_dem_metadata(),
+                    dem_metadata: crate::cpu::storage::metadata::MetaData {
+                        scale: 0.01,
+                        ..crate::run::compute::test::big_dem_metadata()
+                    },
                     ..super::default_config(Backend::CPU, &temp_db_for_small_scale)
                 },
             );
@@ -551,8 +549,10 @@ pub mod test {
             let compute_big_scale = super::compute(
                 &mut dem_for_big_scale,
                 super::Config {
-                    scale: 100.0,
-                    metadata: crate::run::compute::test::big_dem_metadata(),
+                    dem_metadata: crate::cpu::storage::metadata::MetaData {
+                        scale: 100.0,
+                        ..crate::run::compute::test::big_dem_metadata()
+                    },
                     ..super::default_config(Backend::CPU, &temp_db_for_big_scale)
                 },
             );
