@@ -3,12 +3,11 @@ use itertools::izip;
 use std::iter::zip;
 use std::simd::prelude::{SimdFloat as _, SimdInt as _, SimdPartialOrd as _};
 
-use std::simd::{f32x4, Mask, Simd};
+use std::simd::{Mask, Simd, f32x4};
 
 /// `VectorMax` performs an element-wise SIMD max of floats, allowing for architecture
 /// specific implementations
-pub trait VectorMax<const WIDTH: usize>
-{
+pub trait VectorMax<const WIDTH: usize> {
     /// `max` computes an element-wise maximum from lhs and rhs, assuming neither contain NaNs
     /// or -0.0
     fn max(lhs: Simd<f32, WIDTH>, rhs: Simd<f32, WIDTH>) -> Simd<f32, WIDTH>;
@@ -16,8 +15,7 @@ pub trait VectorMax<const WIDTH: usize>
 
 /// `VectorGreater` performs a SIMD greater than of floats, allowing for architecture
 /// specific implementations
-pub trait VectorGreater<const WIDTH: usize>
-{
+pub trait VectorGreater<const WIDTH: usize> {
     /// gt computes an element-wise maximum from lhs and rhs, assuming neither contain NaNs
     /// or -0.0
     fn gt(lhs: Simd<f32, WIDTH>, rhs: Simd<f32, WIDTH>) -> Mask<i32, WIDTH>;
@@ -25,19 +23,16 @@ pub trait VectorGreater<const WIDTH: usize>
 
 /// `VectorLos` is an implementation of the internals of `PrefixMax`, `Angle`,  and `Accumulate`
 /// for Portable SIMD
-pub struct VectorLos<const WIDTH: usize>
-;
+pub struct VectorLos<const WIDTH: usize>;
 
-impl<const WIDTH: usize> VectorMax<WIDTH> for VectorLos<WIDTH>
-{
+impl<const WIDTH: usize> VectorMax<WIDTH> for VectorLos<WIDTH> {
     #[inline]
     default fn max(lhs: Simd<f32, WIDTH>, rhs: Simd<f32, WIDTH>) -> Simd<f32, WIDTH> {
         lhs.simd_max(rhs)
     }
 }
 
-impl<const WIDTH: usize> VectorGreater<WIDTH> for VectorLos<WIDTH>
-{
+impl<const WIDTH: usize> VectorGreater<WIDTH> for VectorLos<WIDTH> {
     #[inline]
     default fn gt(lhs: Simd<f32, WIDTH>, rhs: Simd<f32, WIDTH>) -> Mask<i32, WIDTH> {
         lhs.simd_gt(rhs)
@@ -288,8 +283,7 @@ impl PrefixMax for VectorLos<16> {
     }
 }
 
-impl<const WIDTH: usize> Angle for VectorLos<WIDTH>
-{
+impl<const WIDTH: usize> Angle for VectorLos<WIDTH> {
     #[inline]
     default fn calculate_angles(
         pov_height: f32,

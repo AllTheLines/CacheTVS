@@ -140,6 +140,12 @@ pub struct Compute {
         value_name = "Lon/lat coords of region")
     ]
     pub aoi_point: Vec<(f32, f32)>,
+    #[arg(
+        long,
+        value_name = "aggregate data into a database per-thread",
+        default_value = "false"
+    )]
+    pub database_per_thread: bool,
 }
 
 /// Arguments to the `viewshed` subcommand.

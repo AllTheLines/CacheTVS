@@ -1,7 +1,6 @@
 //! A "segment" is a single area of visibility for a given angle on a viewshed. There may be many
 //! segments per angle.
 
-
 /// `Segment` is the rho portion of a line segment in polar coordinates
 /// as (`rho`: u16, `delta_rho`: u16) which are packed into a single u32 for storage
 #[derive(Clone)]
@@ -70,17 +69,15 @@ impl PolarSegments {
 
         let mut cur_index = 0;
         while let Some(_) = char_slice.get(cur_index) {
-            let zero = memchr::memchr(0, &char_slice[cur_index..])
-                .unwrap_or(char_slice.len()-cur_index);
+            let zero =
+                memchr::memchr(0, &char_slice[cur_index..]).unwrap_or(char_slice.len() - cur_index);
 
             visible_segments.push(Segment::new(cur_index as u16, zero as u16));
 
             cur_index += zero;
 
-
-            let next = memchr::memchr(1, &char_slice[cur_index..])
-                .unwrap_or(char_slice.len()-cur_index);
-
+            let next =
+                memchr::memchr(1, &char_slice[cur_index..]).unwrap_or(char_slice.len() - cur_index);
 
             cur_index += next;
         }
