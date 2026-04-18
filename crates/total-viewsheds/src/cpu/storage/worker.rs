@@ -69,7 +69,7 @@ pub fn writer<P: AsRef<std::path::Path>>(
     conn.pragma_update(None, "synchronous", "OFF")?;
     conn.pragma_update(None, "journal_mode", "memory")?;
 
-    for chunk in &recv.iter().chunks(4096) {
+    for chunk in &recv.iter().chunks(32_000) {
         let tx = conn.transaction()?;
 
         {
