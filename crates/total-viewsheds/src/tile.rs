@@ -70,6 +70,11 @@ impl Tile {
     fn get_elevations(dataset: &gdal::Dataset) -> Result<Vec<i16>> {
         let band = dataset.rasterband(1)?;
         let size = dataset.raster_size();
+
+        #[expect(
+            clippy::wildcard_enum_match_arm,
+            reason = "We only handle the types we know we can process"
+        )]
         match band.band_type() {
             gdal::raster::GdalDataType::Int16 => Ok(band
                 .read_as::<i16>((0, 0), size, size, None)?
@@ -91,15 +96,7 @@ impl Tile {
                     .collect::<std::result::Result<Vec<i16>, _>>()?)
             }
 
-            gdal::raster::GdalDataType::Unknown
-            | gdal::raster::GdalDataType::UInt8
-            | gdal::raster::GdalDataType::Int8
-            | gdal::raster::GdalDataType::UInt32
-            | gdal::raster::GdalDataType::Int32
-            | gdal::raster::GdalDataType::UInt64
-            | gdal::raster::GdalDataType::Int64
-            | gdal::raster::GdalDataType::Float32
-            | gdal::raster::GdalDataType::Float64 => {
+            _ => {
                 let data_type = band.band_type();
                 color_eyre::eyre::bail!("{data_type} not supported (should be easy to add)");
             }
