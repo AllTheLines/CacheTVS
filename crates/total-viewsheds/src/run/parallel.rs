@@ -22,7 +22,7 @@ fn kernel_worker(
     res: &mpsc::Sender<OutputData>,
     config: &crate::run::compute::Config,
 ) {
-    let size = config.metadata.max_line_of_sight.pow(2) as usize;
+    let size = config.dem_metadata.max_line_of_sight.pow(2) as usize;
     let mut output = OutputData {
         surfaces: vec![0.0f32; size],
         longest: vec![LineOfSightPacked::new(0, 0).unwrap(); size],
@@ -100,10 +100,9 @@ impl super::compute::Compute<'_> {
         let should_init_local_db =
             Self::is_process_viewsheds(&self.config.process) && self.config.database_per_thread;
 
-
         let global_worker = &init_worker(
             &self.config.viewsheds_db_path,
-            &self.config.metadata,
+            &self.config.dem_metadata,
             should_init_global_db,
         )?;
 
@@ -111,18 +110,19 @@ impl super::compute::Compute<'_> {
             let worker_handles: Result<Vec<_>> = (0..self.config.thread_count)
                 .map(|id| {
                     let db_path = self.config.viewsheds_db_path.join(format!("{id}.db"));
-                    let local_worker = init_worker(
-                        db_path,
-                        &self.config.metadata,
-                        should_init_local_db,
-                    )?;
+                    let local_worker =
+                        init_worker(db_path, &self.config.dem_metadata, should_init_local_db)?;
 
                     let kernel_send = kernel_send.clone();
                     let kernel_receive = kernel_receive.clone();
 
                     Ok(s.spawn(move || {
                         kernel_worker(
-                            if should_init_global_db { global_worker } else { &local_worker },
+                            if should_init_global_db {
+                                global_worker
+                            } else {
+                                &local_worker
+                            },
                             borrow_elevations,
                             kernel_receive,
                             &kernel_send,
