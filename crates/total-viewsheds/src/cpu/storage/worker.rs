@@ -1,5 +1,6 @@
 //! A worker that receives messages over a channel from the running kernel, which then writes
 //! viewshed data as binary blobs to a database.
+use itertools::Itertools;
 
 /// A wrapper for a storage `Engine`. It converts bitmaps from the kernel into a `PolarSegments`
 /// to communicate. Keeping it a concrete struct lets us hide the underlying engine from the user
@@ -66,28 +67,30 @@ pub fn writer<P: AsRef<std::path::Path>>(
         (),
     )?;
     conn.pragma_update(None, "synchronous", "OFF")?;
-    conn.pragma_update(None, "journal_mode", "OFF")?;
+    conn.pragma_update(None, "journal_mode", "memory")?;
 
-    let tx = conn.transaction()?;
+    for chunk in &recv.iter().chunks(4096) {
+        let tx = conn.transaction()?;
 
-    {
-        let mut stmt = tx.prepare(
-            "INSERT INTO polar_segments(dem_id, angle_id, visible_segments) VALUES (?1, ?2, ?3)",
-        )?;
+        {
+            let mut stmt = tx.prepare(
+            "INSERT INTO polar_segments(dem_id, angle_id, visible_segments) VALUES (?1, ?2, ?3)",)?;
 
-        for (tvs_id, segments) in recv {
-            #[expect(clippy::big_endian_bytes, reason = "it is documented in the format")]
-            let vec_bytes = segments
-                .visible_segments
-                .iter()
-                .flat_map(|vector| vector.0.to_be_bytes())
-                .collect::<Vec<_>>();
+            for (tvs_id, segments) in chunk {
+                #[expect(clippy::big_endian_bytes, reason = "it is documented in the format")]
+                let vec_bytes = segments
+                    .visible_segments
+                    .iter()
+                    .flat_map(|vector| vector.0.to_be_bytes())
+                    .collect::<Vec<_>>();
 
-            let params = (&(tvs_id as i64), &segments.degree, &vec_bytes);
-            stmt.execute(params)?;
+                let params = (&(tvs_id as i64), &segments.degree, &vec_bytes);
+                stmt.execute(params)?;
+            }
         }
+
+        tx.commit()?;
     }
 
-    tx.commit()?;
     Ok(())
 }
