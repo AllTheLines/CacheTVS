@@ -68,6 +68,7 @@ mod cpu {
 mod dem;
 mod dump_usage;
 mod los_pack;
+mod post_process;
 mod tile;
 mod vulkan;
 /// Various ways to output data.
@@ -110,6 +111,9 @@ fn main() -> Result<()> {
                     geo_coord,
                 )?;
             }
+        }
+        config::Commands::PostProcess(post_process_config) => {
+            post_process::run(post_process_config)?;
         }
         config::Commands::DumpUsage => dump_usage::dump_full_usage_for_readme()?,
     }
