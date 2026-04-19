@@ -26,6 +26,9 @@ function geojson_area() {
 	echo "$area"
 }
 
+sqlite_db_path="./output/benchmark.db"
+rm $sqlite_db_path || true
+
 # Do the calculations
 time cargo run --features ring_data --release -- \
 	compute "$PROJECT_ROOT/benchmarks/cardiff.tiff" \
@@ -34,7 +37,7 @@ time cargo run --features ring_data --release -- \
 	--rings-per-km 3 \
 	--backend "$backend" \
 	--process all \
-	--viewsheds-db-path ./output/viewsheds.db \
+	--viewsheds-db-path $sqlite_db_path \
 	--thread-count 1
 
 if [[ $backend == "vulkan" ]]; then
@@ -49,7 +52,7 @@ rm $viewshed_file || true
 # Reconstruct a viewshed from the centre of the DEM
 if [[ $backend == "cpu" ]]; then
 	time cargo run --release -- \
-		viewshed ./output/viewsheds.db ./output \
+		viewshed $sqlite_db_path ./output \
 		-- -3.1230,51.4898
 else
 	time cargo run --release -- \
