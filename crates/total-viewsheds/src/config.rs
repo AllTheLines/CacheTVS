@@ -23,6 +23,8 @@ pub enum Commands {
     Compute(Compute),
     /// Reconstruct a viewshed.
     Viewshed(Viewshed),
+    /// Post-processing tasks
+    PostProcess(PostProcess),
 
     /// A hidden command that can be used to recursively print out all the subcommand help messages:
     ///   `cargo run dump-usage`
@@ -163,6 +165,18 @@ pub struct Viewshed {
     /// Coordinates to reconstruct viewsheds for.
     #[arg(value_parser = parse_coords)]
     pub coordinates: Vec<(f32, f32)>,
+}
+
+/// Arguments to the `post-process` subcommand.
+#[derive(clap::Parser, Debug)]
+pub struct PostProcess {
+    /// Directory where viewshed DBs were saved.
+    #[arg(value_name = "Path to existing databases")]
+    pub db_dir: std::path::PathBuf,
+
+    /// Number of threads to use. Defaults to letting Rayon choose the thread count.
+    #[arg(long, value_name = "Number of threads to use")]
+    pub threads: Option<usize>,
 }
 
 /// Parse args like "123.456,-987.654" to floats.
