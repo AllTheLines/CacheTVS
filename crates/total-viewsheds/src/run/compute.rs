@@ -258,7 +258,7 @@ impl<'compute> Compute<'compute> {
         let packed_lines = self
             .longest_lines
             .iter()
-            .map(crate::los_pack::LineOfSightPacked::as_f32)
+            .map(|&packed| packed.as_f32())
             .collect::<Vec<_>>();
 
         crate::output::tiff::save(
@@ -426,7 +426,7 @@ pub mod test {
             compute
                 .longest_lines
                 .iter()
-                .map(crate::los_pack::LineOfSightPacked::angle)
+                .map(|packed| packed.angle())
                 .collect::<Vec<_>>(),
             if matches!(backend, crate::config::Backend::CPU) {
                 skew_rotation

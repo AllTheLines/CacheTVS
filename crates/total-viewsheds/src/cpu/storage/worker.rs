@@ -83,7 +83,7 @@ pub fn writer<P: AsRef<std::path::Path>>(
                 .flat_map(|vector| vector.0.to_be_bytes())
                 .collect::<Vec<_>>();
 
-            let params = (&(tvs_id as i64), &segments.degree, &vec_bytes);
+            let params = (&tvs_id.cast_signed(), &segments.degree, &vec_bytes);
             stmt.execute(params)?;
         }
     }

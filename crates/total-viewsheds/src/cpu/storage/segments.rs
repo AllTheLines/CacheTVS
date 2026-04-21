@@ -3,7 +3,7 @@
 
 /// `Segment` is the rho portion of a line segment in polar coordinates
 /// as (`rho`: u16, `delta_rho`: u16) which are packed into a single u32 for storage
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct Segment(pub u32);
 
 impl Segment {
@@ -62,19 +62,26 @@ impl PolarSegments {
         clippy::expect_used,
         reason = "We assume everything fits in a u16, we want a panic if it doesn't"
     )]
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "we want to panic if out of indexes are oob"
+    )]
     pub fn from_bools(degree: u16, bitmap: &[bool]) -> Self {
         let mut visible_segments: Vec<Segment> = Vec::with_capacity(1);
 
         let char_slice: &[u8] = bytemuck::cast_slice(bitmap);
 
         let mut cur_index = 0;
-        while let Some(_) = char_slice.get(cur_index) {
-            let zero =
+        while char_slice.get(cur_index).is_some() {
+            let first_zero_index =
                 memchr::memchr(0, &char_slice[cur_index..]).unwrap_or(char_slice.len() - cur_index);
 
-            visible_segments.push(Segment::new(cur_index as u16, zero as u16));
+            visible_segments.push(Segment::new(
+                u16::try_from(cur_index).expect("cur_index overflowed"),
+                u16::try_from(first_zero_index).expect("first_zero_index overflowed"),
+            ));
 
-            cur_index += zero;
+            cur_index += first_zero_index;
 
             let next =
                 memchr::memchr(1, &char_slice[cur_index..]).unwrap_or(char_slice.len() - cur_index);

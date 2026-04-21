@@ -51,17 +51,6 @@ impl DB {
         Ok(metadata)
     }
 
-    /// Create indexes.
-    pub fn create_indexes(&self) -> Result<()> {
-        tracing::debug!("Creating indexes for {:?}...", self.connection.path());
-
-        self.connection
-            .execute("CREATE INDEX dem_id_idx on polar_segments(dem_id)", ())?;
-        tracing::info!("DB indexes created");
-
-        Ok(())
-    }
-
     /// Load all the polar segments for a given DEM ID.
     pub fn load_segments_for_tvs_id(
         &self,
