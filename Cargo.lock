@@ -1907,7 +1907,6 @@ dependencies = [
  "memchr",
  "pollster",
  "proj4rs",
- "rayon",
  "rusqlite",
  "serde",
  "serde_json",

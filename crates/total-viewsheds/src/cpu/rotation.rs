@@ -13,6 +13,7 @@ use std::rc::Rc;
     clippy::indexing_slicing,
     reason = "rotation should not be out of bounds"
 )]
+#[expect(clippy::expect_used, reason = "invriants broken if options not none")]
 pub fn lines(
     elevs: &[i16],
     max_los: usize,
@@ -42,8 +43,10 @@ pub fn lines(
     let mut elevations = Rc::new(vec![0i16; 2 * max_los]);
 
     ((max_los as isize)..(max_los as isize) * 2).map(move |x| {
-        let mut_indexes = Rc::get_mut(&mut indexes).unwrap();
-        let mut_elevations = Rc::get_mut(&mut elevations).unwrap();
+        let mut_indexes = Rc::get_mut(&mut indexes)
+            .expect("invariant broken: the caller hasn't droped the previous index buffer cannot start next iteration of rotation");
+        let mut_elevations = Rc::get_mut(&mut elevations)
+            .expect("invariant broken: the caller hasn't droped the previous elevation buffer cannot start next iteration of rotation");
 
         izip!(
             (max_los as isize)..width,
