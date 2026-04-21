@@ -27,7 +27,6 @@ function geojson_area() {
 }
 
 # Do the calculations
-export RUSTFLAGS='-Ctarget-cpu=native'
 time cargo run --features ring_data --release -- \
 	compute "$PROJECT_ROOT/benchmarks/cardiff.tiff" \
 	--scale 100 \
