@@ -31,7 +31,7 @@ The primary use case for this project is to find the longest line of sight on th
 Any file format supported by `gdal` should be supported. It must follow this requirements:
 * It must be perfectly square.
 * The width must be divisible by 48.
-* It should be in an AEQD or similar metric projection whose anchor is the centre of the tile.
+* It must be in an AEQD or similar metric projection whose anchor is the centre of the tile.
 * All points must be the same metric distance apart.
 
 The best source of elevation data I have found is here: https://www.viewfinderpanoramas.org/Coverage%20map%20viewfinderpanoramas_org3.htm It's mostly in the `.hgt` format, but can easily be converted to `.bt` using `gdal_translate`.
