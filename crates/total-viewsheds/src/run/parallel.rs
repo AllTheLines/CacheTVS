@@ -168,10 +168,6 @@ impl super::compute::Compute<'_> {
         self.render_total_surfaces()?;
         self.render_longest_lines()?;
 
-        // if Self::is_process_viewsheds(&self.config.process) {
-        //     crate::cpu::storage::db::DB::new(&self.config.viewsheds_db_path)?.create_indexes()?;
-        // }
-
         Ok(())
     }
 }

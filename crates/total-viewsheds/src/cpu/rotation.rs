@@ -82,51 +82,62 @@ fn fill_line_elevations(line: &mut [i16]) {
     }
 }
 
-// #[cfg(test)]
-// mod test {
-//     use super::*;
-//     use googletest::prelude::*;
-//
-//     #[rustfmt::skip]
-//     const DEM: [i16; 36] = [
-//         0, 1, 2, 3, 4, 5,
-//         6, 7, 8, 9, 10,11,
-//         12,13,14,15,16,17,
-//         18,19,20,21,22,23,
-//         24,25,26,27,28,29,
-//         30,31,32,33,34,35,
-//     ];
-//
-//     #[gtest]
-//     fn rotate_by_0() {
-//         #[rustfmt::skip]
-//         let expected = [
-//             14, 15, 16, 17,
-//             20, 21, 22, 23
-//         ];
-//         let (rotations, _) = lines(&DEM, 0.0, 2).collect();
-//         expect_eq!(&rotations, &expected);
-//     }
-//
-//     #[gtest]
-//     fn rotate_by_45() {
-//         #[rustfmt::skip]
-//         let expected = [
-//             14, 15, 9, 4,
-//             20, 21, 16, 11
-//         ];
-//         let (rotations, _) = generate_rotation(&DEM, 45.0, 2);
-//         expect_eq!(&rotations, &expected);
-//     }
-//
-//     #[gtest]
-//     fn rotate_by_90() {
-//         #[rustfmt::skip]
-//         let expected = [
-//             20, 14, 8, 2,
-//             21, 15, 9, 3
-//         ];
-//         let (rotations, _) = generate_rotation(&DEM, 90.0, 2);
-//         expect_eq!(&rotations, &expected);
-//     }
-// }
+#[cfg(test)]
+mod test {
+    use super::*;
+    use googletest::prelude::*;
+
+    #[rustfmt::skip]
+    const DEM: [i16; 36] = [
+        0, 1, 2, 3, 4, 5,
+        6, 7, 8, 9, 10,11,
+        12,13,14,15,16,17,
+        18,19,20,21,22,23,
+        24,25,26,27,28,29,
+        30,31,32,33,34,35,
+    ];
+
+    // skew rotation works off of 0 being straight down rather than
+    // straight right as previoius rotation methods
+    #[gtest]
+    fn rotate_by_0() {
+        #[rustfmt::skip]
+        let expected = [
+            14, 20, 26, 32,
+            15, 21, 27, 33,
+        ];
+        let rotations = lines(&DEM, 2, 0.0)
+            .flat_map(|(elevs, _)| (*elevs).clone())
+            .collect::<Vec<_>>();
+
+        expect_eq!(&rotations, &expected);
+    }
+
+    #[gtest]
+    fn rotate_by_45() {
+        #[rustfmt::skip]
+        let expected = [
+            20, 21, 27, 34,
+            14, 15, 22, 28,
+        ];
+        let rotations = lines(&DEM, 2, 45.0)
+            .flat_map(|(elevs, _)| (*elevs).clone())
+            .collect::<Vec<_>>();
+
+        expect_eq!(&rotations, &expected);
+    }
+
+    #[gtest]
+    fn rotate_by_90() {
+        #[rustfmt::skip]
+        let expected = [
+            20, 21, 22, 23,
+            14, 15, 16, 17
+        ];
+        let rotations = lines(&DEM, 2, 90.0)
+            .flat_map(|(elevs, _)| (*elevs).clone())
+            .collect::<Vec<_>>();
+
+        expect_eq!(&rotations, &expected);
+    }
+}
