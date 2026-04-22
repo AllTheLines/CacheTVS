@@ -33,7 +33,6 @@ rm $sqlite_db_path || true
 time cargo run --features ring_data --release -- \
 	compute "$PROJECT_ROOT/benchmarks/cardiff.tiff" \
 	--scale 100 \
-	--centre-from-projection \
 	--rings-per-km 3 \
 	--backend "$backend" \
 	--process all \

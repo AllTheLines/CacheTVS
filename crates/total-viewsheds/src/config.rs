@@ -116,15 +116,6 @@ pub struct Compute {
     #[arg(long, value_name = "Render image", default_value = "false")]
     pub disable_image_render: bool,
 
-    /// Derive the tile's centre from the tile's anchored projection. This can be more accurate for
-    /// large metric-projected tiles.
-    #[arg(
-        long,
-        value_name = "Get centre from projection",
-        default_value = "false"
-    )]
-    pub centre_from_projection: bool,
-
     /// Where to store the viewshed data. Requires build with `--features=ring_data`.
     #[arg(
         long,

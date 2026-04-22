@@ -6,8 +6,6 @@
 
 use color_eyre::eyre::{ContextCompat as _, Result};
 
-use crate::projection;
-
 /// The basic raw data needed to compute total viewsheds.
 pub struct Tile {
     /// The width of the tile.
@@ -43,11 +41,7 @@ impl Tile {
             );
         }
 
-        let centre = if config.centre_from_projection {
-            Self::get_centre_by_projection(&dataset)?
-        } else {
-            Self::get_centre_by_raster(&dataset)?
-        };
+        let centre = Self::get_centre_by_projection(&dataset)?;
 
         let lon = centre.0.x;
         let lat = centre.0.y;
@@ -103,10 +97,8 @@ impl Tile {
         }
     }
 
-    /// Get the lat/lon of the centre of the tile simply by dividing the extent in half. This isn't
-    /// ideal as there's no guarantee that it's the same centre that the creator used to generate
-    /// the tile.
-    fn get_centre_by_raster(dataset: &gdal::Dataset) -> Result<crate::projection::LonLatCoord> {
+    /// Get the metric centre of the tile simply by dividing the extent in half.
+    fn get_centre_by_raster(dataset: &gdal::Dataset) -> Result<geo::Coord> {
         let (width, height) = dataset.raster_size();
 
         #[expect(
@@ -126,24 +118,24 @@ impl Tile {
             x_top_left + (centre_x * pixel_width),
             y_top_left - (centre_y * pixel_height),
         );
-        let crs = &dataset.spatial_ref()?.to_proj4()?;
 
-        let mut converted = (x_world, y_world, 0.0f64);
-        proj4rs::transform::transform(
-            &proj4rs::Proj::from_proj_string(crs)?,
-            &projection::Converter::degrees_projection()?,
-            &mut converted,
-        )?;
-
-        Ok(crate::projection::LonLatCoord(geo::coord! {
-            x: converted.0.to_degrees(),
-            y: converted.1.to_degrees()
-        }))
+        Ok(geo::coord! {
+            x: x_world,
+            y: y_world
+        })
     }
 
-    /// Get the lat/lon centre of the tile by querying the projection's definition. This is more
-    /// likely to guarantee that the tile's centre matches the creator's intended centre.
+    /// Get the lat/lon centre of the tile by querying the projection's definition.
     fn get_centre_by_projection(dataset: &gdal::Dataset) -> Result<crate::projection::LonLatCoord> {
+        let geometric_centre = Self::get_centre_by_raster(dataset)?;
+        if geometric_centre.x != 0.0f64 || geometric_centre.y != 0.0f64 {
+            color_eyre::eyre::bail!(
+                "Tile centre ({},{}) must be at 0,0.",
+                geometric_centre.x,
+                geometric_centre.y
+            );
+        }
+
         let projection = &dataset.spatial_ref()?.to_proj4()?;
 
         let lat_0: f64 = projection
@@ -174,7 +166,6 @@ mod test {
     fn get_centre_by_projection() {
         let config = crate::config::Compute {
             input: "../../benchmarks/samples/aeqd_10x10.tiff".into(),
-            centre_from_projection: true,
             ..Default::default()
         };
         let tile = Tile::load(&config).unwrap();
@@ -188,18 +179,9 @@ mod test {
     }
 
     #[test]
-    fn get_centre_by_raster() {
-        let config = crate::config::Compute {
-            input: "../../benchmarks/samples/aeqd_10x10.tiff".into(),
-            ..Default::default()
-        };
-        let tile = Tile::load(&config).unwrap();
-        assert_eq!(
-            tile.centre,
-            crate::projection::LonLatCoord(geo::Coord {
-                x: -0.1278,
-                y: 51.5074
-            })
-        );
+    fn get_metric_centre() {
+        let dataset = gdal::Dataset::open("../../benchmarks/samples/aeqd_10x10.tiff").unwrap();
+        let centre = Tile::get_centre_by_raster(&dataset).unwrap();
+        assert_eq!(centre, geo::Coord { x: 0.0, y: 0.0 });
     }
 }
