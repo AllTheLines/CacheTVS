@@ -57,9 +57,10 @@ Once that's run, you will have access to what's called "ring data", stored by de
   Usage: tvs <COMMAND>
 
   Commands:
-    compute   Run main computations
-    viewshed  Reconstruct a viewshed
-    help      Print this message or the help of the given subcommand(s)
+    compute       Run main computations
+    viewshed      Reconstruct a viewshed
+    post-process  Post-processing tasks
+    help          Print this message or the help of the given subcommand(s)
 
   Options:
     -h, --help
@@ -98,7 +99,7 @@ Once that's run, you will have access to what's called "ring data", stored by de
             - cpu:        Optimised cache-efficient CPU kernel
             - cuda:       TBC
 
-            [default: vulkan]
+            [default: cpu]
 
         --output-dir <Directory to save output to>
             Directory to save results in
@@ -134,10 +135,24 @@ Once that's run, you will have access to what's called "ring data", stored by de
 
             [default: 0.13]
 
-        --thread-count <thread count>
+        --thread-count <Thread count>
             Thread count used for CPU parallelism
 
             [default: 8]
+
+        --disable-image-render
+            Controls line of sight and total viewshed image generation
+
+        --viewsheds-db-path <viewshed storage path>
+            Where to store the viewshed data. Requires build with `--features=ring_data`
+
+            [default: ./viewsheds.db]
+
+        --aoi-point <Lon/lat coords of region>
+            Lon/lat coordinates for a polygon that represents an Area of Interest within the DEM. Points outside this polygon will be ignored
+
+        --database-per-thread
+            Creates a database per thread, managed by an additional worker thread
 
     -h, --help
             Print help (see a summary with '-h')
@@ -146,11 +161,14 @@ Once that's run, you will have access to what's called "ring data", stored by de
 * Viewshed
   Reconstruct a viewshed
 
-  Usage: tvs viewshed <Path to existing output directory> [COORDINATES]...
+  Usage: tvs viewshed <Path to existing database> <Viewshed output directory> [COORDINATES]...
 
   Arguments:
-    <Path to existing output directory>
-            Directory where compute output was saved
+    <Path to existing database>
+            Path or directory where viewshed DB was saved
+
+    <Viewshed output directory>
+            Directory to save viewshed in
 
     [COORDINATES]...
             Coordinates to reconstruct viewsheds for
@@ -158,6 +176,24 @@ Once that's run, you will have access to what's called "ring data", stored by de
   Options:
     -h, --help
             Print help
+
+
+* Post-process
+  Post-processing tasks
+
+  Usage: tvs post-process [OPTIONS] <Path to existing databases>
+
+  Arguments:
+    <Path to existing databases>
+            Directory where viewshed DBs were saved
+
+  Options:
+        --threads <Number of threads to use>
+            Number of threads to use. Defaults to letting Rayon choose the thread count
+
+    -h, --help
+            Print help
+
 ```
 
 ## Building Vulkan shader
