@@ -194,7 +194,7 @@ impl<'compute> Compute<'compute> {
         Ok(crate::cpu::storage::metadata::MetaData {
             width: self.dem.width,
             scale: self.dem.scale,
-            max_line_of_sight: self.dem.max_los_as_points * self.dem.scale_u32(),
+            max_line_of_sight: self.dem.max_los_as_points,
             reserved_ring_size: usize::try_from(self.constants.reserved_rings_per_band)?,
             centre: self.dem.centre,
         })

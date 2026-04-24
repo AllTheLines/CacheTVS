@@ -32,7 +32,6 @@ rm $sqlite_db_path || true
 # Do the calculations
 time cargo run --features ring_data --release -- \
 	compute "$PROJECT_ROOT/benchmarks/cardiff.tiff" \
-	--scale 100 \
 	--rings-per-km 3 \
 	--backend "$backend" \
 	--process all \

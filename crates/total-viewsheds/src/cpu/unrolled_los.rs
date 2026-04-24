@@ -87,7 +87,8 @@ impl<const UNROLL: usize, const VECTOR_WIDTH: usize> UnrolledVectorLos<UNROLL, V
         assert_eq!(
             max_los % VECTOR_WIDTH,
             0,
-            "the maximum line of sight must be divisible by {VECTOR_WIDTH} for vectorization"
+            "the maximum line of sight ({max_los}) \
+            must be divisible by {VECTOR_WIDTH} for vectorization"
         );
 
         let (distances, adjustments) = generate_distances(max_los, refraction, scale);

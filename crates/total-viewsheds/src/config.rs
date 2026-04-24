@@ -72,10 +72,6 @@ pub struct Compute {
     )]
     pub output_dir: std::path::PathBuf,
 
-    /// Override the calculated DEM points scale from the DEM file. Units in meters.
-    #[arg(long, value_name = "DEM scale (meters)")]
-    pub scale: Option<f32>,
-
     /// What to compute.
     #[arg(
         long,
@@ -133,6 +129,7 @@ pub struct Compute {
         value_name = "Lon/lat coords of region")
     ]
     pub aoi_point: Vec<(f32, f32)>,
+
     /// Creates a database per thread, managed by an additional worker thread
     #[arg(
         long,
