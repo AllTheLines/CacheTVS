@@ -98,7 +98,7 @@ impl Tile {
     }
 
     /// Get the metric centre of the tile simply by dividing the extent in half.
-    fn get_centre_by_raster(dataset: &gdal::Dataset) -> Result<geo::Coord> {
+    fn get_metric_centre(dataset: &gdal::Dataset) -> Result<geo::Coord> {
         let (width, height) = dataset.raster_size();
 
         #[expect(
@@ -127,10 +127,13 @@ impl Tile {
 
     /// Get the lat/lon centre of the tile by querying the projection's definition.
     fn get_centre_by_projection(dataset: &gdal::Dataset) -> Result<crate::projection::LonLatCoord> {
-        let geometric_centre = Self::get_centre_by_raster(dataset)?;
-        if geometric_centre.x != 0.0f64 || geometric_centre.y != 0.0f64 {
+        const ALLOWED_DEVIATION: f64 = 0.001; // 1 milimetre
+        let geometric_centre = Self::get_metric_centre(dataset)?;
+        if geometric_centre.x.abs() > ALLOWED_DEVIATION
+            || geometric_centre.y.abs() > ALLOWED_DEVIATION
+        {
             color_eyre::eyre::bail!(
-                "Tile centre ({},{}) must be at 0,0.",
+                "Tile centre ({},{}) must be within {ALLOWED_DEVIATION} of 0,0.",
                 geometric_centre.x,
                 geometric_centre.y
             );
@@ -181,7 +184,16 @@ mod test {
     #[test]
     fn get_metric_centre() {
         let dataset = gdal::Dataset::open("../../benchmarks/samples/aeqd_10x10.tiff").unwrap();
-        let centre = Tile::get_centre_by_raster(&dataset).unwrap();
+        let centre = Tile::get_metric_centre(&dataset).unwrap();
         assert_eq!(centre, geo::Coord { x: 0.0, y: 0.0 });
+    }
+
+    #[test]
+    fn bad_centre() {
+        let dataset = gdal::Dataset::open("../../benchmarks/samples/aeqd_bad_centre.tiff").unwrap();
+        let error = Tile::get_centre_by_projection(&dataset)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("Tile centre"), "Wrong error: '{error}'");
     }
 }
