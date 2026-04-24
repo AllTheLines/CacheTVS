@@ -43,22 +43,14 @@ impl DEM {
         centre_latlon: crate::projection::LonLatCoord,
         width: u32,
         scale: f32,
-        max_line_of_sight: u32,
+        max_line_of_sight_as_points: u32,
     ) -> Result<Self> {
         let size: u64 = u64::from(width) * u64::from(width);
-        #[expect(
-            clippy::cast_possible_truncation,
-            clippy::as_conversions,
-            clippy::cast_sign_loss,
-            clippy::cast_precision_loss,
-            reason = "This shouldn't be a problem in most sane cases"
-        )]
-        let max_los_as_points = (max_line_of_sight as f32 / scale) as u32;
         let max_possible_los_as_points = width.div_euclid(2);
 
-        if max_los_as_points > max_possible_los_as_points {
+        if max_line_of_sight_as_points > max_possible_los_as_points {
             color_eyre::eyre::bail!(
-                "The maximum line of sight ({max_line_of_sight}m) is longer than the maximum \
+                "The maximum line of sight ({max_line_of_sight_as_points}) is longer than the maximum \
                 distance that any point can completely see ({}m).",
                 f64::from(max_possible_los_as_points) * f64::from(scale)
             );
@@ -78,21 +70,10 @@ impl DEM {
             size,
             scale,
             centre: centre_latlon,
-            max_los_as_points,
+            max_los_as_points: max_line_of_sight_as_points,
             computable_points_count,
         };
         Ok(dem)
-    }
-
-    #[expect(
-        clippy::as_conversions,
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "The scale is positive and never be beyond the limts of f32"
-    )]
-    /// Cast the scale into an integer
-    pub const fn scale_u32(&self) -> u32 {
-        self.scale as u32
     }
 
     /// Is the DEM ID within the DEM such that a valid viewshed can be made for it?

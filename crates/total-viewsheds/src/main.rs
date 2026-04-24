@@ -140,7 +140,19 @@ fn compute(config: &config::Compute) -> Result<()> {
     }
 
     let mut tile = tile::Tile::load(config)?;
-    let scale = config.scale.unwrap_or(tile.scale);
+
+    let max_line_of_sight_as_points = tile.width.div_euclid(3);
+
+    let mut dem = crate::dem::DEM::new(
+        tile.centre,
+        tile.width,
+        tile.scale,
+        max_line_of_sight_as_points,
+    )?;
+
+    dem.elevations = mem::take(&mut tile.data);
+
+    tracing::debug!("Created DEM: {dem:?}");
 
     #[expect(
         clippy::as_conversions,
@@ -149,30 +161,18 @@ fn compute(config: &config::Compute) -> Result<()> {
         clippy::cast_precision_loss,
         reason = "Sign loss and truncation aren't relevant"
     )]
-    let max_line_of_sight_metres = (tile.width.div_euclid(3) as f32 * scale) as u32;
-
-    let mut dem = crate::dem::DEM::new(tile.centre, tile.width, scale, max_line_of_sight_metres)?;
-
-    dem.elevations = mem::take(&mut tile.data);
+    let max_line_of_sight_as_metres = (max_line_of_sight_as_points as f32 * tile.scale) as u32;
 
     // Free up RAM
     drop(tile);
 
-    tracing::debug!("Created DEM: {dem:?}");
-
-    let max_line_of_sight = if matches!(config.backend, config::Backend::CPU) {
-        dem.max_los_as_points
-    } else {
-        max_line_of_sight_metres
-    };
-
     let dem_metadata = crate::cpu::storage::metadata::MetaData {
         width: dem.width,
         scale: dem.scale,
-        max_line_of_sight,
+        max_line_of_sight: max_line_of_sight_as_points,
         reserved_ring_size: run::compute::Compute::ring_count_per_band(
             config.rings_per_km,
-            dem.max_los_as_points * dem.scale_u32(),
+            max_line_of_sight_as_metres,
         ),
         centre: dem.centre,
     };
