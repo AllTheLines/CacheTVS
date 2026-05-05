@@ -43,36 +43,10 @@ jobs:
       - name: Run tests
         run: cargo test
 
-  check-spirv-kernel:
-    name: Check SPIRV kernel is compiled
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-      - name: Install `cargo-gpu`
-        run: cargo install --git https://github.com/rust-gpu/cargo-gpu cargo-gpu
-      - name: Compile the kernel
-        run: |
-          cargo gpu build \
-            --shader-crate crates/kernels/vulkan-and-cpu \
-            --auto-install-rust-toolchain
-      - name: Check that the SPIRV hasn't changed
-        run: |
-          ls crates/kernels/vulkan-and-cpu/kernel.spv
-          git diff --quiet --exit-code -- crates/kernels/vulkan-and-cpu/kernel.spv
-
   e2e:
     name: End to end tests
     strategy:
       fail-fast: false
-      matrix:
-        backend: [cpu, vulkan-cpu, vulkan]
     runs-on: ubuntu-latest
     
     steps:
@@ -86,16 +60,9 @@ jobs:
       - name: Install Linux system dependencies
         run: |
           sudo apt-get update -y
-          sudo apt-get install \
-            mesa-vulkan-drivers \
-            libvulkan1 \
-            vulkan-tools \
-            vulkan-validationlayers \
-            libgdal-dev \
-            gdal-bin
-          vulkaninfo
+          sudo apt-get install libgdal-dev gdal-bin
       - name: Run end to end tests
-        run: ./benchmarks/run.sh ${{ matrix.backend }}
+        run: ./benchmarks/run.sh
 
   lints:
     name: "Lints 💅"

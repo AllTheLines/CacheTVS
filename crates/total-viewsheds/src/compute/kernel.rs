@@ -1,7 +1,7 @@
-use crate::cpu::los::LineOfSight as _;
-use crate::cpu::rotation::lines;
-use crate::cpu::unrolled_los::UnrolledVectorLos;
-use crate::cpu::vector_intrinsics::DEFAULT_VECTOR_LENGTH;
+use crate::compute::los::LineOfSight as _;
+use crate::compute::rotation::lines;
+use crate::compute::unrolled_los::UnrolledVectorLos;
+use crate::compute::vector_intrinsics::DEFAULT_VECTOR_LENGTH;
 use crate::los_pack::LineOfSightPacked;
 use geo::HasDimensions as _;
 use itertools::izip;
@@ -58,11 +58,11 @@ const DEFAULT_UNROLL: usize = const {
 /// `kernel` will calculate the longest line of sight heatmap for a given angle and elevation map
 /// assuming that the maximum line of sight is `max_los`
 pub fn kernel(
-    db_worker: &super::storage::worker::Worker,
+    db_worker: &crate::storage::worker::Worker,
     elevation_map: &[i16],
     output: &mut OutputData,
     angle: f32,
-    config: &crate::run::compute::Config,
+    config: &crate::run::Config,
 ) {
     #[expect(clippy::expect_used, reason = "We need to panic on failure")]
     let max_los = usize::try_from(config.dem_metadata.max_line_of_sight)
@@ -148,7 +148,7 @@ pub fn kernel(
                     ));
                 };
                 if cfg!(any(test, feature = "ring_data"))
-                    && crate::run::compute::Compute::is_process_viewsheds(&config.process)
+                    && crate::run::Compute::is_process_viewsheds(&config.process)
                 {
                     db_worker.store_bitmap(result_dem_id as u64, angle as u16, &point_visibility);
                 }
@@ -159,29 +159,25 @@ pub fn kernel(
 
 #[cfg(test)]
 mod test {
-    use crate::cpu::kernel::OutputData;
+    use crate::compute::kernel::OutputData;
     use crate::{
-        cpu::kernel as cpu_kernel, los_pack::LineOfSightPacked, run::compute::test::default_config,
+        compute::kernel as cpu_kernel, los_pack::LineOfSightPacked, run::test::default_config,
     };
 
     #[test]
     fn total_surfaces() {
-        let dem = &kernel::tests::dems::bigger_dem();
-        let db_worker = crate::cpu::storage::worker::Worker::new_noop();
+        let dem = &crate::tests::fixtures::bigger_dem();
+        let db_worker = crate::storage::worker::Worker::new_noop();
         let width = 4;
-        let metadata = crate::cpu::storage::metadata::MetaData {
+        let metadata = crate::storage::metadata::MetaData {
             width,
             scale: 1.0,
             max_line_of_sight: width,
-            reserved_ring_size: 0,
             centre: crate::projection::LonLatCoord((0.0, 0.0).into()),
         };
-        let config = crate::run::compute::Config {
+        let config = crate::run::Config {
             dem_metadata: metadata,
-            ..default_config(
-                crate::config::Backend::CPU,
-                &tempfile::NamedTempFile::new().unwrap(),
-            )
+            ..default_config(&tempfile::NamedTempFile::new().unwrap())
         };
 
         let mut forward = OutputData {

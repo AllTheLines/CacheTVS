@@ -1,11 +1,8 @@
-use crate::cpu::los::{Accumulate, Angle, LineOfSight, PrefixMax};
-use crate::cpu::vector_intrinsics::{VectorGreater, VectorLos, VectorMax as _};
+use crate::compute::los::{Accumulate, Angle, LineOfSight, PrefixMax};
+use crate::compute::vector_intrinsics::{VectorGreater, VectorLos, VectorMax as _};
 use itertools::izip;
 use std::simd::prelude::SimdFloat as _;
 use std::simd::{Select as _, Simd};
-
-/// `EARTH_RADIUS_SQUARED` is the radius of the earth in meters
-const EARTH_DIAMETER: f32 = 12_742_000.0;
 
 /// `generate_distances` generates the distance from
 #[expect(
@@ -19,7 +16,8 @@ fn generate_distances(max_los: usize, refraction: f32, scale: f32) -> (Vec<f32>,
     (1..=max_los)
         .map(|step| {
             let distance = (step as f32) * scale;
-            let adjustment = (distance * distance * adjusted_refraction) / EARTH_DIAMETER;
+            let adjustment =
+                (distance * distance * adjusted_refraction) / crate::projection::EARTH_DIAMETER;
 
             (distance, adjustment)
         })

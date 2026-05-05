@@ -2,6 +2,10 @@
 
 use color_eyre::Result;
 
+/// Diameter of the Earth in meters. So that some points are not visible simply
+/// by virtue of the earth's spherical shape.
+pub const EARTH_DIAMETER: f32 = 12_742_000.0;
+
 // TODO: Rename to `LonLatCoord`.
 /// A latitude/longtitude coordinate.
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Default)]
@@ -57,7 +61,7 @@ impl Converter {
 
     /// Convert a lat/lon to a DEM coordinate.
     pub fn lonlat_to_dem_coord(
-        metadata: &crate::cpu::storage::metadata::MetaData,
+        metadata: &crate::storage::metadata::MetaData,
         latlon: crate::projection::LonLatCoord,
     ) -> Result<crate::dem::Coordinate> {
         let width = f64::from(metadata.width - 1);
@@ -194,11 +198,10 @@ mod test {
     #[test]
     fn latlon_to_dem_coord() {
         let centre = crate::projection::LonLatCoord((-33.33f64, 12.34f64).into());
-        let metadata = crate::cpu::storage::metadata::MetaData {
+        let metadata = crate::storage::metadata::MetaData {
             width: 102,
             scale: 5.0,
             max_line_of_sight: 250,
-            reserved_ring_size: 0,
             centre,
         };
 

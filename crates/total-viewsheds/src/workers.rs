@@ -1,7 +1,7 @@
 //! For kernels that run each angle in parallel.
 
-use crate::cpu::kernel::OutputData;
-use crate::cpu::{kernel, storage};
+use crate::compute::kernel;
+use crate::compute::kernel::OutputData;
 use crate::los_pack::LineOfSightPacked;
 use color_eyre::Result;
 use std::path::Path;
@@ -20,11 +20,11 @@ struct Work {
 /// and finally sends it to `res` to aggregate in the main thread
 #[expect(clippy::expect_used, reason = "invariants broken if errors returned")]
 fn kernel_worker(
-    storage_worker: &storage::worker::Worker,
+    storage_worker: &crate::storage::worker::Worker,
     elevations: &[i16],
     work_todo: mpmc::Receiver<Work>,
     res: &mpsc::Sender<OutputData>,
-    config: &crate::run::compute::Config,
+    config: &crate::run::Config,
 ) {
     #[expect(clippy::as_conversions, reason = "usize will be u64")]
     let size = config.dem_metadata.max_line_of_sight.pow(2) as usize;
@@ -76,20 +76,20 @@ fn compilation_worker(
 /// a noop worker
 pub fn init_worker<P: AsRef<Path>>(
     path: P,
-    meta_data: &crate::cpu::storage::metadata::MetaData,
+    meta_data: &crate::storage::metadata::MetaData,
     is_db_worker: bool,
-) -> Result<storage::worker::Worker> {
+) -> Result<crate::storage::worker::Worker> {
     if !is_db_worker {
-        return Ok(storage::worker::Worker::new_noop());
+        return Ok(crate::storage::worker::Worker::new_noop());
     }
 
-    let db = crate::cpu::storage::db::DB::new(&path)?;
+    let db = crate::storage::db::DB::new(&path)?;
     db.save_metadata(meta_data)?;
 
-    Ok(crate::cpu::storage::worker::Worker::new(&path))
+    Ok(crate::storage::worker::Worker::new(&path))
 }
 
-impl super::compute::Compute<'_> {
+impl super::run::Compute<'_> {
     /// `run_parallel` runs the CPU kernel in parallel
     #[expect(clippy::expect_used, reason = "We need to panic on failure")]
     pub fn run_parallel(&mut self) -> Result<()> {

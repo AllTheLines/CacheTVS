@@ -8,10 +8,8 @@ pub struct MetaData {
     pub width: u32,
     /// The diameter in meters each point of the data covers.
     pub scale: f32,
-    /// The maximum line of sight (in points). Unit is metres for Vulkan, to be deprecated soon.
+    /// The maximum line of sight, in points).
     pub max_line_of_sight: u32,
-    /// The number of items reserved to place ring DEM IDs in.
-    pub reserved_ring_size: usize,
     /// The lat/lon coordinates for the centre of the 2D DEM grid. Used for accurately converting
     /// between degree and metric coordinate systems.
     pub centre: crate::projection::LonLatCoord,

@@ -26,12 +26,12 @@ impl Worker {
     pub fn new<P: AsRef<std::path::Path>>(path: P) -> Self {
         if !cfg!(any(test, feature = "ring_data")) {
             return Self {
-                engine: Box::new(crate::cpu::storage::engine::Noop),
+                engine: Box::new(crate::storage::engine::Noop),
             };
         }
 
         Self {
-            engine: Box::new(crate::cpu::storage::engine::Sqlite::new(path)),
+            engine: Box::new(crate::storage::engine::Sqlite::new(path)),
         }
     }
 

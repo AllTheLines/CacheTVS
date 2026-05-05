@@ -84,15 +84,6 @@ impl DEM {
         coord.x >= lower && coord.x <= upper && coord.y >= lower && coord.y <= upper
     }
 
-    /// Convert an original DEM ID to the coordinate system of the computable points sub-DEM.
-    pub fn pov_id_to_tvs_id(&self, pov_id: u64) -> u64 {
-        let max_los_as_points_u64 = u64::from(self.max_los_as_points);
-        let width_u64 = u64::from(self.width);
-        let x = pov_id.rem_euclid(width_u64) - max_los_as_points_u64;
-        let y = pov_id.div_euclid(width_u64) - max_los_as_points_u64;
-        (y * u64::from(self.tvs_width)) + x
-    }
-
     /// Convert a DEM 1D index to a 2D coordinate.
     pub fn convert_dem_id_to_coord(&self, dem_id: u32) -> Coordinate {
         let x = f64::from(dem_id.rem_euclid(self.width));

@@ -34,17 +34,17 @@ Any file format supported by `gdal` should be supported. It must follow this req
 * It must be in an AEQD or similar metric projection whose anchor is the centre of the tile.
 * All points must be the same metric distance apart.
 
-The best source of elevation data I have found is here: https://www.viewfinderpanoramas.org/Coverage%20map%20viewfinderpanoramas_org3.htm It's mostly in the `.hgt` format, but can easily be converted to `.bt` using `gdal_translate`.
+The best source of elevation data I have found is here: https://www.viewfinderpanoramas.org/Coverage%20map%20viewfinderpanoramas_org3.htm It's mostly in the `.hgt` format, but can easily be converted to `.tiff` using `gdal_translate`.
 
 ## Usage
-Eg: `RUST_LOG=trace cargo run --release -- compute input.bt --scale 100 --process total-surfaces`
+Eg: `RUST_LOG=trace cargo run --release -- compute input.tiff --scale 100 --process total-surfaces`
 
 A heatmap of total viewshed surface areas will be saved to `./output/heatmap.png`. The path can be changed with `--output-dir path/to/dir`.
 
 ### Individual Viewsheds
 Typically you won't want to process viewsheds as it incurs a significant time cost from all the extra data that's generated. But processing viewsheds can be useful for verification and benchmarks.
 
-Eg: `RUST_LOG=trace cargo run --release -- compute input.bt --scale 100 --process viewsheds`
+Eg: `RUST_LOG=trace cargo run --release -- compute input.tiff --scale 100 --process viewsheds`
 
 Once that's run, you will have access to what's called "ring data", stored by default at `output/ring_data`. This can be used to reconstruct _any_ viewshed from within the TVS. Example:
 `RUST_LOG=trace cargo run --release -- viewshed output -- -3.1230,51.4898`
@@ -94,8 +94,6 @@ Once that's run, you will have access to what's called "ring data", stored by de
             Where to run the kernel calculations
 
             Possible values:
-            - vulkan:     A SPIRV shader run on the GPU via Vulkan
-            - vulkan-cpu: Vulkan shader but run on the CPU
             - cpu:        Optimised cache-efficient CPU kernel
             - cuda:       TBC
 
@@ -106,17 +104,12 @@ Once that's run, you will have access to what's called "ring data", stored by de
 
             [default: ./output]
 
-        --scale <DEM scale (meters)>
-            Override the calculated DEM points scale from the DEM file. Units in meters
-
         --process <What to compute>
             What to compute
 
             Possible values:
-            - all:            Calculate everything
-            - total-surfaces: Compute the total visible surfaces for each computable DEM point and output as a heatmap
-            - viewsheds:      Compute all the ring sectors saving them to disk so that they can be used to later reconstruct viewsheds
-            - longest-lines:  Compute the longest line of sight for each DEM point
+            - all:       Calculate everything
+            - viewsheds: Compute all the polar segments saving them to disk so that they can be used to later reconstruct viewsheds
 
             [default: all]
 
@@ -195,13 +188,6 @@ Once that's run, you will have access to what's called "ring data", stored by de
             Print help
 
 ```
-
-## Building Vulkan shader
-* Install `cargo-gpu`: `cargo install --git https://github.com/rust-gpu/cargo-gpu cargo-gpu`
-* Compile:
-  * `cargo gpu build --watch --shader-crate crates/kernels/vulkan-and-cpu`
-
-Note that the pre-compiled shader already comes with the source code (at `crates/shader/total_viewsheds_kernel.spv`). So you only need to compile the shader if you're developing it.
 
 ## License
 The license is the same as that used for the original paper's sample code: https://github.com/SihamTabik/Total_Viewshed
