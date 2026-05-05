@@ -3,12 +3,14 @@
 #![cfg(test)]
 #![expect(clippy::indexing_slicing, reason = "This code is mostly for tests")]
 
+use crate::output::viewshed::Viewshed;
+
 pub fn make_viewshed(
     elevations: &[i16],
     viewshed_pov: geo::Coord,
-    config: crate::run::compute::Config,
+    config: crate::run::Config,
 ) -> Vec<String> {
-    let mut dem = crate::run::compute::test::make_dem(elevations);
+    let mut dem = crate::run::test::make_dem(elevations);
     let dem_half_width = f64::from(dem.width - 1) / 2.0f64;
     let viewshed_pov_metric = geo::Coord {
         x: viewshed_pov.x - dem_half_width,
@@ -18,23 +20,8 @@ pub fn make_viewshed(
         .to_degrees(viewshed_pov_metric)
         .unwrap();
 
-    let compute = crate::run::compute::test::compute(&mut dem, config.clone());
-
-    let polygon = match config.backend.clone() {
-        #[expect(clippy::unimplemented, reason = "One day...")]
-        crate::config::Backend::Cuda => unimplemented!("CUDA not supported yet"),
-        crate::config::Backend::Vulkan | crate::config::Backend::VulkanCPU => {
-            &super::ring_data::Source::RAM(crate::output::ring_data::AllData {
-                metadata: compute.metadata().unwrap(),
-                ring_data: crate::output::ring_data::SectorData::AllSectors(compute.ring_data),
-            })
-        }
-        crate::config::Backend::CPU => &super::ring_data::Source::SQLite(config.viewsheds_db_path),
-    };
-
-    let mut viewshed =
-        crate::output::viewshed::Viewshed::reconstruct(polygon, coord_lonlat).unwrap();
-
+    crate::run::test::compute(&mut dem, config.clone());
+    let mut viewshed = Viewshed::reconstruct(config.viewsheds_db_path, coord_lonlat).unwrap();
     let viewsheder = crate::output::viewshed::Viewshed {
         dem: &dem,
         pov_coord: crate::dem::Coordinate(viewshed_pov),

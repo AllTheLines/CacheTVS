@@ -21,7 +21,7 @@ impl Pruner {
     /// Convert user-provided lon/lat coordinates to a polygon.
     pub fn lonlat_coords_to_polygon(
         points: Vec<(f32, f32)>,
-        metadata: &super::storage::metadata::MetaData,
+        metadata: &crate::storage::metadata::MetaData,
     ) -> Result<geo::Polygon> {
         let mut vertices = Vec::new();
 
@@ -65,7 +65,7 @@ mod tests {
 
     fn make_pruner() -> Pruner {
         let width = 300;
-        let metadata = crate::cpu::storage::metadata::MetaData {
+        let metadata = crate::storage::metadata::MetaData {
             width,
             scale: 100.0,
             centre: crate::projection::LonLatCoord((-3.1791, 51.4816).into()),

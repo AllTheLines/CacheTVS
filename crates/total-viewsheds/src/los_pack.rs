@@ -19,9 +19,8 @@ pub struct LineOfSightPacked(f32);
 impl LineOfSightPacked {
     /// Pack line of sight data into f32.
     ///
-    /// f32 is better than u32 because the `.bt` format only supports `i16` and `f32`. And I imagine
-    /// that floats are just more widely recognised in general. At the end of the day, they're just
-    /// bits that are neither valid f32 nor u32.
+    /// f32 is better than u32 because  I imagine that floats are just more widely recognised in general.
+    /// At the end of the day, they're just bits that are neither valid f32 nor u32.
     pub fn new(distance: u32, angle: u16) -> Result<Self> {
         if distance > U22_MAX {
             color_eyre::eyre::bail!("{} is greater than u22 max {U22_MAX}", distance);

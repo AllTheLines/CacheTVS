@@ -1,6 +1,7 @@
-//! Tests and test utilities.
+//! Test fixtures
 
-#![expect(clippy::print_stderr, reason = "We're just debugging here")]
+/// The nodata value from NASA's SRTM data.
+pub const NODATA: f32 = -32768.0;
 
 // This is a little map to help orient yourself when looking at the results:
 //
@@ -59,7 +60,7 @@ pub fn bigger_dem() -> Vec<i16> {
         clippy::cast_possible_truncation,
         reason = "NODATA is actually i16::MIN"
     )]
-    let n = crate::elevations::NODATA as i16;
+    let n = NODATA as i16;
     vec![
         0,0,0,0, 0,0,0,0, 0,0,0,1,
         0,1,1,1, 1,1,1,1, 0,1,0,0,
@@ -76,31 +77,4 @@ pub fn bigger_dem() -> Vec<i16> {
         0,0,3,4, 2,2,1,2, n,n,n,n,
         3,0,2,3, 1,0,1,0, n,n,n,n,
     ]
-}
-
-#[inline]
-/// Print a DEM as text.
-pub fn print_dem<T>(dem: &[T])
-where
-    T: ToString + spirv_std::num_traits::NumCast + Copy + std::fmt::Display,
-{
-    let mut ascii = String::new();
-    let width = dem.len().isqrt();
-    for (index, elevation) in dem.iter().enumerate() {
-        let string = format!("{elevation:<4.1} ");
-
-        if index.rem_euclid(width) == 0 {
-            ascii = format!("{ascii}\n");
-        }
-
-        ascii = format!("{ascii}{string}");
-        if (index + 1).rem_euclid(4) == 0 {
-            ascii = format!("{ascii} ");
-        }
-        if (index + 1).rem_euclid(width * 4) == 0 {
-            ascii = format!("{ascii}\n");
-        }
-    }
-
-    eprint!("{ascii}");
 }

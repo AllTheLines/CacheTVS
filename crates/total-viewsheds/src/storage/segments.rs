@@ -98,7 +98,7 @@ impl PolarSegments {
 
 #[cfg(test)]
 mod test {
-    use crate::cpu::storage::segments::PolarSegments;
+    use crate::storage::segments::PolarSegments;
 
     #[expect(
         clippy::indexing_slicing,

@@ -7,8 +7,6 @@ export RUST_LOG=trace
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
 
-backend=$1
-
 function geojson_area() {
 	local file=$1
 	local temp=/tmp/viewshed.json
@@ -33,30 +31,17 @@ rm $sqlite_db_path || true
 time cargo run --features ring_data --release -- \
 	compute "$PROJECT_ROOT/benchmarks/cardiff.tiff" \
 	--rings-per-km 3 \
-	--backend "$backend" \
 	--process all \
 	--viewsheds-db-path $sqlite_db_path \
 	--thread-count 1
-
-if [[ $backend == "vulkan" ]]; then
-	# On Github Actions there's no real GPU so it uses a software GPU, which seems to give
-	# very different results, so there's no point doing a diff on its benchmark viewshed.
-	exit 0
-fi
 
 viewshed_file="output/viewsheds/-3.122999906539917-51.48979949951172.json"
 rm $viewshed_file || true
 
 # Reconstruct a viewshed from the centre of the DEM
-if [[ $backend == "cpu" ]]; then
-	time cargo run --release -- \
-		viewshed $sqlite_db_path ./output \
-		-- -3.1230,51.4898
-else
-	time cargo run --release -- \
-		viewshed ./output ./output \
-		-- -3.1230,51.4898
-fi
+time cargo run --release -- \
+	viewshed $sqlite_db_path ./output \
+	-- -3.1230,51.4898
 
 ls -alh output/viewsheds
 

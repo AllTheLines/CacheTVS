@@ -189,10 +189,6 @@ fn parse_coords(string: &str) -> Result<(f32, f32)> {
 /// Where to run the computations.
 #[derive(clap::ValueEnum, Clone, Debug, Default)]
 pub enum Backend {
-    /// A SPIRV shader run on the GPU via Vulkan.
-    Vulkan,
-    /// Vulkan shader but run on the CPU.
-    VulkanCPU,
     /// Optimised cache-efficient CPU kernel
     #[default]
     CPU,
@@ -206,13 +202,9 @@ pub enum Backend {
 pub enum Process {
     /// Calculate everything.
     All,
-    /// Compute the total visible surfaces for each computable DEM point and output as a heatmap.
-    TotalSurfaces,
-    /// Compute all the ring sectors saving them to disk so that they can be used to later
+    /// Compute all the polar segments saving them to disk so that they can be used to later
     /// reconstruct viewsheds.
     Viewsheds,
-    /// Compute the longest line of sight for each DEM point.
-    LongestLines,
 }
 
 /// Where to run the computations.

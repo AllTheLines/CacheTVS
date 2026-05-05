@@ -1,4 +1,4 @@
-use crate::cpu::los::{Angle, PrefixMax};
+use crate::compute::los::{Angle, PrefixMax};
 use itertools::izip;
 use std::iter::zip;
 use std::simd::prelude::{SimdFloat as _, SimdInt as _, SimdPartialOrd as _};
