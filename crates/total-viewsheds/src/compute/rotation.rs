@@ -42,7 +42,7 @@ pub fn lines(
     let mut indexes = Rc::new(vec![0i64; 2 * max_los]);
     let mut elevations = Rc::new(vec![0i16; 2 * max_los]);
 
-    ((max_los as isize)..(max_los as isize) * 2).map(move |x| {
+    ((max_los as isize)..(max_los as isize) * 2).map(move |y| {
         let mut_indexes = Rc::get_mut(&mut indexes)
             .expect("invariant broken: the caller hasn't droped the previous index buffer cannot start next iteration of rotation");
         let mut_elevations = Rc::get_mut(&mut elevations)
@@ -53,7 +53,7 @@ pub fn lines(
             mut_indexes.iter_mut(),
             mut_elevations.iter_mut()
         )
-        .for_each(|(y, index, elevation)| {
+        .for_each(|(x, index, elevation)| {
             let (x_rotated, y_rotated) = rotator.rotate(x, y);
             let new_idx = y_rotated * width + x_rotated;
             *index = new_idx as i64;
@@ -103,8 +103,8 @@ mod test {
     fn rotate_by_0() {
         #[rustfmt::skip]
         let expected = [
-            14, 20, 26, 32,
-            15, 21, 27, 33,
+            14, 15, 16, 17,
+            20, 21, 22, 23
         ];
         let rotations = lines(&DEM, 2, 0.0)
             .flat_map(|(elevs, _)| (*elevs).clone())
@@ -117,8 +117,8 @@ mod test {
     fn rotate_by_45() {
         #[rustfmt::skip]
         let expected = [
-            20, 21, 27, 34,
-            14, 15, 22, 28,
+            20, 14, 10, 4,
+            21, 15, 16, 11
         ];
         let rotations = lines(&DEM, 2, 45.0)
             .flat_map(|(elevs, _)| (*elevs).clone())
@@ -131,8 +131,8 @@ mod test {
     fn rotate_by_90() {
         #[rustfmt::skip]
         let expected = [
-            20, 21, 22, 23,
-            14, 15, 16, 17
+            20, 14, 8, 2,
+            21, 15, 9, 3
         ];
         let rotations = lines(&DEM, 2, 90.0)
             .flat_map(|(elevs, _)| (*elevs).clone())
