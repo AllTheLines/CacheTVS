@@ -147,14 +147,50 @@ pub fn kernel(
                         angle as u16,
                     ));
                 };
-                if cfg!(any(test, feature = "ring_data"))
-                    && crate::run::Compute::is_process_viewsheds(&config.process)
-                {
-                    db_worker.store_bitmap(result_dem_id as u64, angle as u16, &point_visibility);
+                let mut maybe_neighbourhood_id = None;
+                if is_save_viewshed(config, result_dem_id, &mut maybe_neighbourhood_id) {
+                    db_worker.store_bitmap(
+                        result_dem_id as u64,
+                        maybe_neighbourhood_id,
+                        angle as u16,
+                        &point_visibility,
+                    );
                 }
             }
         }
     }
+}
+
+/// Decide whether to save viewshed data to disk.
+fn is_save_viewshed(
+    config: &crate::run::Config,
+    dem_id: i64,
+    maybe_neighbourhood_id: &mut Option<i64>,
+) -> bool {
+    if !cfg!(any(test, feature = "ring_data")) {
+        return false;
+    }
+    if !crate::run::Compute::is_process_viewsheds(&config.process) {
+        return false;
+    }
+
+    if let Some(whitelist) = &config.viewsheds_to_save {
+        let neighbourhood_id = crate::pre_process::get_neighbourhood_id(
+            dem_id,
+            i64::from(config.dem_metadata.width),
+            i64::from(config.dem_metadata.neighbourhood_size),
+        );
+        if let Some(biggest) = whitelist.get(&neighbourhood_id)
+            && &dem_id == biggest
+        {
+            *maybe_neighbourhood_id = Some(neighbourhood_id);
+            return true;
+        }
+    } else {
+        return true;
+    }
+
+    false
 }
 
 #[cfg(test)]
@@ -174,6 +210,7 @@ mod test {
             scale: 1.0,
             max_line_of_sight: width,
             centre: crate::projection::LonLatCoord((0.0, 0.0).into()),
+            neighbourhood_size: 0,
         };
         let config = crate::run::Config {
             dem_metadata: metadata,

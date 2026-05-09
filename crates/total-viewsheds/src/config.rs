@@ -1,6 +1,6 @@
 //! Defines all the CLI arguments.
 
-use color_eyre::eyre::Result;
+use color_eyre::eyre::{Result, bail};
 use std::path::PathBuf;
 
 /// `Config`
@@ -137,6 +137,15 @@ pub struct Compute {
         default_value = "false"
     )]
     pub database_per_thread: bool,
+
+    /// Provide an existing TVS heatmap .tiff as a source for directing computation.
+    #[arg(long, value_name = "Path to existing TVS .tiff")]
+    pub tvs_source_path: Option<std::path::PathBuf>,
+
+    /// Only save viewsheds with the highest surface area within a square of this size. Must be a
+    /// perfect square, eg: 4, 9, 16, etc. Requires `--tvs_source_path` argument.
+    #[arg(long, value_name = "Square size", value_parser=is_perfect_square)]
+    pub only_save_biggest_viewsheds: Option<u16>,
 }
 
 /// Arguments to the `viewshed` subcommand.
@@ -186,6 +195,16 @@ fn parse_coords(string: &str) -> Result<(f32, f32)> {
     Ok((coordinates[0], coordinates[1]))
 }
 
+/// Check if argument is a perfect square.
+fn is_perfect_square(argument: &str) -> Result<u16> {
+    let number = argument.parse::<u16>()?;
+    let root = number.isqrt();
+    if root * root != number {
+        bail!("Value must be a perfect square");
+    }
+    Ok(number)
+}
+
 /// Where to run the computations.
 #[derive(clap::ValueEnum, Clone, Debug, Default)]
 pub enum Backend {
@@ -197,7 +216,6 @@ pub enum Backend {
 }
 
 /// Which calculations to process.
-#[cfg(not(target_arch = "spirv"))]
 #[derive(clap::ValueEnum, Clone, Debug, PartialEq, Eq)]
 pub enum Process {
     /// Calculate everything.

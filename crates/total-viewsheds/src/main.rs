@@ -17,6 +17,7 @@
         clippy::default_numeric_fallback,
         clippy::integer_division,
         clippy::integer_division_remainder_used,
+        clippy::indexing_slicing,
         reason = "It's just for the tests"
     )
 )]
@@ -24,12 +25,18 @@
 extern crate core;
 
 use clap::Parser as _;
-use color_eyre::eyre::Result;
+use color_eyre::eyre::{Result, bail};
 use std::mem;
 use tracing_subscriber::{Layer as _, layer::SubscriberExt as _, util::SubscriberInitExt as _};
 
 mod config;
+mod dem;
+mod dump_usage;
+mod los_pack;
+mod post_process;
+mod pre_process;
 mod run;
+mod tile;
 mod workers;
 
 /// cpu implements a CPU kernel for the longest line of sight
@@ -53,10 +60,7 @@ mod compute {
 
     pub use kernel::kernel;
 }
-mod dem;
-mod dump_usage;
-mod los_pack;
-mod post_process;
+
 /// Database for viewsheds
 mod storage {
     pub mod db;
@@ -65,7 +69,6 @@ mod storage {
     pub mod segments;
     pub mod worker;
 }
-mod tile;
 
 /// Various ways to output data.
 mod output {
@@ -92,7 +95,7 @@ fn main() -> Result<()> {
                     geo::coord! {x: f64::from(coordinate.0), y: f64::from(coordinate.1)},
                 );
 
-                let viewshed = crate::output::viewshed::Viewshed::reconstruct(
+                let (_, viewshed) = crate::output::viewshed::Viewshed::reconstruct(
                     viewshed_config.db_path.clone(),
                     geo_coord,
                 )?;
@@ -153,6 +156,17 @@ fn compute(config: &config::Compute) -> Result<()> {
         scale: dem.scale,
         max_line_of_sight: max_line_of_sight_as_points,
         centre: dem.centre,
+        neighbourhood_size: config.only_save_biggest_viewsheds.unwrap_or(0).into(),
+    };
+
+    let save_viewshed_dem_ids = if config.only_save_biggest_viewsheds.is_some() {
+        if config.tvs_source_path.is_none() {
+            bail!("Must provide --tvs_source_path argument");
+        }
+
+        Some(pre_process::create_biggest_tvs_subgrid(config)?)
+    } else {
+        None
     };
 
     tracing::info!("Starting computations");
@@ -171,6 +185,7 @@ fn compute(config: &config::Compute) -> Result<()> {
         )?,
         dem_metadata,
         database_per_thread: config.database_per_thread,
+        viewsheds_to_save: save_viewshed_dem_ids,
     };
 
     let mut compute = run::Compute::new(compute_config, &mut dem)?;

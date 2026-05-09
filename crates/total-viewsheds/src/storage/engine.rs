@@ -11,13 +11,24 @@ where
     Self: Send + Sync,
 {
     /// The
-    fn store_segments(&self, tvs_id: u64, segments: super::segments::PolarSegments);
+    fn store_segments(
+        &self,
+        dem_id: u64,
+        neighbourhood_id: Option<i64>,
+        segments: super::segments::PolarSegments,
+    );
 }
 
 /// `NoopEngine` stores no `PolarSegments`, it exists for testing purposes
 pub struct Noop;
 impl Engine for Noop {
-    fn store_segments(&self, _tvs_id: u64, _segments: super::segments::PolarSegments) {}
+    fn store_segments(
+        &self,
+        _dem_id: u64,
+        _neighbourhood_id: Option<i64>,
+        _segments: super::segments::PolarSegments,
+    ) {
+    }
 }
 
 /// Stores all `PolarSegments` in a sqlite database. It uses a channel to communicate with a worker thread
@@ -44,7 +55,7 @@ pub struct Sqlite {
     /// meaning so long as `SqliteEngine` isn't being dropped it is `Some`
     worker_handle: Option<thread::JoinHandle<Result<(), rusqlite::Error>>>,
     /// `sender` is a mpsc channel that communicates segments to store to the `worker_handle`
-    sender: mpsc::SyncSender<(u64, super::segments::PolarSegments)>,
+    sender: mpsc::SyncSender<(u64, Option<i64>, super::segments::PolarSegments)>,
 }
 
 impl Sqlite {
@@ -66,13 +77,18 @@ impl Sqlite {
 }
 
 impl Engine for Sqlite {
-    fn store_segments(&self, tvs_id: u64, segments: super::segments::PolarSegments) {
+    fn store_segments(
+        &self,
+        dem_id: u64,
+        neighbourhood_id: Option<i64>,
+        segments: super::segments::PolarSegments,
+    ) {
         #[expect(
             clippy::expect_used,
             reason = "we should crash to make sure not to deadlock"
         )]
         self.sender
-            .send((tvs_id, segments))
+            .send((dem_id, neighbourhood_id, segments))
             .expect("channel sending error in sqlite engine");
     }
 }
