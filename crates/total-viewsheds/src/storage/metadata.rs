@@ -13,4 +13,7 @@ pub struct MetaData {
     /// The lat/lon coordinates for the centre of the 2D DEM grid. Used for accurately converting
     /// between degree and metric coordinate systems.
     pub centre: crate::projection::LonLatCoord,
+    /// The size of the region (in raster points) within which we will find the viewsheds with the
+    /// largest surface area. Used for reducing the final size of viewshed data saved to disk.
+    pub neighbourhood_size: u32,
 }

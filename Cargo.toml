@@ -17,7 +17,6 @@ members = [
 [workspace.lints.rust]
 # It's always good to write as much documentation as possible
 missing_docs = "warn"
-unexpected_cfgs = { level = "allow", check-cfg = ['cfg(target_arch, values("spirv"))'] }
 
 [workspace.lints.clippy]
 # `clippy::all` is already on by default. It implies the following:

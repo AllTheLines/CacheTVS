@@ -1,5 +1,7 @@
 //! Test fixtures
 
+use color_eyre::eyre::Result;
+
 /// The nodata value from NASA's SRTM data.
 pub const NODATA: f32 = -32768.0;
 
@@ -77,4 +79,16 @@ pub fn bigger_dem() -> Vec<i16> {
         0,0,3,4, 2,2,1,2, n,n,n,n,
         3,0,2,3, 1,0,1,0, n,n,n,n,
     ]
+}
+
+/// Create the TVS heatmap that a compute run outputs.
+pub fn create_tvs_tiff(data: Vec<f32>) -> Result<gdal::Dataset> {
+    let width = data.len().isqrt();
+    let driver = gdal::DriverManager::get_driver_by_name("MEM")?;
+    let dataset = driver.create_with_band_type::<f32, _>("", width, width, 1)?;
+    let mut buffer = gdal::raster::Buffer::new((width, width), data);
+    let mut band = dataset.rasterband(1)?;
+    band.write((0, 0), (width, width), &mut buffer)?;
+
+    Ok(dataset)
 }
