@@ -21,10 +21,11 @@ pub fn make_viewshed(
         .unwrap();
 
     crate::run::test::compute(&mut dem, config.clone());
-    let mut viewshed = Viewshed::reconstruct(config.viewsheds_db_path, coord_lonlat).unwrap();
+    let (pov_coord, mut viewshed) =
+        Viewshed::reconstruct(config.viewsheds_db_path, coord_lonlat).unwrap();
     let viewsheder = crate::output::viewshed::Viewshed {
         dem: &dem,
-        pov_coord: crate::dem::Coordinate(viewshed_pov),
+        pov_coord,
     };
 
     let scale = 2;

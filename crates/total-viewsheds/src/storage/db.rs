@@ -3,6 +3,15 @@
 use color_eyre::Result;
 use std::path::Path;
 
+/// How we look up polar segments in the database.
+#[derive(Debug)]
+pub enum ID {
+    /// The precise DEM ID of the polar segment.
+    DEM(i64),
+    /// The neighbourhood ID within which a single DEM ID has been isolated.
+    Neighbourhood(i64),
+}
+
 /// Sqlite DB connection details.
 pub struct DB {
     /// A connection to Sqlite
@@ -24,7 +33,8 @@ impl DB {
             "
             CREATE TABLE IF NOT EXISTS metadata (
                 json TEXT NOT NULL
-            )",
+            )
+            ",
             (),
         )?;
 
@@ -51,30 +61,30 @@ impl DB {
         Ok(metadata)
     }
 
-    /// Load all the polar segments for a given DEM ID.
-    pub fn load_segments_for_tvs_id(
-        &self,
-        tvs_id: u32,
-    ) -> Result<Vec<Vec<super::segments::Segment>>> {
+    /// Load all the polar segments for a given ID.
+    pub fn load_segments(&self, id: &ID) -> Result<(Vec<Vec<super::segments::Segment>>, i64)> {
         tracing::debug!(
-            "Loading polar segments for {tvs_id} from {:?}...",
+            "Loading polar segments for {id:?} from {:?}...",
             self.connection.path()
         );
 
-        // We use `MIN(...)` because it's possible that for any given DEM ID and angle, there can
-        // be mulitple records. This is because of how DEM rotation is quantised to the resolution
-        // of the grid. It is assumed that each of these duplicates have approximately the same
-        // viewshed segements.
-        let mut statement = self.connection.prepare(
+        let (field, id_value) = match id {
+            ID::DEM(value) => ("dem_id", value),
+            ID::Neighbourhood(value) => ("neighbourhood_id", value),
+        };
+
+        let statement = format!(
             "
-            SELECT MIN(visible_segments) AS visible_segments
+            SELECT visible_segments
             FROM polar_segments
-            WHERE dem_id = ?1
+            WHERE {field} = ?1
             GROUP BY angle_id
             ORDER BY angle_id ASC;
-            ",
-        )?;
-        let rows = statement.query_map([tvs_id], |row| {
+            "
+        );
+
+        let mut prepared = self.connection.prepare(&statement)?;
+        let rows = prepared.query_map([id_value], |row| {
             let blob: Vec<u8> = row.get(0)?;
             Ok(blob)
         })?;
@@ -84,7 +94,24 @@ impl DB {
             segments.push(Self::bytes_to_segments(&row?)?);
         }
 
-        Ok(segments)
+        let dem_id = match id {
+            ID::DEM(dem_id) => *dem_id,
+            ID::Neighbourhood(neighbourhood_id) => self
+                .connection
+                .prepare(
+                    "
+                    SELECT dem_id FROM polar_segments
+                    WHERE neighbourhood_id = ?1
+                    LIMIT 1
+                    ",
+                )?
+                .query_row([neighbourhood_id], |row| {
+                    let dem_id: i64 = row.get(0)?;
+                    Ok(dem_id)
+                })?,
+        };
+
+        Ok((segments, dem_id))
     }
 
     /// Convert blob to `Segment`s.

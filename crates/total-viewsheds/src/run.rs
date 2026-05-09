@@ -43,6 +43,8 @@ pub struct Config {
     pub area_of_interest: geo::Polygon,
     /// Should a database aggregate per thread?
     pub database_per_thread: bool,
+    /// DEM IDs to save viewsheds for.
+    pub viewsheds_to_save: Option<std::collections::HashMap<i64, i64>>,
 }
 
 impl<'compute> Compute<'compute> {
@@ -71,13 +73,6 @@ impl<'compute> Compute<'compute> {
     /// Are we computing viewsheds?
     pub fn is_process_viewsheds(process: &[crate::config::Process]) -> bool {
         Self::is_process_everything(process) || process.contains(&crate::config::Process::Viewsheds)
-    }
-
-    /// Do all computations.
-    pub fn run(&mut self) -> Result<()> {
-        self.run_parallel()?;
-
-        Ok(())
     }
 
     /// Render a heatmap and `.tiff` file of the total surface areas for each point within the computable area of the
@@ -205,6 +200,7 @@ pub mod test {
             dem_metadata: default_metadata(),
             area_of_interest: geo::Polygon::empty(),
             database_per_thread: false,
+            viewsheds_to_save: None,
         }
     }
 

@@ -203,6 +203,7 @@ mod test {
             scale: 5.0,
             max_line_of_sight: 250,
             centre,
+            neighbourhood_size: 0,
         };
 
         assert_eq!(

@@ -36,9 +36,16 @@ impl Worker {
     }
 
     /// `store_bitmap` converts a bitmap into `PolarSegments` and uses its `Engine` to store it
-    pub fn store_bitmap(&self, dem_id: u64, angle: u16, bitmap: &[bool]) {
+    pub fn store_bitmap(
+        &self,
+        dem_id: u64,
+        neighbourhood_id: Option<i64>,
+        angle: u16,
+        bitmap: &[bool],
+    ) {
         self.engine.store_segments(
             dem_id,
+            neighbourhood_id,
             super::segments::PolarSegments::from_bools(angle, bitmap),
         );
     }
@@ -52,7 +59,7 @@ impl Worker {
 /// overhead. This means that any panic or error will end in a corrupted database
 pub fn writer<P: AsRef<std::path::Path>>(
     path: P,
-    recv: std::sync::mpsc::Receiver<(u64, super::segments::PolarSegments)>,
+    recv: std::sync::mpsc::Receiver<(u64, Option<i64>, super::segments::PolarSegments)>,
 ) -> Result<(), rusqlite::Error> {
     let mut conn = rusqlite::Connection::open(path)?;
 
@@ -60,6 +67,7 @@ pub fn writer<P: AsRef<std::path::Path>>(
         "
         CREATE TABLE IF NOT EXISTS polar_segments (
             dem_id INTEGER,
+            neighbourhood_id INTEGER,
             angle_id INTEGER,
             visible_segments BLOB
         )",
@@ -72,10 +80,12 @@ pub fn writer<P: AsRef<std::path::Path>>(
 
     {
         let mut stmt = tx.prepare(
-            "INSERT INTO polar_segments(dem_id, angle_id, visible_segments) VALUES (?1, ?2, ?3)",
+            "INSERT INTO polar_segments(
+               dem_id, neighbourhood_id, angle_id, visible_segments
+            ) VALUES (?1, ?2, ?3, ?4)",
         )?;
 
-        for (tvs_id, segments) in recv {
+        for (dem_id, neighbourhood_id, segments) in recv {
             #[expect(clippy::big_endian_bytes, reason = "it is documented in the format")]
             let vec_bytes = segments
                 .visible_segments
@@ -83,7 +93,12 @@ pub fn writer<P: AsRef<std::path::Path>>(
                 .flat_map(|vector| vector.0.to_be_bytes())
                 .collect::<Vec<_>>();
 
-            let params = (&tvs_id.cast_signed(), &segments.degree, &vec_bytes);
+            let params = (
+                &dem_id.cast_signed(),
+                neighbourhood_id,
+                &segments.degree,
+                &vec_bytes,
+            );
             stmt.execute(params)?;
         }
     }

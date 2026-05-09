@@ -92,7 +92,7 @@ pub fn init_worker<P: AsRef<Path>>(
 impl super::run::Compute<'_> {
     /// `run_parallel` runs the CPU kernel in parallel
     #[expect(clippy::expect_used, reason = "We need to panic on failure")]
-    pub fn run_parallel(&mut self) -> Result<()> {
+    pub fn run(&mut self) -> Result<()> {
         let max_los = usize::try_from(self.dem.max_los_as_points)?;
 
         let elevations = &self.dem.elevations;
