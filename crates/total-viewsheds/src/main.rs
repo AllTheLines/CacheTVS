@@ -133,6 +133,10 @@ fn compute(config: &config::Compute) -> Result<()> {
         std::fs::create_dir_all(&config.output_dir)?;
     }
 
+    if config.angle_subdivisions > 100 || config.angle_subdivisions == 0 {
+        color_eyre::eyre::bail!("Angle subdivisions must be between (0, 100]")
+    }
+
     let mut tile = tile::Tile::load(config)?;
 
     let max_line_of_sight_as_points = tile.width.div_euclid(3);
@@ -157,6 +161,7 @@ fn compute(config: &config::Compute) -> Result<()> {
         max_line_of_sight: max_line_of_sight_as_points,
         centre: dem.centre,
         neighbourhood_size: config.only_save_biggest_viewsheds.unwrap_or(0).into(),
+        angle_subdivisions: config.angle_subdivisions.into(),
     };
 
     let save_viewshed_dem_ids = if config.only_save_biggest_viewsheds.is_some() {
@@ -186,6 +191,7 @@ fn compute(config: &config::Compute) -> Result<()> {
         dem_metadata,
         database_per_thread: config.database_per_thread,
         viewsheds_to_save: save_viewshed_dem_ids,
+        angle_subdivisions: config.angle_subdivisions,
     };
 
     let mut compute = run::Compute::new(compute_config, &mut dem)?;

@@ -61,7 +61,9 @@ pub fn kernel(
     db_worker: &crate::storage::worker::Worker,
     elevation_map: &[i16],
     output: &mut OutputData,
-    angle: f32,
+    // TODO: a `frac` type might be nice for angle + subdivision, but encoding needs considering
+    angle_id: u16,
+    subdivisions: u16,
     config: &crate::run::Config,
 ) {
     #[expect(clippy::expect_used, reason = "We need to panic on failure")]
@@ -95,7 +97,9 @@ pub fn kernel(
         )
     });
 
-    for (line, line_indexes) in lines(elevation_map, max_los, angle.into()) {
+    let theta = f64::from(angle_id) / f64::from(subdivisions);
+
+    for (line, line_indexes) in lines(elevation_map, max_los, theta) {
         for (pov, (&pov_height, &result_dem_id)) in
             izip!(line.iter().take(max_los), line_indexes.iter().take(max_los)).enumerate()
         {
@@ -144,7 +148,7 @@ pub fn kernel(
                     let longest_ptr = longest.get_unchecked_mut(result_tvs_id as usize);
                     *longest_ptr = longest_ptr.max(LineOfSightPacked::new_unchecked(
                         point_longest as u32,
-                        angle as u16,
+                        angle_id,
                     ));
                 };
                 let mut maybe_neighbourhood_id = None;
@@ -152,7 +156,7 @@ pub fn kernel(
                     db_worker.store_bitmap(
                         result_dem_id as u64,
                         maybe_neighbourhood_id,
-                        angle as u16,
+                        angle_id,
                         &point_visibility,
                     );
                 }
@@ -211,6 +215,7 @@ mod test {
             max_line_of_sight: width,
             centre: crate::projection::LonLatCoord((0.0, 0.0).into()),
             neighbourhood_size: 0,
+            angle_subdivisions: 1,
         };
         let config = crate::run::Config {
             dem_metadata: metadata,
@@ -222,14 +227,14 @@ mod test {
             longest: vec![LineOfSightPacked::new(0, 0).unwrap(); 4 * 4],
         };
 
-        cpu_kernel(&db_worker, dem, &mut forward, 0.0, &config);
+        cpu_kernel(&db_worker, dem, &mut forward, 0, 1, &config);
 
         let mut backward = OutputData {
             surfaces: vec![0.0f32; 4 * 4],
             longest: vec![LineOfSightPacked::new(0, 0).unwrap(); 4 * 4],
         };
 
-        cpu_kernel(&db_worker, dem, &mut backward, 180.0, &config);
+        cpu_kernel(&db_worker, dem, &mut backward, 180, 1, &config);
 
         let result = forward
             .surfaces

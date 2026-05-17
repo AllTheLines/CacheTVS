@@ -16,4 +16,6 @@ pub struct MetaData {
     /// The size of the region (in raster points) within which we will find the viewsheds with the
     /// largest surface area. Used for reducing the final size of viewshed data saved to disk.
     pub neighbourhood_size: u32,
+    /// The number of angle subdivisions used
+    pub angle_subdivisions: u32,
 }

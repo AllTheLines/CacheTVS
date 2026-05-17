@@ -204,6 +204,7 @@ mod test {
             max_line_of_sight: 250,
             centre,
             neighbourhood_size: 0,
+            angle_subdivisions: 1,
         };
 
         assert_eq!(
