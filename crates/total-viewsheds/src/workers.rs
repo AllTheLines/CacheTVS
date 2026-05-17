@@ -40,7 +40,8 @@ fn kernel_worker(
             storage_worker,
             elevations,
             &mut output,
-            f32::from(work.angle),
+            work.angle,
+            config.angle_subdivisions.into(),
             config,
         );
         tracing::info!("finished {} in {:?}", work.angle, now.elapsed());
@@ -143,7 +144,7 @@ impl super::run::Compute<'_> {
 
             let handles = worker_handles.expect("unable to spawn workers");
 
-            for angle in 0u16..360u16 {
+            for angle in 0u16..(360u16 * u16::from(config.angle_subdivisions)) {
                 local_send
                     .send(Work { angle })
                     .expect("unable to send work ro workers");

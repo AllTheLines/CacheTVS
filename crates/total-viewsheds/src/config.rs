@@ -146,6 +146,10 @@ pub struct Compute {
     /// perfect square, eg: 4, 9, 16, etc. Requires `--tvs_source_path` argument.
     #[arg(long, value_name = "Square size", value_parser=is_perfect_square)]
     pub only_save_biggest_viewsheds: Option<u16>,
+
+    /// Subdivides 360 degrees into a `angle_subdivisions` number of subdivisions
+    #[arg(long, value_name = "number of angle divisions", default_value = "1")]
+    pub angle_subdivisions: u8,
 }
 
 /// Arguments to the `viewshed` subcommand.
