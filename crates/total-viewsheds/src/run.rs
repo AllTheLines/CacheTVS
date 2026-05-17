@@ -29,7 +29,7 @@ pub struct Config {
     pub output_directory: Option<std::path::PathBuf>,
     /// How to normalise the heatmap data.
     pub heatmap: crate::config::HeatmapNormalisation,
-    /// Refractoin coefficient
+    /// Refraction coefficient
     pub refraction: f32,
     /// Number of threads for computation
     pub thread_count: usize,
@@ -45,6 +45,8 @@ pub struct Config {
     pub database_per_thread: bool,
     /// DEM IDs to save viewsheds for.
     pub viewsheds_to_save: Option<std::collections::HashMap<i64, i64>>,
+    /// Subdivides 360 degrees into a `angle_subdivisions` number of subdivisions
+    pub angle_subdivisions: u8,
 }
 
 impl<'compute> Compute<'compute> {
@@ -201,6 +203,7 @@ pub mod test {
             area_of_interest: geo::Polygon::empty(),
             database_per_thread: false,
             viewsheds_to_save: None,
+            angle_subdivisions: 1,
         }
     }
 
