@@ -148,15 +148,15 @@ impl<'viewshed> Reconstructor<'viewshed> {
         data: &[Vec<crate::storage::segments::Segment>],
     ) -> geo::MultiPolygon {
         let mut viewshed_so_far = geo::MultiPolygon::empty();
-        for (angle, segments) in data.iter().enumerate() {
+        let angle_count = data.len();
+        for (anglish, segments) in data.iter().enumerate() {
             #[expect(
                 clippy::as_conversions,
                 clippy::cast_precision_loss,
-                reason = "The angle will always fit in `f32`"
+                reason = "The angle count should never strain the f32 mantissa"
             )]
-            {
-                self.current_angle = angle as f32;
-            };
+            let (anglish_f32, angle_count_f32) = { (anglish as f32, angle_count as f32) };
+            self.current_angle = (anglish_f32 / angle_count_f32) * 360.0;
             for segment in segments {
                 let opening = u32::from(segment.start());
                 let closing = u32::from(segment.start() + segment.distance());
@@ -431,6 +431,21 @@ mod test {
         "████████████████████████",
     ];
 
+    const PACMAN_VIEWSHED: [&str; 12] = [
+        "████████████████████████",
+        "████████████████████████",
+        "█████▀▀ ▄▄▄▄▄ ▀▀████████",
+        "███▀ ▄█████████▄ ▀██████",
+        "██▀ █████████████ ▀█████",
+        "██ ███████████████ █████",
+        "██ ████████▀ ▄▄▄▄▄▄█████",
+        "██ ▀██████ ▄████████████",
+        "███ ▀█████ █████████████",
+        "████▄ ▀▀██ █████████████",
+        "███████▄▄▄▄█████████████",
+        "████████████████████████",
+    ];
+
     #[test]
     fn viewshed_in_hole() {
         let temp_db = tempfile::NamedTempFile::new().unwrap();
@@ -472,6 +487,21 @@ mod test {
             },
         );
         assert_viewshed(&viewshed, &SUMMIT_VIEWSHED);
+    }
+
+    #[test]
+    fn viewshed_on_summit_with_high_angle_count() {
+        let temp_db = tempfile::NamedTempFile::new().unwrap();
+        let viewshed = crate::output::ascii::make_viewshed(
+            &crate::tests::fixtures::bigger_dem(),
+            geo::Coord { x: 5.0, y: 6.0 },
+            crate::run::Config {
+                dem_metadata: crate::run::test::big_dem_metadata(),
+                angle_subdivisions: 2,
+                ..crate::run::test::default_config(&temp_db)
+            },
+        );
+        assert_viewshed(&viewshed, &PACMAN_VIEWSHED);
     }
 
     #[test]
@@ -544,21 +574,7 @@ mod test {
             },
         );
 
-        let expected = &[
-            "████████████████████████",
-            "████████████████████████",
-            "█████▀▀ ▄▄▄▄▄ ▀▀████████",
-            "███▀ ▄█████████▄ ▀██████",
-            "██▀ █████████████ ▀█████",
-            "██ ███████████████ █████",
-            "██ ████████▀ ▄▄▄▄▄▄█████",
-            "██ ▀██████ ▄████████████",
-            "███ ▀█████ █████████████",
-            "████▄ ▀▀██ █████████████",
-            "███████▄▄▄▄█████████████",
-            "████████████████████████",
-        ];
-        assert_viewshed(&viewshed, expected);
+        assert_viewshed(&viewshed, &PACMAN_VIEWSHED);
     }
 
     #[test]
