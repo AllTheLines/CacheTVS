@@ -133,6 +133,10 @@ fn compute(config: &config::Compute) -> Result<()> {
         std::fs::create_dir_all(&config.output_dir)?;
     }
 
+    // Technically angle_subdivisions must be within 3 subdivisions for the
+    // longest line of sight packing to work, but if you aren't intrerested
+    // in the longest line this works just fine. TODO: @ryan-berger rethink
+    // the type design
     if config.angle_subdivisions > 100 || config.angle_subdivisions == 0 {
         color_eyre::eyre::bail!("Angle subdivisions must be between (0, 100]")
     }
