@@ -497,7 +497,7 @@ mod test {
             geo::Coord { x: 5.0, y: 6.0 },
             crate::run::Config {
                 dem_metadata: crate::run::test::big_dem_metadata(),
-                angle_subdivisions: 2,
+                angle_subdivisions: 4,
                 ..crate::run::test::default_config(&temp_db)
             },
         );
