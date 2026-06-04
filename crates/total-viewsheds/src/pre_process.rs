@@ -9,7 +9,11 @@ pub fn create_biggest_tvs_subgrid(config: &crate::config::Compute) -> Result<Has
     let neighbourhood_size = config
         .only_save_biggest_viewsheds
         .context("Must specify --only-save-biggest-viewsheds")?;
-    let dataset = gdal::Dataset::open(&config.input)?;
+    let tvs_source_path = config
+        .tvs_source_path
+        .clone()
+        .context("Must specify --tvs-source-path")?;
+    let dataset = gdal::Dataset::open(&tvs_source_path)?;
     let hashmap = find_biggest_total_surfaces(&dataset, i64::from(neighbourhood_size))?;
 
     Ok(hashmap)
