@@ -82,7 +82,7 @@ pub struct Compute {
     )]
     pub process: Vec<Process>,
 
-    /// The input DEM file. Currently only `.hgt` files are supported.
+    /// The input DEM file. Can be of any file type supported by GDAL.
     #[arg(value_name = "Path to the DEM file")]
     pub input: std::path::PathBuf,
 
