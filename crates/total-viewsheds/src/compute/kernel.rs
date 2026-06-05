@@ -209,11 +209,11 @@ mod test {
         let dem = &crate::tests::fixtures::bigger_dem();
         let db_worker = crate::storage::worker::Worker::new_noop();
         let width = 4;
-        let metadata = crate::storage::metadata::MetaData {
+        let metadata = tvs_lib::metadata::MetaData {
             width,
             scale: 1.0,
             max_line_of_sight: width,
-            centre: crate::projection::LonLatCoord((0.0, 0.0).into()),
+            centre: tvs_lib::projector::LonLatCoord((0.0, 0.0).into()),
             neighbourhood_size: 0,
             angle_subdivisions: 1,
         };

@@ -1,0 +1,14 @@
+[package]
+name = "tvs-lib"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+color-eyre.workspace = true 
+geo.workspace = true
+proj4rs = { version = "0.1.9", features = ["aeqd"] }
+rstar = "0.12.2"
+serde.workspace = true
+
+[lints]
+workspace = true

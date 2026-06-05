@@ -3,7 +3,7 @@
 use color_eyre::Result;
 
 /// Save an array of `f32`s (total surfaces, longest lines of sight) to a `.tiff` file.
-pub fn save(dem: &crate::dem::DEM, data: &[f32], path: &std::path::PathBuf) -> Result<()> {
+pub fn save(dem: &tvs_lib::dem::DEM, data: &[f32], path: &std::path::PathBuf) -> Result<()> {
     let driver = gdal::DriverManager::get_driver_by_name("GTiff")?;
 
     let mut dataset = driver.create_with_band_type::<f32, _>(

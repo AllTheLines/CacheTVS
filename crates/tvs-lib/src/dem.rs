@@ -12,10 +12,12 @@ use color_eyre::Result;
 ///   * Each integer maps exactly to a point in the DEM data.
 ///   
 /// These coordinates are used by the kernel and tests.
+#[expect(clippy::exhaustive_structs, reason = "This should never change")]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Coordinate(pub geo::Coord);
 
 /// `DEM`
+#[non_exhaustive]
 pub struct DEM {
     /// All the elevation data.
     pub elevations: Vec<i16>,
@@ -30,7 +32,7 @@ pub struct DEM {
     /// The size of each point in meters.
     pub scale: f32,
     /// The geographic location of the centre of the DEM tile.
-    pub centre: crate::projection::LonLatCoord,
+    pub centre: crate::projector::LonLatCoord,
     /// The maximum distance in terms of points to search.
     pub max_los_as_points: u32,
     /// The total number of points that can have full viewsheds calculated for them.
@@ -39,8 +41,12 @@ pub struct DEM {
 
 impl DEM {
     /// `Instantiate`
+    ///
+    /// # Errors
+    /// If width is not divisible by 3
+    #[inline]
     pub fn new(
-        centre_latlon: crate::projection::LonLatCoord,
+        centre_latlon: crate::projector::LonLatCoord,
         width: u32,
         scale: f32,
         max_line_of_sight_as_points: u32,
@@ -77,6 +83,8 @@ impl DEM {
     }
 
     /// Is the DEM ID within the DEM such that a valid viewshed can be made for it?
+    #[inline]
+    #[must_use]
     pub fn is_point_computable(&self, dem_id: u32) -> bool {
         let coord = self.convert_dem_id_to_coord(dem_id).0;
         let lower = f64::from(self.max_los_as_points);
@@ -85,6 +93,8 @@ impl DEM {
     }
 
     /// Convert a DEM 1D index to a 2D coordinate.
+    #[inline]
+    #[must_use]
     pub fn convert_dem_id_to_coord(&self, dem_id: u32) -> Coordinate {
         let x = f64::from(dem_id.rem_euclid(self.width));
         let y = f64::from(dem_id.div_euclid(self.width));
@@ -92,6 +102,8 @@ impl DEM {
     }
 
     /// Convert a DEM coordinate to a DEM ID.
+    #[inline]
+    #[must_use]
     pub fn dem_coord_to_id(&self, coord: Coordinate) -> u32 {
         let x = coord.0.x.round();
         let yish = coord.0.y.round() * f64::from(self.width);
@@ -113,6 +125,7 @@ impl DEM {
     reason = "We don't want to output GBs of data!"
 )]
 impl std::fmt::Debug for DEM {
+    #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DEM")
             .field("width", &self.width)

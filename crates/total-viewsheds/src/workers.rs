@@ -77,7 +77,7 @@ fn compilation_worker(
 /// a noop worker
 pub fn init_worker<P: AsRef<Path>>(
     path: P,
-    meta_data: &crate::storage::metadata::MetaData,
+    meta_data: &tvs_lib::metadata::MetaData,
     is_db_worker: bool,
 ) -> Result<crate::storage::worker::Worker> {
     if !is_db_worker {

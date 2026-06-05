@@ -1,7 +1,6 @@
 //! Reconstruct _individual_ viewsheds, not total viewsheds.
 
 use color_eyre::eyre::Result;
-use geo::BooleanOps as _;
 
 /// A viewshed-based coordinate is projected to a metric system where the anchor is the viewshed's
 /// point of view. The other option would be a metric projection with an anchor in the DEM centre,
@@ -13,22 +12,22 @@ pub struct Coordinate(pub geo::Coord);
 /// `Viewshed`
 pub struct Viewshed<'viewshed> {
     /// The DEM used to compute the final data.
-    pub dem: &'viewshed crate::dem::DEM,
+    pub dem: &'viewshed tvs_lib::dem::DEM,
     /// Coordinate of the observer for the viewshed we want to reconstruct.
-    pub pov_coord: crate::dem::Coordinate,
+    pub pov_coord: tvs_lib::dem::Coordinate,
 }
 
 impl Viewshed<'_> {
     /// Reconstruct a viewshed.
     pub fn reconstruct(
         db_path: std::path::PathBuf,
-        clicked_lonlat: crate::projection::LonLatCoord,
-    ) -> Result<(crate::dem::Coordinate, geo::MultiPolygon)> {
+        clicked_lonlat: tvs_lib::projector::LonLatCoord,
+    ) -> Result<(tvs_lib::dem::Coordinate, geo::MultiPolygon)> {
         let db = crate::storage::db::DB::new(db_path)?;
         let metadata = db.load_metadata()?;
         tracing::debug!("Using metadata: {:?}", metadata);
 
-        let dem = crate::dem::DEM::new(
+        let dem = tvs_lib::dem::DEM::new(
             metadata.centre,
             metadata.width,
             metadata.scale,
@@ -36,7 +35,7 @@ impl Viewshed<'_> {
         )?;
 
         let dem_coord =
-            crate::projection::Converter::lonlat_to_dem_coord(&metadata, clicked_lonlat)?;
+            tvs_lib::projector::Convert::lonlat_to_dem_coord(&metadata, clicked_lonlat)?;
         let dem_id = dem.dem_coord_to_id(dem_coord);
 
         let (segments, pov_dem_coord) = match metadata.neighbourhood_size {
@@ -60,7 +59,7 @@ impl Viewshed<'_> {
                     clippy::cast_precision_loss,
                     reason = "I assume that we never hit the 52 bit mantissa limit"
                 )]
-                let coordinate = crate::dem::Coordinate(
+                let coordinate = tvs_lib::dem::Coordinate(
                     geo::coord! {
                         x: x as f64,
                         y: y as f64,
@@ -92,15 +91,13 @@ impl Viewshed<'_> {
         viewshed_coord: Coordinate,
     ) -> Result<geo::Coord> {
         let scale = f64::from(self.dem.scale);
-        let origin = crate::projection::Converter {
-            base: self.dem.centre,
-        }
-        .to_degrees((self.pov_coord.0.x, self.pov_coord.0.y).into())?;
+        let origin = tvs_lib::projector::Convert::new(self.dem.centre)
+            .to_degrees((self.pov_coord.0.x, self.pov_coord.0.y).into())?;
         let flipped = Coordinate(geo::Coord {
             x: viewshed_coord.0.x,
             y: -viewshed_coord.0.y,
         });
-        let projected_coord = crate::projection::Converter::change_metric_origin(
+        let projected_coord = tvs_lib::projector::Convert::change_metric_origin(
             origin,
             // The path back to (0,0) is exactly the opposite of the viewshed's point of view.
             -self.pov_coord.0 * scale,
@@ -161,7 +158,7 @@ impl<'viewshed> Reconstructor<'viewshed> {
                 let opening = u32::from(segment.start());
                 let closing = u32::from(segment.start() + segment.distance());
                 let polygon = self.make_visible_polygon(opening, closing);
-                viewshed_so_far = viewshed_so_far.union(&polygon);
+                viewshed_so_far = geo::BooleanOps::union(&viewshed_so_far, &polygon);
             }
         }
 
@@ -229,15 +226,13 @@ impl<'viewshed> Reconstructor<'viewshed> {
     pub fn save(
         mut viewshed: geo::MultiPolygon,
         output_directory: &std::path::Path,
-        viewshed_latlon: crate::projection::LonLatCoord,
+        viewshed_latlon: tvs_lib::projector::LonLatCoord,
     ) -> Result<()> {
         let filename = format!("{}-{}.json", viewshed_latlon.0.x, viewshed_latlon.0.y);
         let directory = output_directory.join("viewsheds");
         std::fs::create_dir_all(&directory)?;
         let path = directory.join(filename);
-        let projector = crate::projection::Converter {
-            base: viewshed_latlon,
-        };
+        let projector = tvs_lib::projector::Convert::new(viewshed_latlon);
 
         for point in viewshed.iter_mut() {
             point.exterior_mut(|line| {
@@ -302,7 +297,7 @@ mod test {
         let dem = crate::run::test::make_dem(&crate::tests::fixtures::single_peak_dem());
         let viewshed = Viewshed {
             dem: &dem,
-            pov_coord: crate::dem::Coordinate(setup.pov),
+            pov_coord: tvs_lib::dem::Coordinate(setup.pov),
         };
         let viewsheder = builder(&viewshed, setup.angle);
         let polygon = viewsheder.make_visible_polygon(setup.opening_index, setup.closing_index);
@@ -526,7 +521,7 @@ mod test {
 
         let temp_db_for_viewsheds = tempfile::NamedTempFile::new().unwrap();
         let config = crate::run::Config {
-            dem_metadata: crate::storage::metadata::MetaData {
+            dem_metadata: tvs_lib::metadata::MetaData {
                 neighbourhood_size: neighbourhood_size.try_into().unwrap(),
                 ..crate::run::test::big_dem_metadata()
             },

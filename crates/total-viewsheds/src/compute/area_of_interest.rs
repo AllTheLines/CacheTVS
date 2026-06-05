@@ -21,15 +21,15 @@ impl Pruner {
     /// Convert user-provided lon/lat coordinates to a polygon.
     pub fn lonlat_coords_to_polygon(
         points: Vec<(f32, f32)>,
-        metadata: &crate::storage::metadata::MetaData,
+        metadata: &tvs_lib::metadata::MetaData,
     ) -> Result<geo::Polygon> {
         let mut vertices = Vec::new();
 
         for intrest_point in points {
-            let lonlat = crate::projection::LonLatCoord(
+            let lonlat = tvs_lib::projector::LonLatCoord(
                 geo::coord!(x: intrest_point.0.into(), y: intrest_point.1.into()),
             );
-            let dem_coord = crate::projection::Converter::lonlat_to_dem_coord(metadata, lonlat)?;
+            let dem_coord = tvs_lib::projector::Convert::lonlat_to_dem_coord(metadata, lonlat)?;
             let dem_point = geo::point!(x: dem_coord.0.x, y: dem_coord.0.y);
             vertices.push(dem_point);
         }
@@ -52,10 +52,10 @@ impl Pruner {
         reason = "We're only dealing with a max of the DEM's width"
     )]
     /// Convert a DEM 1D index to a 2D coordinate.
-    pub fn convert_dem_id_to_coord(&self, dem_id: i64) -> crate::dem::Coordinate {
+    pub fn convert_dem_id_to_coord(&self, dem_id: i64) -> tvs_lib::dem::Coordinate {
         let x = dem_id.rem_euclid(self.width.into()) as f64;
         let y = dem_id.div_euclid(self.width.into()) as f64;
-        crate::dem::Coordinate(geo::coord! {x: x, y: y})
+        tvs_lib::dem::Coordinate(geo::coord! {x: x, y: y})
     }
 }
 
@@ -65,10 +65,10 @@ mod tests {
 
     fn make_pruner() -> Pruner {
         let width = 300;
-        let metadata = crate::storage::metadata::MetaData {
+        let metadata = tvs_lib::metadata::MetaData {
             width,
             scale: 100.0,
-            centre: crate::projection::LonLatCoord((-3.1791, 51.4816).into()),
+            centre: tvs_lib::projector::LonLatCoord((-3.1791, 51.4816).into()),
             ..Default::default()
         };
         let cardiff_10km = vec![
