@@ -26,7 +26,7 @@ impl DB {
     }
 
     /// Save the metadata.
-    pub fn save_metadata(&self, metadata: &super::metadata::MetaData) -> Result<()> {
+    pub fn save_metadata(&self, metadata: &tvs_lib::metadata::MetaData) -> Result<()> {
         tracing::debug!("Saving metadata to {:?}...", self.connection.path());
 
         self.connection.execute(
@@ -49,13 +49,13 @@ impl DB {
     }
 
     /// Load the metadata.
-    pub fn load_metadata(&self) -> Result<super::metadata::MetaData> {
+    pub fn load_metadata(&self) -> Result<tvs_lib::metadata::MetaData> {
         tracing::debug!("Loading metadata from {:?}...", self.connection.path());
 
         let metadata_string: String =
             self.connection
                 .query_row("SELECT json FROM metadata", [], |row| row.get(0))?;
-        let metadata: super::metadata::MetaData = serde_json::from_str(&metadata_string)?;
+        let metadata: tvs_lib::metadata::MetaData = serde_json::from_str(&metadata_string)?;
         tracing::info!("Loaded metadata: {metadata:?}");
 
         Ok(metadata)

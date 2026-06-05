@@ -30,7 +30,6 @@ use std::mem;
 use tracing_subscriber::{Layer as _, layer::SubscriberExt as _, util::SubscriberInitExt as _};
 
 mod config;
-mod dem;
 mod dump_usage;
 mod los_pack;
 mod post_process;
@@ -65,7 +64,6 @@ mod compute {
 mod storage {
     pub mod db;
     pub mod engine;
-    pub mod metadata;
     pub mod segments;
     pub mod worker;
 }
@@ -79,8 +77,6 @@ mod output {
     pub mod viewshed;
 }
 
-mod projection;
-
 fn main() -> Result<()> {
     color_eyre::install()?;
     setup_logging()?;
@@ -91,7 +87,7 @@ fn main() -> Result<()> {
         config::Commands::Compute(compute_config) => compute(compute_config)?,
         config::Commands::Viewshed(viewshed_config) => {
             for coordinate in &viewshed_config.coordinates {
-                let geo_coord = projection::LonLatCoord(
+                let geo_coord = tvs_lib::projector::LonLatCoord(
                     geo::coord! {x: f64::from(coordinate.0), y: f64::from(coordinate.1)},
                 );
 
@@ -145,7 +141,7 @@ fn compute(config: &config::Compute) -> Result<()> {
 
     let max_line_of_sight_as_points = tile.width.div_euclid(3);
 
-    let mut dem = crate::dem::DEM::new(
+    let mut dem = tvs_lib::dem::DEM::new(
         tile.centre,
         tile.width,
         tile.scale,
@@ -159,7 +155,7 @@ fn compute(config: &config::Compute) -> Result<()> {
     // Free up RAM
     drop(tile);
 
-    let dem_metadata = crate::storage::metadata::MetaData {
+    let dem_metadata = tvs_lib::metadata::MetaData {
         width: dem.width,
         scale: dem.scale,
         max_line_of_sight: max_line_of_sight_as_points,

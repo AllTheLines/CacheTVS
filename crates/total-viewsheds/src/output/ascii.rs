@@ -16,7 +16,7 @@ pub fn make_viewshed(
         x: viewshed_pov.x - dem_half_width,
         y: -(viewshed_pov.y - dem_half_width),
     };
-    let coord_lonlat = crate::projection::Converter { base: dem.centre }
+    let coord_lonlat = tvs_lib::projector::Convert::new(dem.centre)
         .to_degrees(viewshed_pov_metric)
         .unwrap();
 

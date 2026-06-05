@@ -15,7 +15,7 @@ pub struct Tile {
     /// All the elevation data.
     pub data: Vec<i16>,
     /// The lat/lon coordinates of the centre of the tile.
-    pub centre: crate::projection::LonLatCoord,
+    pub centre: tvs_lib::projector::LonLatCoord,
 }
 
 impl Tile {
@@ -126,7 +126,9 @@ impl Tile {
     }
 
     /// Get the lat/lon centre of the tile by querying the projection's definition.
-    fn get_centre_by_projection(dataset: &gdal::Dataset) -> Result<crate::projection::LonLatCoord> {
+    fn get_centre_by_projection(
+        dataset: &gdal::Dataset,
+    ) -> Result<tvs_lib::projector::LonLatCoord> {
         const ALLOWED_DEVIATION: f64 = 0.001; // 1 milimetre
         let geometric_centre = Self::get_metric_centre(dataset)?;
         if geometric_centre.x.abs() > ALLOWED_DEVIATION
@@ -155,7 +157,7 @@ impl Tile {
             .and_then(|value| value.parse::<f64>().ok())
             .context("Couldn't find `lon_0` in projection defintion")?;
 
-        Ok(crate::projection::LonLatCoord(
+        Ok(tvs_lib::projector::LonLatCoord(
             geo::coord! { x: lon_0, y: lat_0 },
         ))
     }
@@ -174,7 +176,7 @@ mod test {
         let tile = Tile::load(&config).unwrap();
         assert_eq!(
             tile.centre,
-            crate::projection::LonLatCoord(geo::Coord {
+            tvs_lib::projector::LonLatCoord(geo::Coord {
                 x: -0.1278,
                 y: 51.5074
             })

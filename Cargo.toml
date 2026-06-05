@@ -2,7 +2,14 @@
 resolver = "2"
 members = [
     "crates/total-viewsheds",
+    "crates/tvs-lib",
 ]
+
+[workspace.dependencies]
+color-eyre = "0.6.5"
+geo = "0.31.0"
+serde = "1.0.219"
+serde_json = "1.0.143"
 
 # Canonical lints for whole crate
 #

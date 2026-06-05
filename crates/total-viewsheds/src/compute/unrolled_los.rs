@@ -17,7 +17,7 @@ fn generate_distances(max_los: usize, refraction: f32, scale: f32) -> (Vec<f32>,
         .map(|step| {
             let distance = (step as f32) * scale;
             let adjustment =
-                (distance * distance * adjusted_refraction) / crate::projection::EARTH_DIAMETER;
+                (distance * distance * adjusted_refraction) / tvs_lib::projector::EARTH_DIAMETER;
 
             (distance, adjustment)
         })

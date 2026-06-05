@@ -11,7 +11,7 @@ where
     /// User configuration.
     pub config: Config,
     /// The Digital Elevation Model that we're computing.
-    pub dem: &'compute mut crate::dem::DEM,
+    pub dem: &'compute mut tvs_lib::dem::DEM,
     /// Keeps track of the cumulative surfaces from every angle.
     pub total_surfaces: Vec<f32>,
     /// Keeps track of the longest lines of sight.
@@ -38,7 +38,7 @@ pub struct Config {
     /// Where to store the viewshed
     pub viewsheds_db_path: PathBuf,
     /// Metadata about the DEM and compute run.
-    pub dem_metadata: crate::storage::metadata::MetaData,
+    pub dem_metadata: tvs_lib::metadata::MetaData,
     /// Polygon for Area of Interest
     pub area_of_interest: geo::Polygon,
     /// Should a database aggregate per thread?
@@ -51,7 +51,7 @@ pub struct Config {
 
 impl<'compute> Compute<'compute> {
     /// Instantiate.
-    pub fn new(config: Config, dem: &'compute mut crate::dem::DEM) -> Result<Self> {
+    pub fn new(config: Config, dem: &'compute mut tvs_lib::dem::DEM) -> Result<Self> {
         if Self::is_process_viewsheds(&config.process) && !cfg!(any(test, feature = "ring_data")) {
             color_eyre::eyre::bail!(
                 "Viewshed storage is only supported with the ring_data feature, \
@@ -160,10 +160,10 @@ pub mod test {
     use super::*;
     use googletest::prelude::*;
 
-    pub fn make_dem(elevations: &[i16]) -> crate::dem::DEM {
+    pub fn make_dem(elevations: &[i16]) -> tvs_lib::dem::DEM {
         let width = elevations.len().isqrt() as u32;
-        let mut dem = crate::dem::DEM::new(
-            crate::projection::LonLatCoord((33.33, 33.33).into()),
+        let mut dem = tvs_lib::dem::DEM::new(
+            tvs_lib::projector::LonLatCoord((33.33, 33.33).into()),
             width,
             1.0,
             width / 3,
@@ -173,18 +173,18 @@ pub mod test {
         dem
     }
 
-    pub fn default_metadata() -> crate::storage::metadata::MetaData {
-        crate::storage::metadata::MetaData {
+    pub fn default_metadata() -> tvs_lib::metadata::MetaData {
+        tvs_lib::metadata::MetaData {
             scale: 1.0,
             ..Default::default()
         }
     }
 
-    pub fn big_dem_metadata() -> crate::storage::metadata::MetaData {
-        crate::storage::metadata::MetaData {
+    pub fn big_dem_metadata() -> tvs_lib::metadata::MetaData {
+        tvs_lib::metadata::MetaData {
             width: 12,
             max_line_of_sight: 4,
-            centre: crate::projection::LonLatCoord((33.33, 33.33).into()),
+            centre: tvs_lib::projector::LonLatCoord((33.33, 33.33).into()),
             ..crate::run::test::default_metadata()
         }
     }
@@ -207,7 +207,7 @@ pub mod test {
         }
     }
 
-    pub fn compute(dem: &mut crate::dem::DEM, config: Config) -> Compute<'_> {
+    pub fn compute(dem: &mut tvs_lib::dem::DEM, config: Config) -> Compute<'_> {
         let mut compute = Compute::new(config, dem).unwrap();
         compute.run().unwrap();
         compute
@@ -301,7 +301,7 @@ pub mod test {
         let compute_very_refraction = compute(
             &mut dem_for_very_refraction,
             super::Config {
-                refraction: -crate::projection::EARTH_DIAMETER,
+                refraction: -tvs_lib::projector::EARTH_DIAMETER,
                 dem_metadata: crate::run::test::big_dem_metadata(),
                 ..default_config(&temp_db_for_very_refraction)
             },
@@ -325,7 +325,7 @@ pub mod test {
         let compute_small_scale = compute(
             &mut dem_for_small_scale,
             super::Config {
-                dem_metadata: crate::storage::metadata::MetaData {
+                dem_metadata: tvs_lib::metadata::MetaData {
                     scale: 0.01,
                     ..crate::run::test::big_dem_metadata()
                 },
@@ -348,7 +348,7 @@ pub mod test {
         let compute_big_scale = compute(
             &mut dem_for_big_scale,
             super::Config {
-                dem_metadata: crate::storage::metadata::MetaData {
+                dem_metadata: tvs_lib::metadata::MetaData {
                     scale: 100.0,
                     ..crate::run::test::big_dem_metadata()
                 },
