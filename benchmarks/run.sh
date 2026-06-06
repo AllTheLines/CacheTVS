@@ -30,10 +30,10 @@ rm $sqlite_db_path || true
 # Do the calculations
 time cargo run --features ring_data --release -- \
 	compute "$PROJECT_ROOT/benchmarks/cardiff.tiff" \
-	--rings-per-km 3 \
 	--process all \
 	--viewsheds-db-path $sqlite_db_path \
-	--thread-count 1
+	--thread-count 1 \
+  --angle-subdivisions 1
 
 viewshed_file="output/viewsheds/-3.122999906539917-51.48979949951172.json"
 rm $viewshed_file || true

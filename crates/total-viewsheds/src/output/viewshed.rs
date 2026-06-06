@@ -74,12 +74,15 @@ impl Viewshed<'_> {
             pov_dem_coord
         );
 
+        let start = std::time::Instant::now();
         let viewshed = Viewshed {
             dem: &dem,
             pov_coord: pov_dem_coord,
         };
         let mut reconstructor = Reconstructor::new(&viewshed, 0.0)?;
         let polygon = reconstructor.parse_polar_segments(&segments);
+
+        tracing::debug!("Viewshed reconstructed in {:?}.", start.elapsed());
 
         Ok((pov_dem_coord, polygon))
     }
@@ -144,8 +147,8 @@ impl<'viewshed> Reconstructor<'viewshed> {
         &mut self,
         data: &[Vec<crate::storage::segments::Segment>],
     ) -> geo::MultiPolygon {
-        let mut viewshed_so_far = geo::MultiPolygon::empty();
         let angle_count = data.len();
+        let mut polygons = Vec::new();
         for (anglish, segments) in data.iter().enumerate() {
             #[expect(
                 clippy::as_conversions,
@@ -158,11 +161,11 @@ impl<'viewshed> Reconstructor<'viewshed> {
                 let opening = u32::from(segment.start());
                 let closing = u32::from(segment.start() + segment.distance());
                 let polygon = self.make_visible_polygon(opening, closing);
-                viewshed_so_far = geo::BooleanOps::union(&viewshed_so_far, &polygon);
+                polygons.push(polygon);
             }
         }
 
-        viewshed_so_far
+        geo::unary_union(polygons.iter())
     }
 
     /// Convert an index along a line of sight into a coordinate.
