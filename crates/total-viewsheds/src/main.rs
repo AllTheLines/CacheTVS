@@ -74,7 +74,13 @@ mod output {
     pub mod bresenham;
     pub mod png;
     pub mod tiff;
-    pub mod viewshed;
+
+    /// Load, parse and reconstruct euclidean polygon viewsheds from their raw polar segments.
+    pub mod viewsheds {
+        pub mod join;
+        pub mod viewshed;
+        pub mod visible_polygon;
+    }
 }
 
 fn main() -> Result<()> {
@@ -91,11 +97,11 @@ fn main() -> Result<()> {
                     geo::coord! {x: f64::from(coordinate.0), y: f64::from(coordinate.1)},
                 );
 
-                let (_, viewshed) = crate::output::viewshed::Viewshed::reconstruct(
+                let (_, viewshed) = crate::output::viewsheds::viewshed::Viewshed::reconstruct(
                     viewshed_config.db_path.clone(),
                     geo_coord,
                 )?;
-                crate::output::viewshed::Reconstructor::save(
+                crate::output::viewsheds::viewshed::Viewshed::save(
                     viewshed,
                     &viewshed_config.output_dir,
                     geo_coord,
