@@ -3,7 +3,7 @@
 #![cfg(test)]
 #![expect(clippy::indexing_slicing, reason = "This code is mostly for tests")]
 
-use crate::output::viewshed::Viewshed;
+use crate::output::viewsheds::viewshed::Viewshed;
 
 pub fn make_viewshed(
     elevations: &[i16],
@@ -23,7 +23,7 @@ pub fn make_viewshed(
     crate::run::test::compute(&mut dem, config.clone());
     let (pov_coord, mut viewshed) =
         Viewshed::reconstruct(config.viewsheds_db_path, coord_lonlat).unwrap();
-    let viewsheder = crate::output::viewshed::Viewshed {
+    let viewsheder = crate::output::viewsheds::viewshed::Viewshed {
         dem: &dem,
         pov_coord,
     };
@@ -43,9 +43,9 @@ pub fn make_viewshed(
             let mut maybe_from = None;
             for coordinate in line.coords_mut() {
                 let projected = viewsheder
-                    .convert_viewshed_coord_to_dem_coord(crate::output::viewshed::Coordinate(
-                        *coordinate,
-                    ))
+                    .convert_viewshed_coord_to_dem_coord(
+                        crate::output::viewsheds::viewshed::Coordinate(*coordinate),
+                    )
                     .unwrap();
                 if maybe_from.is_none() {
                     maybe_from = Some(projected);

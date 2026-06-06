@@ -1,4 +1,4 @@
-//! Reconstruct _individual_ viewsheds, not total viewsheds.
+//! A viewshed is a (multi)polygon representing all the visibile terrain visible from a given point.
 
 use color_eyre::eyre::Result;
 
@@ -21,7 +21,7 @@ impl Viewshed<'_> {
     /// Reconstruct a viewshed.
     pub fn reconstruct(
         db_path: std::path::PathBuf,
-        clicked_lonlat: tvs_lib::projector::LonLatCoord,
+        requested_lonlat: tvs_lib::projector::LonLatCoord,
     ) -> Result<(tvs_lib::dem::Coordinate, geo::MultiPolygon)> {
         let db = crate::storage::db::DB::new(db_path)?;
         let metadata = db.load_metadata()?;
@@ -35,7 +35,7 @@ impl Viewshed<'_> {
         )?;
 
         let dem_coord =
-            tvs_lib::projector::Convert::lonlat_to_dem_coord(&metadata, clicked_lonlat)?;
+            tvs_lib::projector::Convert::lonlat_to_dem_coord(&metadata, requested_lonlat)?;
         let dem_id = dem.dem_coord_to_id(dem_coord);
 
         let (segments, pov_dem_coord) = match metadata.neighbourhood_size {
@@ -79,162 +79,31 @@ impl Viewshed<'_> {
             dem: &dem,
             pov_coord: pov_dem_coord,
         };
-        let mut reconstructor = Reconstructor::new(&viewshed, 0.0)?;
-        let polygon = reconstructor.parse_polar_segments(&segments);
+
+        let pov_id = viewshed.dem.dem_coord_to_id(viewshed.pov_coord);
+        if !viewshed.dem.is_point_computable(pov_id) {
+            color_eyre::eyre::bail!("Point of view ({:?}) is not calculable", viewshed.pov_coord);
+        }
+
+        let multi_polygon = super::visible_polygon::VisiblePolygon::parse_polar_segments(
+            &segments,
+            viewshed.dem.scale,
+        );
 
         tracing::debug!("Viewshed reconstructed in {:?}.", start.elapsed());
 
-        Ok((pov_dem_coord, polygon))
+        Ok((pov_dem_coord, multi_polygon))
     }
 
-    /// Convert from the viewshed projection to DEM coordinates.
-    #[cfg(test)]
-    pub fn convert_viewshed_coord_to_dem_coord(
-        &self,
-        viewshed_coord: Coordinate,
-    ) -> Result<geo::Coord> {
-        let scale = f64::from(self.dem.scale);
-        let origin = tvs_lib::projector::Convert::new(self.dem.centre)
-            .to_degrees((self.pov_coord.0.x, self.pov_coord.0.y).into())?;
-        let flipped = Coordinate(geo::Coord {
-            x: viewshed_coord.0.x,
-            y: -viewshed_coord.0.y,
-        });
-        let projected_coord = tvs_lib::projector::Convert::change_metric_origin(
-            origin,
-            // The path back to (0,0) is exactly the opposite of the viewshed's point of view.
-            -self.pov_coord.0 * scale,
-            flipped.0 * scale,
-        )?;
-        Ok(projected_coord / scale)
-    }
-}
-
-/// `Reconstructor`
-// TODO: Find a way to make this part of [`Viewshed`].
-pub struct Reconstructor<'viewshed> {
-    /// Data for the entire viewshed.
-    viewshed: &'viewshed Viewshed<'viewshed>,
-    /// The current sector angle
-    current_angle: f32,
-}
-
-impl<'viewshed> Reconstructor<'viewshed> {
-    /// Instantiate the reconstructor for a single angle.
-    ///
-    /// The reason we only reconstruct for a single angle is that the sector data (for the angle)
-    /// is most useful exposed as an iterator. And it's not so easy with lifetimes to keep around
-    /// the raw data and an iterator for each angle.
-    fn new(viewshed: &'viewshed Viewshed<'viewshed>, angle: f32) -> Result<Self> {
-        let pov_id = viewshed.dem.dem_coord_to_id(viewshed.pov_coord);
-        let reconstructor = Self {
-            viewshed,
-            current_angle: angle,
-        };
-
-        if !viewshed.dem.is_point_computable(pov_id) {
-            color_eyre::eyre::bail!(
-                "Point of view ({:?}) is not calculable",
-                reconstructor.viewshed.pov_coord
-            );
-        }
-
-        Ok(reconstructor)
-    }
-
-    /// Convert polar segements to `GeoJson`.
-    pub fn parse_polar_segments(
-        &mut self,
-        data: &[Vec<crate::storage::segments::Segment>],
-    ) -> geo::MultiPolygon {
-        let angle_count = data.len();
-        let mut polygons = Vec::new();
-        for (anglish, segments) in data.iter().enumerate() {
-            #[expect(
-                clippy::as_conversions,
-                clippy::cast_precision_loss,
-                reason = "The angle count should never strain the f32 mantissa"
-            )]
-            let (anglish_f32, angle_count_f32) = { (anglish as f32, angle_count as f32) };
-            self.current_angle = (anglish_f32 / angle_count_f32) * 360.0;
-            for segment in segments {
-                let opening = u32::from(segment.start());
-                let closing = u32::from(segment.start() + segment.distance());
-                let polygon = self.make_visible_polygon(opening, closing);
-                polygons.push(polygon);
-            }
-        }
-
-        geo::unary_union(polygons.iter())
-    }
-
-    /// Convert an index along a line of sight into a coordinate.
-    fn index_to_coordinate(&self, index: u32) -> Coordinate {
-        let radians = self.current_angle.to_radians();
-        let distance = f64::from(index);
-
-        Coordinate(geo::coord! {
-            x: distance * f64::from(radians.cos()),
-            y: distance * f64::from(radians.sin())
-        })
-    }
-
-    /// Rotate a point about the centre of the viewshed.
     #[expect(
-        clippy::suboptimal_flops,
-        reason = "I think readability is more important?"
-    )]
-    fn rotate_by(point: Coordinate, angle: f64) -> geo::Coord {
-        let dx = point.0.x;
-        let dy = point.0.y;
-        let cos = angle.to_radians().cos();
-        let sin = angle.to_radians().sin();
-        geo::coord! {
-            x: dx * cos - dy * sin,
-            y: dx * sin + dy * cos
-        }
-    }
-
-    /// Make a single polygon representing a visible region of the planet.
-    fn make_visible_polygon(&self, opening_index: u32, closing_index: u32) -> geo::Polygon {
-        let opening_coord = self.index_to_coordinate(opening_index);
-        let closing_coord = self.index_to_coordinate(closing_index);
-
-        let spread = 0.5001f64;
-        let bottom_left = Self::rotate_by(opening_coord, spread);
-        let bottom_right = Self::rotate_by(opening_coord, -spread);
-        let top_left = Self::rotate_by(closing_coord, spread);
-        let top_right = Self::rotate_by(closing_coord, -spread);
-
-        let scale = f64::from(self.viewshed.dem.scale);
-
-        geo::Polygon::new(
-            geo::LineString(vec![
-                bottom_left * scale,
-                bottom_right * scale,
-                top_right * scale,
-                top_left * scale,
-                bottom_left * scale,
-            ]),
-            vec![],
-        )
-    }
-
-    /// Save the viewshed to disk.
-    #[expect(
-        clippy::panic_in_result_fn,
         clippy::panic,
-        reason = "The closures expects () so I don't think there's any other way?"
+        reason = "The closures expect () so I don't think there's any other way?"
     )]
-    pub fn save(
+    /// Convert the local metric coordinates of the viewshed to WGS84 lon/lat coordinates.
+    fn convert_viewshed_coords_to_lonlat(
         mut viewshed: geo::MultiPolygon,
-        output_directory: &std::path::Path,
         viewshed_latlon: tvs_lib::projector::LonLatCoord,
-    ) -> Result<()> {
-        let filename = format!("{}-{}.json", viewshed_latlon.0.x, viewshed_latlon.0.y);
-        let directory = output_directory.join("viewsheds");
-        std::fs::create_dir_all(&directory)?;
-        let path = directory.join(filename);
+    ) -> geo::MultiPolygon {
         let projector = tvs_lib::projector::Convert::new(viewshed_latlon);
 
         for point in viewshed.iter_mut() {
@@ -272,7 +141,23 @@ impl<'viewshed> Reconstructor<'viewshed> {
                 }
             });
         }
-        let json = geojson::GeoJson::from(&viewshed).to_string();
+
+        viewshed
+    }
+
+    /// Save the viewshed to disk.
+    pub fn save(
+        viewshed: geo::MultiPolygon,
+        output_directory: &std::path::Path,
+        viewshed_latlon: tvs_lib::projector::LonLatCoord,
+    ) -> Result<()> {
+        let filename = format!("{}-{}.json", viewshed_latlon.0.x, viewshed_latlon.0.y);
+        let directory = output_directory.join("viewsheds");
+        std::fs::create_dir_all(&directory)?;
+        let path = directory.join(filename);
+
+        let viewshed_lonlat = Self::convert_viewshed_coords_to_lonlat(viewshed, viewshed_latlon);
+        let json = geojson::GeoJson::from(&viewshed_lonlat).to_string();
         std::fs::write(path, json)?;
 
         Ok(())
@@ -280,139 +165,32 @@ impl<'viewshed> Reconstructor<'viewshed> {
 }
 
 #[cfg(test)]
+impl Viewshed<'_> {
+    /// Convert from the viewshed projection to DEM coordinates.
+    pub fn convert_viewshed_coord_to_dem_coord(
+        &self,
+        viewshed_coord: Coordinate,
+    ) -> Result<geo::Coord> {
+        let scale = f64::from(self.dem.scale);
+        let origin = tvs_lib::projector::Convert::new(self.dem.centre)
+            .to_degrees((self.pov_coord.0.x, self.pov_coord.0.y).into())?;
+        let flipped = Coordinate(geo::Coord {
+            x: viewshed_coord.0.x,
+            y: -viewshed_coord.0.y,
+        });
+        let projected_coord = tvs_lib::projector::Convert::change_metric_origin(
+            origin,
+            // The path back to (0,0) is exactly the opposite of the viewshed's point of view.
+            -self.pov_coord.0 * scale,
+            flipped.0 * scale,
+        )?;
+        Ok(projected_coord / scale)
+    }
+}
+
+#[cfg(test)]
 mod test {
-    use super::*;
     use crate::output::ascii::assert_viewshed;
-
-    fn builder<'viewshed>(viewshed: &'viewshed Viewshed, angle: f32) -> Reconstructor<'viewshed> {
-        Reconstructor::new(viewshed, angle).unwrap()
-    }
-
-    #[derive(Debug)]
-    struct VisiblePolygonFor {
-        pov: geo::Coord,
-        angle: f32,
-        opening_index: u32,
-        closing_index: u32,
-    }
-
-    fn make_visible_polygon_for(setup: &VisiblePolygonFor) -> Vec<geo::Coord> {
-        let dem = crate::run::test::make_dem(&crate::tests::fixtures::single_peak_dem());
-        let viewshed = Viewshed {
-            dem: &dem,
-            pov_coord: tvs_lib::dem::Coordinate(setup.pov),
-        };
-        let viewsheder = builder(&viewshed, setup.angle);
-        let polygon = viewsheder.make_visible_polygon(setup.opening_index, setup.closing_index);
-
-        let mut polygon_as_dem_coords = Vec::new();
-        for coord in &polygon.exterior().0 {
-            let converted_coord = viewsheder
-                .viewshed
-                .convert_viewshed_coord_to_dem_coord(Coordinate(*coord))
-                .unwrap();
-            polygon_as_dem_coords.push(round_coordinate(converted_coord));
-        }
-        polygon_as_dem_coords
-    }
-
-    fn round(float: f64) -> f64 {
-        let factor = 10f64.powi(7);
-        (float * factor).round() / factor
-    }
-
-    fn round_coordinate(coordinate: geo::Coord) -> geo::Coord {
-        geo::coord! {
-          x: round(coordinate.x),
-          y: round(coordinate.y),
-        }
-    }
-
-    // Guide for the following tests:
-    //
-    //    0  1  2  3  4  5  6  7  8
-    // 0  .  .  .  .  .  .  .  .  .
-    // 1  .  .  .  .  .  .d .  .  .
-    // 2  .  .  .  .  .a .  )  .  .
-    // 3  .  .  .  .  .  (  . c.  .
-    // 4  .  .  .  .  o  . b.  .  .
-    // 5  .  .  .  .  .  .  .  .  .
-    // 6  .  .  .  .  .  .  .  .  .
-    // 7  .  .  .  .  .  .  .  .  .
-    // 8  .  .  .  .  .  .  .  .  .
-    //
-    mod from_centre_to_top_right {
-        use super::*;
-
-        const POV: geo::Coord = geo::coord! {x: 4.0, y: 4.0};
-        const ANGLE: f32 = 45.0;
-
-        // The polygon we're making is `abcd` from the above guide.
-        #[test]
-        fn making_a_visible_polygon() {
-            assert_eq!(
-                make_visible_polygon_for(&VisiblePolygonFor {
-                    pov: POV,
-                    angle: ANGLE,
-                    opening_index: 1,
-                    closing_index: 2,
-                }),
-                vec![
-                    (4.7009067, 3.2867503),
-                    (4.7132503, 3.2990939),
-                    (5.4265022, 2.5981862),
-                    (5.401815, 2.5734989),
-                    (4.7009067, 3.2867503)
-                ]
-                .into_iter()
-                .map(Into::into)
-                .collect::<Vec<geo::Coord>>()
-            );
-        }
-    }
-
-    // Guide for the following tests:
-    //
-    //    0  1  2  3  4  5  6  7  8
-    // 0  .  .  .  .  .  .  .  .  .
-    // 1  .  .  .  .  .  .  .  .  .
-    // 2  .  .  .  .  .  .  .  .  .
-    // 3  .  .  .  .  .  .  .  .  .
-    // 4  .  .  .  .  .  .  .  .  .
-    // 5  .  .  .  o  .a .  .  .  .
-    // 6  .  .  .  .  (  .d .  .  .
-    // 7  .  .  .  . b.  )  .  .  .
-    // 8  .  .  .  .  . c.  .  .  .
-    //
-    mod from_bottom_left_to_bottom_right {
-        use super::*;
-
-        const POV: geo::Coord = geo::coord! {x: 3.0, y: 5.0};
-        const ANGLE: f32 = 135.0 + 180.0;
-
-        // The polygon we're making is `abcd` from the above guide.
-        #[test]
-        fn making_a_visible_polygon() {
-            assert_eq!(
-                make_visible_polygon_for(&VisiblePolygonFor {
-                    pov: POV,
-                    angle: ANGLE,
-                    opening_index: 1,
-                    closing_index: 2,
-                }),
-                vec![
-                    (3.7132498, 5.7009093),
-                    (3.7009061, 5.7132529),
-                    (4.4018138, 6.4265049),
-                    (4.4265011, 6.4018176),
-                    (3.7132498, 5.7009093)
-                ]
-                .into_iter()
-                .map(Into::into)
-                .collect::<Vec<geo::Coord>>()
-            );
-        }
-    }
 
     const SUMMIT_VIEWSHED: [&str; 12] = [
         "████████████████████████",
