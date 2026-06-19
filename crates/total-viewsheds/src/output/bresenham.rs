@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 /// A raster coodinate.
 pub struct RasterCoord {
     /// The x coordinate.

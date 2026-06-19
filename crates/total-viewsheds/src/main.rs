@@ -77,9 +77,11 @@ mod output {
 
     /// Load, parse and reconstruct euclidean polygon viewsheds from their raw polar segments.
     pub mod viewsheds {
-        pub mod join;
+        pub mod growable_polygon;
+        pub mod joiner_common;
+        pub mod joiner_final;
+        pub mod segment_polygon;
         pub mod viewshed;
-        pub mod visible_polygon;
     }
 }
 

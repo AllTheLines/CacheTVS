@@ -1,0 +1,431 @@
+//! Growable polygons are polygons constructed one angle at a time from polar segments.
+
+use color_eyre::eyre::{ContextCompat as _, Result, bail};
+
+/// An opening is where one polygon can join a segment, or even another polygon.
+/// The `u32` values in the variants are for storing the polar distance from the centre. This saves
+/// having to do trigonometry to figure out if two openings are touching.
+#[derive(Eq, PartialEq, Debug, Clone)]
+pub enum Opening {
+    /// No opening. We could also just use `Option::None`, but unwrapping it isn't so ergonomic.
+    Null,
+    /// This i for polygons that start at 0 degrees. It's possible that another polygon (or even
+    /// itself), could connect to it at 360 degrees.
+    GenesisStart(u32),
+    /// The closing of the genesis opening at 0 degrees.
+    GenesisEnd(u32),
+    /// An active opening's start.
+    Start(u32),
+    /// An active opening's end.
+    End(u32),
+    /// When a segment or polygon is successfully attached to an existing polygon, but we still want
+    /// to carry on looking for other attachments in the given angle, we don't want to mistakenly
+    /// attach new segments/polygons to something that's just been attached. Once the whole angle is
+    /// completed, then these get downgraded to the common `Start/End` opendings.
+    NewStart(u32),
+    /// A `New` openings end.
+    NewEnd(u32),
+}
+
+/// A vertex is a single point in a polygon.
+#[derive(Debug, Clone)]
+pub struct Vertex {
+    /// The coordinate of the vertex in euclidian space.
+    pub coordinate: geo::Coord,
+    /// The kind of opening that this vertex represents.
+    pub opening: Opening,
+}
+
+impl Vertex {
+    /// Is the vertex at the centre of the viewshed? The centre is a special place, it is a
+    /// zero-length opening that isn't nulled if no segments/polygons touch it for a given angle.
+    pub fn is_centre(&self) -> bool {
+        self.coordinate.x.abs() == 0.0 && self.coordinate.y.abs() == 0.0
+    }
+}
+
+/// A polygon that grows, but only from its anti-clockwise facing side.
+#[derive(Debug, Clone)]
+pub struct GrowablePolygon {
+    /// The main exterior vertices.
+    pub vertices: Vec<Vertex>,
+    /// Interiore holes within the polygon.
+    pub holes: Vec<Vec<Vertex>>,
+    /// The distance of the opening furthest from the centre of the viewshed. Used for ordering
+    /// active polygons. Polygons must be joined to new segments (and other polygons) in increasing
+    /// order to prevent overlaps.
+    pub furthest_opening: u32,
+    /// Has the polygon been touched by anything in the current angle? If not, then it is marked as
+    /// an isolated polygon that doesn't need to be checked for touches on subsequent angles.
+    pub is_touched: bool,
+    /// Was the polygon created at 0 degrees? This is needed because the polygon may need to be
+    /// completed by joining another polygon that wraps into it at 360 degrees.
+    pub is_created_at_angle_0: bool,
+}
+
+impl GrowablePolygon {
+    /// Create a new growable polygon. It always begins with a single polar segment converted to
+    /// its euclidean coordinates.
+    pub fn new(segment_vertices: &super::segment_polygon::Vertices, angle: f32) -> Self {
+        let mut vertices = Vec::new();
+        for (segment_index, segment_vertex) in segment_vertices.vertices.iter().enumerate() {
+            let opening = match segment_index {
+                1 => {
+                    if angle == 0.0 {
+                        Opening::GenesisStart(segment_vertices.distances.start)
+                    } else {
+                        Opening::Null
+                    }
+                }
+                2 => {
+                    if angle == 0.0 {
+                        Opening::GenesisEnd(segment_vertices.distances.end)
+                    } else {
+                        Opening::Null
+                    }
+                }
+                3 => Opening::NewEnd(segment_vertices.distances.end),
+                4 => Opening::NewStart(segment_vertices.distances.start),
+                _ => Opening::Null,
+            };
+            vertices.push(Vertex {
+                coordinate: *segment_vertex,
+                opening: opening.clone(),
+            });
+        }
+
+        Self {
+            vertices,
+            holes: Vec::new(),
+            furthest_opening: segment_vertices.distances.start,
+            is_touched: false,
+            is_created_at_angle_0: false,
+        }
+    }
+
+    /// Create a new polygon ready to be inserted into an existing polygon.
+    ///
+    /// Note that we wind our polygons anti-clockwise. The normal new polygon is on the left with
+    /// indices (abcde). And the inserted polygon is on the right with vertices (cdeb). Note how the
+    /// inserted polygon can't wind in the same way. It's been opened up into a straight line. The
+    /// break happens between "c" and "b" such that they then become the ends of the line.
+    ///
+    ///              z┌──┐y       z┌──┐y
+    ///   d┌──┐c      │  │      d┌─┘c │
+    ///    │  │   +   │  │   =   │    │
+    /// a/e└──┘b      │  │      e└─┐b │
+    ///              w└──┘x       w└──┘x
+    ///
+    ///  (abcde)  +  (wxyz) =  (wxyzcdeb)
+    fn new_for_insertion(segment_vertices: &super::segment_polygon::Vertices, angle: f32) -> Self {
+        let mut polygon = Self::new(segment_vertices, angle);
+
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "An new polygon MUST have 5 vertices by definition"
+        )]
+        let second = { polygon.vertices[1].clone() };
+
+        // Removing the first vertex doesn't destroy any data, because the first and last vertices
+        // are duplicates.
+        polygon.vertices.remove(0);
+        // Removing the second vertex also doesn't destroy any data because we copied it earlier.
+        polygon.vertices.remove(0);
+
+        polygon.vertices.push(second);
+        polygon
+    }
+
+    /// Once all the segments for an angle have been checked we convert the openings in the new
+    /// polygon as follows:
+    ///   * `Opening::NewStart/NewEnd` become `Opening::Start/End`.
+    ///   * `Opening::Start/End` become `Opening::Null`.
+    pub fn downgrade_openings(&mut self) -> Result<()> {
+        tracing::trace!("Downgrading openings");
+        let mut iterator = self.vertices.iter_mut().rev();
+        while let Some(vertex) = iterator.next() {
+            match vertex.opening {
+                super::growable_polygon::Opening::Null
+                | super::growable_polygon::Opening::GenesisStart(_)
+                | super::growable_polygon::Opening::GenesisEnd(_) => {}
+                super::growable_polygon::Opening::End(_) => {
+                    bail!("Dangling `Opening`");
+                }
+                super::growable_polygon::Opening::Start(_) => {
+                    let Some(next) = iterator.next() else {
+                        bail!("`Opening::Start` without adjacent end");
+                    };
+
+                    vertex.opening = Opening::Null;
+                    next.opening = Opening::Null;
+                }
+                super::growable_polygon::Opening::NewStart(at) => {
+                    vertex.opening = Opening::Start(at);
+                }
+                super::growable_polygon::Opening::NewEnd(at) => {
+                    vertex.opening = Opening::End(at);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Insert new vertices into the polygon. Can be either a segment or an entire other growable
+    /// polygon that has _just_ been joined to the segment. Note that even though we could be
+    /// joinging a whole new polygon, it will still only ever be limited to the known case of the
+    /// freshly joined _segment_ touching this polygon. Therefore, we can assume things like, no
+    /// holes will ever be created on the _incoming_ polygon because only the segment section of it
+    /// is touching this currently instantiated polygon.
+    fn join(
+        &mut self,
+        base_vertices_range: std::ops::Range<usize>,
+        joining_vertices: Vec<Vertex>,
+    ) -> Result<()> {
+        let old_start = self.extract_old_start(base_vertices_range.end)?;
+
+        let removed_vertices: Vec<Vertex> = self
+            .vertices
+            .splice(base_vertices_range.clone(), joining_vertices)
+            .collect();
+
+        self.vertices
+            .get_mut(base_vertices_range.start)
+            .context("Couldn't get new opening start index")?
+            .opening = old_start;
+
+        self.dedup_vertices_but_keep_openings();
+        self.create_holes(&removed_vertices);
+
+        Ok(())
+    }
+
+    /// Insert a segment into the polygon.
+    pub fn join_segment(
+        &mut self,
+        segment_vertices: &super::segment_polygon::Vertices,
+        vertices_range: std::ops::Range<usize>,
+        angle: f32,
+    ) -> Result<()> {
+        tracing::trace!(
+            "Splicing new segment ({:?}) at: {vertices_range:?}",
+            segment_vertices.distances
+        );
+
+        let segment = Self::new_for_insertion(segment_vertices, angle);
+        self.join(vertices_range, segment.vertices)?;
+
+        if segment.furthest_opening < self.furthest_opening {
+            self.furthest_opening = segment.furthest_opening;
+        }
+
+        Ok(())
+    }
+
+    /// Insert another polygon into the `self` polygon, where `self` isn't the final polygon.
+    ///
+    /// Consider this situation. "A" and "B" are _existing_ active polygons. "s" is an incoming
+    /// segment. "s" joins to polygon "A" creating a new polygon "A+s". This new polygon then has to
+    /// also connect to polygon "B".
+    ///
+    ///    `NewEnd`┌─┐x┌───────┐
+    ///            │ │ │   B   │ Base polygon
+    ///            │ │ └───────┘
+    ///            │s│
+    ///            │ │────────┐
+    ///            │ │    A   │  Joining polygon
+    ///  `NewStart`└─┘────────┘
+    ///
+    /// We know that a segment always has `NewEnd` and `NewStart` openings. Therefore we can
+    /// calculate the index "x" at which the new polygon should be inserted by finding `NewEnd` and
+    /// substracting 1.
+    pub fn join_non_starting_polygon(
+        &mut self,
+        base_vertices_range: std::ops::Range<usize>,
+        joining_polygon: &mut Self,
+    ) -> Result<()> {
+        let mut maybe_joining_new_end_index = None;
+        for (index, vertex) in joining_polygon.vertices.iter_mut().enumerate().rev() {
+            // Find where in the joining polygon we are opening up to be joined by the base polygon.
+            if matches!(vertex.opening, Opening::NewEnd(_)) {
+                maybe_joining_new_end_index = Some(index);
+            }
+
+            // Nullify all openings so we don't try to join them in the future.
+            // TODO: why can't this be done via the `downgrade_openings()` method?
+            let is_start = matches!(vertex.opening, Opening::Start(_));
+            let is_end = matches!(vertex.opening, Opening::End(_));
+            if is_start || is_end {
+                vertex.opening = Opening::Null;
+            }
+        }
+        let Some(joining_new_end_index) = maybe_joining_new_end_index else {
+            bail!("Couldn't find `Opening::NewEnd` for joining polygon");
+        };
+
+        // We can assume that the vertex at which we join the incoming polygon is always 1 before
+        // the base polygon's `NewEnd` opening.
+        let joining_vertices_entry = joining_new_end_index - 1;
+
+        // Rotating achieves the effect of unlooping the polygon at the point at which the polygon
+        // is joined.
+        joining_polygon.vertices.rotate_left(joining_vertices_entry);
+
+        tracing::trace!(
+            "Splicing existing polygon at {base_vertices_range:?}, \
+            joining polygon: {joining_polygon:#?}, rotated at {joining_vertices_entry}",
+        );
+
+        self.join(base_vertices_range, joining_polygon.vertices.clone())?;
+
+        self.holes.extend(joining_polygon.holes.clone());
+
+        if joining_polygon.furthest_opening < self.furthest_opening {
+            self.furthest_opening = joining_polygon.furthest_opening;
+        }
+
+        if joining_polygon.is_created_at_angle_0 {
+            self.is_created_at_angle_0 = true;
+        }
+
+        Ok(())
+    }
+
+    /// Insert a starting polygon (from angle 0) into a final polygon (from angle ~360).
+    pub fn join_starting_polygon(
+        &mut self,
+        base_vertices_range: std::ops::Range<usize>,
+        joining_vertices_range: std::ops::Range<usize>,
+        joining_polygon: &mut Self,
+    ) -> Result<()> {
+        tracing::trace!(
+            "Splicing final polygon at {base_vertices_range:?}, \
+             with: {:#?} at {joining_vertices_range:?}",
+            joining_polygon.vertices
+        );
+
+        // Nullify the Genesis markers
+        joining_polygon
+            .vertices
+            .get_mut(joining_vertices_range.start)
+            .context("Bad joining vertex index")?
+            .opening = Opening::Null;
+        joining_polygon
+            .vertices
+            .get_mut(joining_vertices_range.end)
+            .context("Bad joining vertex index")?
+            .opening = Opening::Null;
+
+        // Rotating achieves the effect of unlooping the polygon at the point at which the polygon
+        // is joined.
+        joining_polygon
+            .vertices
+            .rotate_left(joining_vertices_range.start);
+
+        self.join(base_vertices_range, joining_polygon.vertices.clone())?;
+
+        self.holes.extend(joining_polygon.holes.clone());
+
+        Ok(())
+    }
+
+    /// Join a polygon into itself.
+    pub fn join_self(
+        &mut self,
+        left_range: std::ops::Range<usize>,
+        right_range: std::ops::Range<usize>,
+    ) {
+        let range = if right_range.start > left_range.start {
+            left_range.start..right_range.start
+        } else {
+            right_range.start..left_range.start
+        };
+
+        tracing::trace!(
+            "Splicing polygon into itself at: {range:?} ({left_range:?}/{right_range:?})"
+        );
+
+        let removed_vertices: Vec<Vertex> = self.vertices.splice(range, vec![]).collect();
+        self.create_holes(&removed_vertices);
+    }
+
+    /// Extract the starting vertex of an opening that has just been joined to.
+    pub fn extract_old_start(&mut self, index: usize) -> Result<Opening> {
+        let vertex = self
+            .vertices
+            .get_mut(index)
+            .context("Bad index for old opening start")?;
+
+        let old_start = vertex.opening.clone();
+        vertex.opening = Opening::Null;
+
+        Ok(old_start)
+    }
+
+    /// Create interior holes from the vertices that were removed for the join.
+    fn create_holes(&mut self, vertices: &[Vertex]) {
+        let holes = vertices.split_inclusive(|vertex| matches!(vertex.opening, Opening::End(_)));
+
+        for hole in holes {
+            if hole.iter().any(|vertex| !vertex.is_centre()) {
+                tracing::trace!("Hole: {hole:?}");
+                self.holes.push(hole.to_vec());
+            }
+        }
+    }
+
+    /// Is a segment and a polygon, or 2 polygons, touching? We decide by whether their openings are
+    /// overlapping.
+    pub const fn is_touching(left: &std::ops::Range<u32>, right: &std::ops::Range<u32>) -> bool {
+        left.start < right.end && right.start < left.end
+    }
+
+    /// Convert the polygon to the `geo` crate's representation. Ready for exporting to `GeoJSON`.
+    pub fn to_geo_polygon(&self) -> geo::Polygon {
+        let holes: Vec<geo::LineString> = self
+            .holes
+            .iter()
+            .map(|hole| {
+                geo::LineString(
+                    hole.iter()
+                        .map(|vertex| vertex.coordinate)
+                        .collect::<Vec<geo::Coord>>(),
+                )
+            })
+            .collect();
+
+        let vertices: Vec<geo::Coord> = self
+            .vertices
+            .iter()
+            .map(|vertex| vertex.coordinate)
+            .collect();
+        geo::Polygon::new(geo::LineString(vertices), holes)
+    }
+
+    /// Remove adjacent vertices that are either identical or extremely similar. This reduces the
+    /// byte size of the final polygon and speeds up the algorithm by about 10%.
+    //
+    // TODO: Could the algorithm be improved so that this wasn't needed?
+    fn dedup_vertices_but_keep_openings(&mut self) {
+        self.vertices.dedup_by(|left, right| {
+            if !matches!(left.opening, Opening::Null) || !matches!(right.opening, Opening::Null) {
+                return false;
+            }
+            Self::are_coordinates_within_tolerance(&left.coordinate, &right.coordinate)
+        });
+    }
+
+    /// Dedupe vertices, but allow destroying opening metadata. This is useful right at the very end
+    /// of the reconstruction.
+    pub fn dedup_vertices_ignore_openings(&mut self) {
+        self.vertices.dedup_by(|left, right| {
+            Self::are_coordinates_within_tolerance(&left.coordinate, &right.coordinate)
+        });
+    }
+
+    /// Are the two coordinates identical or as good as identical.
+    fn are_coordinates_within_tolerance(left: &geo::Coord, right: &geo::Coord) -> bool {
+        let tolerance = 1e-6f64;
+        (left.x - right.x).abs() < tolerance && (left.y - right.y).abs() < tolerance
+    }
+}
