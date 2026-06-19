@@ -85,12 +85,8 @@ impl Viewshed<'_> {
             color_eyre::eyre::bail!("Point of view ({:?}) is not calculable", viewshed.pov_coord);
         }
 
-        let multi_polygon = super::visible_polygon::VisiblePolygon::parse_polar_segments(
-            &segments,
-            viewshed.dem.scale,
-        );
-
-        tracing::debug!("Viewshed reconstructed in {:?}.", start.elapsed());
+        let multi_polygon = super::joiner_common::Joiner::build(&segments, viewshed.dem.scale)?;
+        tracing::info!("Viewshed reconstructed in {:?}.", start.elapsed());
 
         Ok((pov_dem_coord, multi_polygon))
     }
@@ -190,7 +186,7 @@ impl Viewshed<'_> {
 
 #[cfg(test)]
 mod test {
-    use crate::output::ascii::assert_viewshed;
+    use crate::output::ascii::assert_rasterised;
 
     const SUMMIT_VIEWSHED: [&str; 12] = [
         "████████████████████████",
@@ -215,8 +211,8 @@ mod test {
         "██▀ █████████████ ▀█████",
         "██ ███████████████ █████",
         "██ ████████▀ ▄▄▄▄▄▄█████",
-        "██ ▀██████ ▄████████████",
-        "███ ▀█████ █████████████",
+        "██ ▀█▀▄ ██ ▄████████████",
+        "███ ▀▄▄███ █████████████",
         "████▄ ▀▀██ █████████████",
         "███████▄▄▄▄█████████████",
         "████████████████████████",
@@ -248,7 +244,7 @@ mod test {
             "████████████████████████",
             "████████████████████████",
         ];
-        assert_viewshed(&viewshed, expected);
+        assert_rasterised(&viewshed, expected);
     }
 
     #[test]
@@ -262,11 +258,12 @@ mod test {
                 ..crate::run::test::default_config(&temp_db)
             },
         );
-        assert_viewshed(&viewshed, &SUMMIT_VIEWSHED);
+        assert_rasterised(&viewshed, &SUMMIT_VIEWSHED);
     }
 
     #[test]
     fn viewshed_on_summit_with_high_angle_count() {
+        crate::setup_logging().unwrap();
         let temp_db = tempfile::NamedTempFile::new().unwrap();
         let viewshed = crate::output::ascii::make_viewshed(
             &crate::tests::fixtures::bigger_dem(),
@@ -277,7 +274,7 @@ mod test {
                 ..crate::run::test::default_config(&temp_db)
             },
         );
-        assert_viewshed(&viewshed, &PACMAN_VIEWSHED);
+        assert_rasterised(&viewshed, &PACMAN_VIEWSHED);
     }
 
     #[test]
@@ -310,7 +307,7 @@ mod test {
             ..crate::run::test::default_config(&temp_db_for_viewsheds)
         };
 
-        assert_viewshed(
+        assert_rasterised(
             &crate::output::ascii::make_viewshed(
                 &elevations,
                 geo::Coord { x: 5.0, y: 5.0 },
@@ -319,7 +316,7 @@ mod test {
             &SUMMIT_VIEWSHED,
         );
 
-        assert_viewshed(
+        assert_rasterised(
             &crate::output::ascii::make_viewshed(
                 &elevations,
                 geo::Coord { x: 6.0, y: 6.0 },
@@ -328,7 +325,7 @@ mod test {
             &SUMMIT_VIEWSHED,
         );
 
-        assert_viewshed(
+        assert_rasterised(
             &crate::output::ascii::make_viewshed(
                 &elevations,
                 geo::Coord { x: 7.0, y: 7.0 },
@@ -340,6 +337,7 @@ mod test {
 
     #[test]
     fn viewshed_near_summit() {
+        crate::setup_logging().unwrap();
         let temp_db = tempfile::NamedTempFile::new().unwrap();
         let viewshed = crate::output::ascii::make_viewshed(
             &crate::tests::fixtures::bigger_dem(),
@@ -350,7 +348,7 @@ mod test {
             },
         );
 
-        assert_viewshed(&viewshed, &PACMAN_VIEWSHED);
+        assert_rasterised(&viewshed, &PACMAN_VIEWSHED);
     }
 
     #[test]
@@ -380,6 +378,6 @@ mod test {
             "████████████████████████",
             "████████████████████████",
         ];
-        assert_viewshed(&viewshed, expected);
+        assert_rasterised(&viewshed, expected);
     }
 }

@@ -8,7 +8,7 @@ pub struct Segment(pub u32);
 
 impl Segment {
     /// `new` creates a `Segment` the segment's start point and the distance
-    fn new(start: u16, distance: u16) -> Self {
+    pub fn new(start: u16, distance: u16) -> Self {
         // pack start/distsance into a u32 in the format of (start|distance)
         let wide_start: u32 = start.into();
         let wide_distance: u32 = distance.into();

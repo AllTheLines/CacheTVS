@@ -3,7 +3,7 @@
 set -e
 
 export RUST_BACKTRACE=1
-export RUST_LOG=trace
+export RUST_LOG=debug
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
 

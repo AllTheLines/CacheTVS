@@ -1,17 +1,56 @@
 //! Create euclidean polygons from polar segments.
 
-/// `VisiblePolygon`
-pub struct VisiblePolygon {
-    /// Scale of DEM data.
-    pub scale: f32,
-    /// The current sector angle.
-    pub current_angle: f32,
+/// The 5 vertices of a segment and their distances from the centre.
+#[derive(Debug)]
+pub struct Vertices {
+    /// The 5 vertices of a segment. The 4 corners plus a copy of the first vertex to close the
+    /// polygon.
+    pub vertices: [geo::Coord; 5],
+    /// The distances of the top and bottom of the segment from the centre.
+    pub distances: std::ops::Range<u32>,
 }
 
-impl VisiblePolygon {
+/// `SegmentPolygon`
+pub struct SegmentPolygon {
+    /// Scale of DEM data.
+    pub dem_scale: f32,
+    /// The current sector angle.
+    pub angle: f32,
+    /// The number of angles per degree.
+    pub angle_scale: f32,
+}
+
+impl SegmentPolygon {
+    /// Make a single polygon representing a visible region of the planet.
+    pub fn make(&self, opening_index: u32, closing_index: u32) -> Vertices {
+        let opening_coord = self.index_to_coordinate(opening_index);
+        let closing_coord = self.index_to_coordinate(closing_index);
+
+        let spread = 1.0f64 / f64::from(self.angle_scale) / 2.0f64;
+        let bottom_left = Self::rotate_by(opening_coord, spread);
+        let bottom_right = Self::rotate_by(opening_coord, -spread);
+        let top_left = Self::rotate_by(closing_coord, spread);
+        let top_right = Self::rotate_by(closing_coord, -spread);
+
+        let scale = f64::from(self.dem_scale);
+
+        let vertices = [
+            bottom_left * scale,
+            bottom_right * scale,
+            top_right * scale,
+            top_left * scale,
+            bottom_left * scale,
+        ];
+
+        Vertices {
+            vertices,
+            distances: opening_index..closing_index,
+        }
+    }
+
     /// Convert an index along a line of sight into a coordinate.
     fn index_to_coordinate(&self, index: u32) -> super::viewshed::Coordinate {
-        let radians = self.current_angle.to_radians();
+        let radians = self.angle.to_radians();
         let distance = f64::from(index);
 
         super::viewshed::Coordinate(geo::coord! {
@@ -35,31 +74,6 @@ impl VisiblePolygon {
             y: dx * sin + dy * cos
         }
     }
-
-    /// Make a single polygon representing a visible region of the planet.
-    pub fn make_visible_polygon(&self, opening_index: u32, closing_index: u32) -> geo::Polygon {
-        let opening_coord = self.index_to_coordinate(opening_index);
-        let closing_coord = self.index_to_coordinate(closing_index);
-
-        let spread = 0.5001f64;
-        let bottom_left = Self::rotate_by(opening_coord, spread);
-        let bottom_right = Self::rotate_by(opening_coord, -spread);
-        let top_left = Self::rotate_by(closing_coord, spread);
-        let top_right = Self::rotate_by(closing_coord, -spread);
-
-        let scale = f64::from(self.scale);
-
-        geo::Polygon::new(
-            geo::LineString(vec![
-                bottom_left * scale,
-                bottom_right * scale,
-                top_right * scale,
-                top_left * scale,
-                bottom_left * scale,
-            ]),
-            vec![],
-        )
-    }
 }
 
 #[cfg(test)]
@@ -67,10 +81,11 @@ mod test {
     fn builder(
         viewshed: &crate::output::viewsheds::viewshed::Viewshed,
         angle: f32,
-    ) -> crate::output::viewsheds::visible_polygon::VisiblePolygon {
-        crate::output::viewsheds::visible_polygon::VisiblePolygon {
-            scale: viewshed.dem.scale,
-            current_angle: angle,
+    ) -> crate::output::viewsheds::segment_polygon::SegmentPolygon {
+        crate::output::viewsheds::segment_polygon::SegmentPolygon {
+            dem_scale: viewshed.dem.scale,
+            angle,
+            angle_scale: 1.0,
         }
     }
 
@@ -89,7 +104,10 @@ mod test {
             pov_coord: tvs_lib::dem::Coordinate(setup.pov),
         };
         let viewsheder = builder(&viewshed, setup.angle);
-        let polygon = viewsheder.make_visible_polygon(setup.opening_index, setup.closing_index);
+        let vertices = viewsheder
+            .make(setup.opening_index, setup.closing_index)
+            .vertices;
+        let polygon = geo::Polygon::new(geo::LineString(vertices.into()), vec![]);
 
         let mut polygon_as_dem_coords = Vec::new();
         for coord in &polygon.exterior().0 {
@@ -145,11 +163,11 @@ mod test {
                     closing_index: 2,
                 }),
                 vec![
-                    (4.7009067, 3.2867503),
-                    (4.7132503, 3.2990939),
-                    (5.4265022, 2.5981862),
-                    (5.401815, 2.5734989),
-                    (4.7009067, 3.2867503)
+                    (4.7009079, 3.2867515),
+                    (4.7132491, 3.2990927),
+                    (5.4264998, 2.5981837),
+                    (5.4018174, 2.5735014),
+                    (4.7009079, 3.2867515)
                 ]
                 .into_iter()
                 .map(Into::into)
@@ -188,11 +206,11 @@ mod test {
                     closing_index: 2,
                 }),
                 vec![
-                    (3.7132498, 5.7009093),
-                    (3.7009061, 5.7132529),
-                    (4.4018138, 6.4265049),
-                    (4.4265011, 6.4018176),
-                    (3.7132498, 5.7009093)
+                    (3.7132486, 5.7009105),
+                    (3.7009074, 5.7132517),
+                    (4.4018163, 6.4265025),
+                    (4.4264987, 6.4018201),
+                    (3.7132486, 5.7009105)
                 ]
                 .into_iter()
                 .map(Into::into)
