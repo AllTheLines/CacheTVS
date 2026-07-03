@@ -6,7 +6,7 @@ use color_eyre::eyre::{ContextCompat as _, Result, bail};
 /// The `u32` values in the variants are for storing the polar distance from the centre. This saves
 /// having to do trigonometry to figure out if two openings are touching.
 #[derive(Eq, PartialEq, Debug, Clone)]
-pub enum Opening {
+pub(crate) enum Opening {
     /// No opening. We could also just use `Option::None`, but unwrapping it isn't so ergonomic.
     Null,
     /// This i for polygons that start at 0 degrees. It's possible that another polygon (or even
@@ -29,7 +29,7 @@ pub enum Opening {
 
 /// A vertex is a single point in a polygon.
 #[derive(Debug, Clone)]
-pub struct Vertex {
+pub(crate) struct Vertex {
     /// The coordinate of the vertex in euclidian space.
     pub coordinate: geo::Coord,
     /// The kind of opening that this vertex represents.
@@ -39,14 +39,14 @@ pub struct Vertex {
 impl Vertex {
     /// Is the vertex at the centre of the viewshed? The centre is a special place, it is a
     /// zero-length opening that isn't nulled if no segments/polygons touch it for a given angle.
-    pub fn is_centre(&self) -> bool {
+    pub(crate) fn is_centre(&self) -> bool {
         self.coordinate.x.abs() == 0.0 && self.coordinate.y.abs() == 0.0
     }
 }
 
 /// A polygon that grows, but only from its anti-clockwise facing side.
 #[derive(Debug, Clone)]
-pub struct GrowablePolygon {
+pub(crate) struct GrowablePolygon {
     /// The main exterior vertices.
     pub vertices: Vec<Vertex>,
     /// Interiore holes within the polygon.
@@ -66,7 +66,10 @@ pub struct GrowablePolygon {
 impl GrowablePolygon {
     /// Create a new growable polygon. It always begins with a single polar segment converted to
     /// its euclidean coordinates.
-    pub fn new(segment_vertices: &super::segment_polygon::Vertices, angle: f32) -> Self {
+    pub(crate) fn new(
+        segment_vertices: &crate::output::viewsheds::segment_polygon::Vertices,
+        angle: f32,
+    ) -> Self {
         let mut vertices = Vec::new();
         for (segment_index, segment_vertex) in segment_vertices.vertices.iter().enumerate() {
             let opening = match segment_index {
@@ -117,7 +120,10 @@ impl GrowablePolygon {
     ///              w└──┘x       w└──┘x
     ///
     ///  (abcde)  +  (wxyz) =  (wxyzcdeb)
-    fn new_for_insertion(segment_vertices: &super::segment_polygon::Vertices, angle: f32) -> Self {
+    fn new_for_insertion(
+        segment_vertices: &crate::output::viewsheds::segment_polygon::Vertices,
+        angle: f32,
+    ) -> Self {
         let mut polygon = Self::new(segment_vertices, angle);
 
         #[expect(
@@ -140,18 +146,16 @@ impl GrowablePolygon {
     /// polygon as follows:
     ///   * `Opening::NewStart/NewEnd` become `Opening::Start/End`.
     ///   * `Opening::Start/End` become `Opening::Null`.
-    pub fn downgrade_openings(&mut self) -> Result<()> {
+    pub(crate) fn downgrade_openings(&mut self) -> Result<()> {
         tracing::trace!("Downgrading openings");
         let mut iterator = self.vertices.iter_mut().rev();
         while let Some(vertex) = iterator.next() {
             match vertex.opening {
-                super::growable_polygon::Opening::Null
-                | super::growable_polygon::Opening::GenesisStart(_)
-                | super::growable_polygon::Opening::GenesisEnd(_) => {}
-                super::growable_polygon::Opening::End(_) => {
+                Opening::Null | Opening::GenesisStart(_) | Opening::GenesisEnd(_) => {}
+                Opening::End(_) => {
                     bail!("Dangling `Opening`");
                 }
-                super::growable_polygon::Opening::Start(_) => {
+                Opening::Start(_) => {
                     let Some(next) = iterator.next() else {
                         bail!("`Opening::Start` without adjacent end");
                     };
@@ -159,10 +163,10 @@ impl GrowablePolygon {
                     vertex.opening = Opening::Null;
                     next.opening = Opening::Null;
                 }
-                super::growable_polygon::Opening::NewStart(at) => {
+                Opening::NewStart(at) => {
                     vertex.opening = Opening::Start(at);
                 }
-                super::growable_polygon::Opening::NewEnd(at) => {
+                Opening::NewEnd(at) => {
                     vertex.opening = Opening::End(at);
                 }
             }
@@ -201,9 +205,9 @@ impl GrowablePolygon {
     }
 
     /// Insert a segment into the polygon.
-    pub fn join_segment(
+    pub(crate) fn join_segment(
         &mut self,
-        segment_vertices: &super::segment_polygon::Vertices,
+        segment_vertices: &crate::output::viewsheds::segment_polygon::Vertices,
         vertices_range: std::ops::Range<usize>,
         angle: f32,
     ) -> Result<()> {
@@ -239,7 +243,7 @@ impl GrowablePolygon {
     /// We know that a segment always has `NewEnd` and `NewStart` openings. Therefore we can
     /// calculate the index "x" at which the new polygon should be inserted by finding `NewEnd` and
     /// substracting 1.
-    pub fn join_non_starting_polygon(
+    pub(crate) fn join_non_starting_polygon(
         &mut self,
         base_vertices_range: std::ops::Range<usize>,
         joining_polygon: &mut Self,
@@ -292,7 +296,7 @@ impl GrowablePolygon {
     }
 
     /// Insert a starting polygon (from angle 0) into a final polygon (from angle ~360).
-    pub fn join_starting_polygon(
+    pub(crate) fn join_starting_polygon(
         &mut self,
         base_vertices_range: std::ops::Range<usize>,
         joining_vertices_range: std::ops::Range<usize>,
@@ -330,7 +334,7 @@ impl GrowablePolygon {
     }
 
     /// Join a polygon into itself.
-    pub fn join_self(
+    pub(crate) fn join_self(
         &mut self,
         left_range: std::ops::Range<usize>,
         right_range: std::ops::Range<usize>,
@@ -350,7 +354,7 @@ impl GrowablePolygon {
     }
 
     /// Extract the starting vertex of an opening that has just been joined to.
-    pub fn extract_old_start(&mut self, index: usize) -> Result<Opening> {
+    pub(crate) fn extract_old_start(&mut self, index: usize) -> Result<Opening> {
         let vertex = self
             .vertices
             .get_mut(index)
@@ -376,12 +380,15 @@ impl GrowablePolygon {
 
     /// Is a segment and a polygon, or 2 polygons, touching? We decide by whether their openings are
     /// overlapping.
-    pub const fn is_touching(left: &std::ops::Range<u32>, right: &std::ops::Range<u32>) -> bool {
+    pub(crate) const fn is_touching(
+        left: &std::ops::Range<u32>,
+        right: &std::ops::Range<u32>,
+    ) -> bool {
         left.start < right.end && right.start < left.end
     }
 
     /// Convert the polygon to the `geo` crate's representation. Ready for exporting to `GeoJSON`.
-    pub fn to_geo_polygon(&self) -> geo::Polygon {
+    pub(crate) fn to_geo_polygon(&self) -> geo::Polygon {
         let holes: Vec<geo::LineString> = self
             .holes
             .iter()
@@ -417,7 +424,7 @@ impl GrowablePolygon {
 
     /// Dedupe vertices, but allow destroying opening metadata. This is useful right at the very end
     /// of the reconstruction.
-    pub fn dedup_vertices_ignore_openings(&mut self) {
+    pub(crate) fn dedup_vertices_ignore_openings(&mut self) {
         self.vertices.dedup_by(|left, right| {
             Self::are_coordinates_within_tolerance(&left.coordinate, &right.coordinate)
         });

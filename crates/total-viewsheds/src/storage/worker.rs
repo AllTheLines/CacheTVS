@@ -4,7 +4,7 @@
 /// A wrapper for a storage `Engine`. It converts bitmaps from the kernel into a `PolarSegments`
 /// to communicate. Keeping it a concrete struct lets us hide the underlying engine from the user
 /// but gives us flexibility to NOOP storage for testing purposes
-pub struct Worker {
+pub(crate) struct Worker {
     /// `engine` is the underlying storage engine for our `Storage` struct.
     /// We keep it `Box<dyn>` so that Storage doesn't have a generic type parameter
     /// because:
@@ -15,7 +15,7 @@ pub struct Worker {
 
 impl Worker {
     /// `new_noop` initializes a Worker with a dummy engine for testing
-    pub fn new_noop() -> Self {
+    pub(crate) fn new_noop() -> Self {
         Self {
             engine: Box::new(super::engine::Noop),
         }
@@ -23,7 +23,7 @@ impl Worker {
 
     /// `new` creates a new Worker with Sqlite as its backing when
     /// the `test` or `ring_data` feature is enabled, otherwise returning a noop
-    pub fn new<P: AsRef<std::path::Path>>(path: P) -> Self {
+    pub(crate) fn new<P: AsRef<std::path::Path>>(path: P) -> Self {
         if !cfg!(any(test, feature = "ring_data")) {
             return Self {
                 engine: Box::new(crate::storage::engine::Noop),
@@ -36,7 +36,7 @@ impl Worker {
     }
 
     /// `store_bitmap` converts a bitmap into `PolarSegments` and uses its `Engine` to store it
-    pub fn store_bitmap(
+    pub(crate) fn store_bitmap(
         &self,
         dem_id: u64,
         neighbourhood_id: Option<i64>,
@@ -57,7 +57,7 @@ impl Worker {
 ///
 /// All segments sent to `recv` will be run in the same transaction to save on transaction
 /// overhead. This means that any panic or error will end in a corrupted database
-pub fn writer<P: AsRef<std::path::Path>>(
+pub(crate) fn writer<P: AsRef<std::path::Path>>(
     path: P,
     recv: std::sync::mpsc::Receiver<(u64, Option<i64>, super::segments::PolarSegments)>,
 ) -> Result<(), rusqlite::Error> {

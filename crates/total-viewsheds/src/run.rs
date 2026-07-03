@@ -4,7 +4,7 @@ use color_eyre::Result;
 use std::path::PathBuf;
 
 /// Handles all the computations.
-pub struct Compute<'compute>
+pub(crate) struct Compute<'compute>
 where
     'static: 'compute,
 {
@@ -20,7 +20,7 @@ where
 
 #[derive(Clone)]
 /// Configuration for computing.
-pub struct Config {
+pub(crate) struct Config {
     /// The height of the observer that views viewsheds.
     pub observer_height: f32,
     /// What to compute.
@@ -51,7 +51,7 @@ pub struct Config {
 
 impl<'compute> Compute<'compute> {
     /// Instantiate.
-    pub fn new(config: Config, dem: &'compute mut tvs_lib::dem::DEM) -> Result<Self> {
+    pub(crate) fn new(config: Config, dem: &'compute mut tvs_lib::dem::DEM) -> Result<Self> {
         if Self::is_process_viewsheds(&config.process) && !cfg!(any(test, feature = "ring_data")) {
             color_eyre::eyre::bail!(
                 "Viewshed storage is only supported with the ring_data feature, \
@@ -73,13 +73,13 @@ impl<'compute> Compute<'compute> {
     }
 
     /// Are we computing viewsheds?
-    pub fn is_process_viewsheds(process: &[crate::config::Process]) -> bool {
+    pub(crate) fn is_process_viewsheds(process: &[crate::config::Process]) -> bool {
         Self::is_process_everything(process) || process.contains(&crate::config::Process::Viewsheds)
     }
 
     /// Render a heatmap and `.tiff` file of the total surface areas for each point within the computable area of the
     /// DEM.
-    pub fn render_total_surfaces(&self) -> Result<()> {
+    pub(crate) fn render_total_surfaces(&self) -> Result<()> {
         let Some(output_dir) = &self.config.output_directory else {
             return Ok(());
         };
@@ -107,7 +107,7 @@ impl<'compute> Compute<'compute> {
 
     /// Render a heatmap and `.tiff` of the longest lines of sight for each point within the computable area of the
     /// DEM.
-    pub fn render_longest_lines(&self) -> Result<()> {
+    pub(crate) fn render_longest_lines(&self) -> Result<()> {
         let Some(output_dir) = &self.config.output_directory else {
             return Ok(());
         };
@@ -156,11 +156,11 @@ impl<'compute> Compute<'compute> {
 }
 
 #[cfg(test)]
-pub mod test {
+pub(crate) mod test {
     use super::*;
     use googletest::prelude::*;
 
-    pub fn make_dem(elevations: &[i16]) -> tvs_lib::dem::DEM {
+    pub(crate) fn make_dem(elevations: &[i16]) -> tvs_lib::dem::DEM {
         let width = elevations.len().isqrt() as u32;
         let mut dem = tvs_lib::dem::DEM::new(
             tvs_lib::projector::LonLatCoord((33.33, 33.33).into()),
@@ -173,14 +173,14 @@ pub mod test {
         dem
     }
 
-    pub fn default_metadata() -> tvs_lib::metadata::MetaData {
+    pub(crate) fn default_metadata() -> tvs_lib::metadata::MetaData {
         tvs_lib::metadata::MetaData {
             scale: 1.0,
             ..Default::default()
         }
     }
 
-    pub fn big_dem_metadata() -> tvs_lib::metadata::MetaData {
+    pub(crate) fn big_dem_metadata() -> tvs_lib::metadata::MetaData {
         tvs_lib::metadata::MetaData {
             width: 12,
             max_line_of_sight: 4,
@@ -189,7 +189,7 @@ pub mod test {
         }
     }
 
-    pub fn default_config(temp_db: &tempfile::NamedTempFile) -> Config {
+    pub(crate) fn default_config(temp_db: &tempfile::NamedTempFile) -> Config {
         Config {
             observer_height: 0.8,
             process: vec![crate::config::Process::Viewsheds],
@@ -207,7 +207,7 @@ pub mod test {
         }
     }
 
-    pub fn compute(dem: &mut tvs_lib::dem::DEM, config: Config) -> Compute<'_> {
+    pub(crate) fn compute(dem: &mut tvs_lib::dem::DEM, config: Config) -> Compute<'_> {
         let mut compute = Compute::new(config, dem).unwrap();
         compute.run().unwrap();
         compute

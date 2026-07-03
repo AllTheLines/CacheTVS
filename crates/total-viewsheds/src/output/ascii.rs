@@ -7,7 +7,7 @@ use geo::CoordsIter as _;
 
 use crate::output::viewsheds::viewshed::Viewshed;
 
-pub fn make_viewshed(
+pub(crate) fn make_viewshed(
     elevations: &[i16],
     viewshed_pov: geo::Coord,
     config: crate::run::Config,
@@ -57,7 +57,10 @@ pub fn make_viewshed(
     rasterise_multi_polygon(&viewshed, dem.width)
 }
 
-pub fn rasterise_multi_polygon(multi_polygon: &geo::MultiPolygon, width: u32) -> Vec<String> {
+pub(crate) fn rasterise_multi_polygon(
+    multi_polygon: &geo::MultiPolygon,
+    width: u32,
+) -> Vec<String> {
     let scale = std::env::var("ASCII_TEST_SIZE")
         .unwrap_or_else(|_| "2".to_owned())
         .parse::<u32>()
@@ -164,7 +167,7 @@ pub fn rasterise_multi_polygon(multi_polygon: &geo::MultiPolygon, width: u32) ->
     ascii
 }
 
-pub fn rasterise(mut multi_polygon: geo::MultiPolygon) -> Vec<String> {
+pub(crate) fn rasterise(mut multi_polygon: geo::MultiPolygon) -> Vec<String> {
     let width = 12u32;
     let centre = f64::from(width.div_euclid(2));
     for polygons in multi_polygon.iter_mut() {
@@ -192,7 +195,7 @@ pub fn rasterise(mut multi_polygon: geo::MultiPolygon) -> Vec<String> {
 }
 
 #[expect(clippy::print_stderr, reason = "This is for tests")]
-pub fn assert_rasterised(actual: &[String], expected: &[&str]) {
+pub(crate) fn assert_rasterised(actual: &[String], expected: &[&str]) {
     if actual != expected {
         eprintln!("Actual:");
         eprint!("{}", actual.join("\n"));

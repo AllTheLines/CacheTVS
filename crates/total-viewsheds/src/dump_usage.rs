@@ -5,7 +5,7 @@ use color_eyre::Result;
 
 /// main dump usage function
 #[expect(clippy::print_stdout, reason = "We need to output the usage.")]
-pub fn dump_full_usage_for_readme() -> Result<()> {
+pub(crate) fn dump_full_usage_for_readme() -> Result<()> {
     use clap::CommandFactory as _;
     let mut command = crate::config::Config::command();
 

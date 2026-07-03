@@ -5,7 +5,9 @@ use std::collections::HashMap;
 use color_eyre::eyre::{ContextCompat as _, Result};
 
 /// Create a fast lookup for deciding which points should have their viewsheds saved.
-pub fn create_biggest_tvs_subgrid(config: &crate::config::Compute) -> Result<HashMap<i64, i64>> {
+pub(crate) fn create_biggest_tvs_subgrid(
+    config: &crate::config::Compute,
+) -> Result<HashMap<i64, i64>> {
     let neighbourhood_size = config
         .only_save_biggest_viewsheds
         .context("Must specify --only-save-biggest-viewsheds")?;
@@ -20,7 +22,7 @@ pub fn create_biggest_tvs_subgrid(config: &crate::config::Compute) -> Result<Has
 }
 
 /// Find the biggest surface areas within a subgrid of a computed TVS heatmap .tiff.
-pub fn find_biggest_total_surfaces(
+pub(crate) fn find_biggest_total_surfaces(
     dataset: &gdal::Dataset,
     neighbourhood_size: i64,
 ) -> Result<HashMap<i64, i64>> {
@@ -51,7 +53,11 @@ pub fn find_biggest_total_surfaces(
 }
 
 /// Find which neighbourhood a given index is in.
-pub const fn get_neighbourhood_id(index: i64, global_width: i64, neighbourhood_size: i64) -> i64 {
+pub(crate) const fn get_neighbourhood_id(
+    index: i64,
+    global_width: i64,
+    neighbourhood_size: i64,
+) -> i64 {
     let global_x = index.rem_euclid(global_width);
     let global_y = index.div_euclid(global_width);
 

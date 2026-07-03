@@ -75,7 +75,7 @@ fn compilation_worker(
 
 /// create a db at path P only if `is_db_worker`, otherwise return
 /// a noop worker
-pub fn init_worker<P: AsRef<Path>>(
+pub(crate) fn init_worker<P: AsRef<Path>>(
     path: P,
     meta_data: &tvs_lib::metadata::MetaData,
     is_db_worker: bool,
@@ -93,7 +93,7 @@ pub fn init_worker<P: AsRef<Path>>(
 impl super::run::Compute<'_> {
     /// `run_parallel` runs the CPU kernel in parallel
     #[expect(clippy::expect_used, reason = "We need to panic on failure")]
-    pub fn run(&mut self) -> Result<()> {
+    pub(crate) fn run(&mut self) -> Result<()> {
         let max_los = usize::try_from(self.dem.max_los_as_points)?;
 
         let elevations = &self.dem.elevations;

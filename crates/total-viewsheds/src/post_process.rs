@@ -4,7 +4,7 @@ use color_eyre::Result;
 use rayon::iter::{IntoParallelRefIterator as _, ParallelIterator as _};
 
 /// Run post-processing tasks.
-pub fn run(config: &crate::config::PostProcess) -> Result<()> {
+pub(crate) fn run(config: &crate::config::PostProcess) -> Result<()> {
     #[expect(
         clippy::redundant_closure_for_method_calls,
         reason = "It's too verbose"

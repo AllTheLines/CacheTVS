@@ -7,7 +7,7 @@ use std::simd::{Mask, Simd, f32x4};
 
 /// `VectorMax` performs an element-wise SIMD max of floats, allowing for architecture
 /// specific implementations
-pub trait VectorMax<const WIDTH: usize> {
+pub(crate) trait VectorMax<const WIDTH: usize> {
     /// `max` computes an element-wise maximum from lhs and rhs, assuming neither contain NaNs
     /// or -0.0
     fn max(lhs: Simd<f32, WIDTH>, rhs: Simd<f32, WIDTH>) -> Simd<f32, WIDTH>;
@@ -15,7 +15,7 @@ pub trait VectorMax<const WIDTH: usize> {
 
 /// `VectorGreater` performs a SIMD greater than of floats, allowing for architecture
 /// specific implementations
-pub trait VectorGreater<const WIDTH: usize> {
+pub(crate) trait VectorGreater<const WIDTH: usize> {
     /// gt computes an element-wise maximum from lhs and rhs, assuming neither contain NaNs
     /// or -0.0
     fn gt(lhs: Simd<f32, WIDTH>, rhs: Simd<f32, WIDTH>) -> Mask<i32, WIDTH>;
@@ -23,7 +23,7 @@ pub trait VectorGreater<const WIDTH: usize> {
 
 /// `VectorLos` is an implementation of the internals of `PrefixMax`, `Angle`,  and `Accumulate`
 /// for Portable SIMD
-pub struct VectorLos<const WIDTH: usize>;
+pub(crate) struct VectorLos<const WIDTH: usize>;
 
 impl<const WIDTH: usize> VectorMax<WIDTH> for VectorLos<WIDTH> {
     #[inline]
@@ -333,7 +333,7 @@ impl<const WIDTH: usize> Angle for VectorLos<WIDTH> {
 
 /// `DEFAULT_VECTOR_LENGTH` determines the CPU Kernel's default vector length based off
 /// the architecture that the binary is built for
-pub const DEFAULT_VECTOR_LENGTH: usize = const {
+pub(crate) const DEFAULT_VECTOR_LENGTH: usize = const {
     if cfg!(target_feature = "avx512f") {
         16
     } else if cfg!(any(test, feature = "ring_data")) {

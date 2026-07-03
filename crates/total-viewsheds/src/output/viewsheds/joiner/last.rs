@@ -5,7 +5,9 @@
 use color_eyre::eyre::{ContextCompat as _, Result, bail};
 use itertools::Itertools as _;
 
-impl super::joiner_common::Joiner {
+use crate::output::viewsheds::growable_polygon::Opening;
+
+impl super::Joiner {
     /// The final angle faces the challenge of joining polygons together from the first angle.
     pub(crate) fn build_final_angle(&mut self) -> Result<()> {
         tracing::trace!("Building viewshed for final angle");
@@ -101,19 +103,19 @@ impl super::joiner_common::Joiner {
         let mut iterator = vertices_clone.iter().enumerate().rev();
         while let Some((index, vertex)) = iterator.next() {
             match vertex.opening {
-                super::growable_polygon::Opening::Null
-                | super::growable_polygon::Opening::NewStart(_)
-                | super::growable_polygon::Opening::NewEnd(_)
-                | super::growable_polygon::Opening::Start(_)
-                | super::growable_polygon::Opening::End(_) => (),
-                super::growable_polygon::Opening::GenesisStart(_) => {
+                Opening::Null
+                | Opening::NewStart(_)
+                | Opening::NewEnd(_)
+                | Opening::Start(_)
+                | Opening::End(_) => (),
+                Opening::GenesisStart(_) => {
                     bail!("Dangling `Opening::GenesisStart`");
                 }
-                super::growable_polygon::Opening::GenesisEnd(start) => {
+                Opening::GenesisEnd(start) => {
                     let Some(next) = iterator.next() else {
                         bail!("`Opening::GenesisEnd` without a following vertex");
                     };
-                    let super::growable_polygon::Opening::GenesisStart(end) = next.1.opening else {
+                    let Opening::GenesisStart(end) = next.1.opening else {
                         tracing::error!(
                             "Bad opening ({:?}) in polygon: {vertices_clone:#?}",
                             next.1.opening
@@ -182,20 +184,19 @@ impl super::joiner_common::Joiner {
         let mut iterator = base_polygon.vertices.iter_mut().enumerate().rev();
         while let Some((index, vertex)) = iterator.next() {
             match vertex.opening {
-                super::growable_polygon::Opening::Start(opening_start) => {
+                Opening::Start(opening_start) => {
                     let Some((index_next, vertex_next)) = iterator.next() else {
                         bail!("Opening without following vertex");
                     };
 
-                    let super::growable_polygon::Opening::End(opening_end) = vertex_next.opening
-                    else {
+                    let Opening::End(opening_end) = vertex_next.opening else {
                         bail!("Opening `Start` not followed by opening `End`");
                     };
 
                     let base_opening_range = opening_start..opening_end;
 
                     tracing::trace!("Checking touching for vertex ({:?})...", vertex);
-                    if super::growable_polygon::GrowablePolygon::is_touching(
+                    if crate::output::viewsheds::growable_polygon::GrowablePolygon::is_touching(
                         &base_opening_range,
                         &joining_opening_range,
                     ) {
@@ -215,14 +216,14 @@ impl super::joiner_common::Joiner {
                         );
                     }
                 }
-                super::growable_polygon::Opening::End(_) => {
+                Opening::End(_) => {
                     bail!("Unexpected opening `End` reached");
                 }
-                super::growable_polygon::Opening::Null
-                | super::growable_polygon::Opening::GenesisStart(_)
-                | super::growable_polygon::Opening::GenesisEnd(_)
-                | super::growable_polygon::Opening::NewStart(_)
-                | super::growable_polygon::Opening::NewEnd(_) => (),
+                Opening::Null
+                | Opening::GenesisStart(_)
+                | Opening::GenesisEnd(_)
+                | Opening::NewStart(_)
+                | Opening::NewEnd(_) => (),
             }
         }
 
@@ -260,12 +261,11 @@ impl super::joiner_common::Joiner {
 
 #[cfg(test)]
 mod test {
-
     #[test]
     fn final_segment_joins_starting_segment_simple() {
         crate::setup_logging().unwrap();
         let part = vec![crate::storage::segments::Segment::new(2, 2)];
-        let joined = crate::output::viewsheds::joiner_common::Joiner::build(
+        let joined = crate::output::viewsheds::joiner::build(
             &[part.clone(), vec![], vec![], vec![], vec![], part],
             1.0,
         )
@@ -291,7 +291,7 @@ mod test {
     #[test]
     fn inherit_holes_final() {
         crate::setup_logging().unwrap();
-        let joined = crate::output::viewsheds::joiner_common::Joiner::build(
+        let joined = crate::output::viewsheds::joiner::build(
             &[
                 vec![crate::storage::segments::Segment::new(0, 3)],
                 vec![
@@ -332,7 +332,7 @@ mod test {
             crate::storage::segments::Segment::new(0, 1),
             crate::storage::segments::Segment::new(2, 1),
         ];
-        let joined = crate::output::viewsheds::joiner_common::Joiner::build(
+        let joined = crate::output::viewsheds::joiner::build(
             &[starting, vec![], vec![], vec![], vec![], long],
             1.0,
         )
@@ -363,7 +363,7 @@ mod test {
             crate::storage::segments::Segment::new(2, 1),
             crate::storage::segments::Segment::new(4, 1),
         ];
-        let joined = crate::output::viewsheds::joiner_common::Joiner::build(
+        let joined = crate::output::viewsheds::joiner::build(
             &[starting, long.clone(), vec![], vec![], vec![], long],
             1.0,
         )
@@ -391,7 +391,7 @@ mod test {
         crate::setup_logging().unwrap();
         let long = vec![crate::storage::segments::Segment::new(0, 4)];
         let short = vec![crate::storage::segments::Segment::new(2, 2)];
-        let joined = crate::output::viewsheds::joiner_common::Joiner::build(
+        let joined = crate::output::viewsheds::joiner::build(
             &[
                 short.clone(),
                 long.clone(),
@@ -428,7 +428,7 @@ mod test {
         crate::setup_logging().unwrap();
         let part = vec![crate::storage::segments::Segment::new(2, 2)];
         let ring = vec![part; 10];
-        let joined = crate::output::viewsheds::joiner_common::Joiner::build(&ring, 1.0).unwrap();
+        let joined = crate::output::viewsheds::joiner::build(&ring, 1.0).unwrap();
         let actual = crate::output::ascii::rasterise(joined);
         let expected = [
             "████████████████████████",
@@ -455,7 +455,7 @@ mod test {
             crate::storage::segments::Segment::new(3, 1),
         ];
         let ring = vec![part; 10];
-        let joined = crate::output::viewsheds::joiner_common::Joiner::build(&ring, 1.0).unwrap();
+        let joined = crate::output::viewsheds::joiner::build(&ring, 1.0).unwrap();
         let actual = crate::output::ascii::rasterise(joined);
         let expected = [
             "████████████████████████",

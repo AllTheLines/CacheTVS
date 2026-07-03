@@ -2,7 +2,7 @@
 
 #[derive(Clone, Copy, Debug)]
 /// A raster coodinate.
-pub struct RasterCoord {
+pub(crate) struct RasterCoord {
     /// The x coordinate.
     pub x: i32,
     /// The y coordinate.
@@ -20,7 +20,7 @@ impl From<(i32, i32)> for RasterCoord {
 
 /// Iterator that yields (x, y) pixels on a line using Bresenham's algorithm.
 /// <https://en.wikipedia.org/wiki/Bresenham%27s_line_algorithm>
-pub struct Bresenham {
+pub(crate) struct Bresenham {
     /// The current start of the line. Updates as we move through the rasterisation.
     from: RasterCoord,
     /// Where the line ends.
@@ -38,7 +38,7 @@ pub struct Bresenham {
 
 impl Bresenham {
     /// Instantiate.
-    pub fn new(from: RasterCoord, to: RasterCoord) -> Self {
+    pub(crate) fn new(from: RasterCoord, to: RasterCoord) -> Self {
         let delta = RasterCoord {
             x: (to.x - from.x).abs(),
             y: (to.y - from.y).abs(),

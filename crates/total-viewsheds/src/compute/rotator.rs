@@ -10,7 +10,7 @@
 ///   * 180°: (`width_index` - x, `width_index` - y)
 //    * 270°: (y, `width_index` - x)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Quadrant {
+pub(crate) enum Quadrant {
     /// Top-right quadrant: 0° to 90°
     TopRight,
     /// Top-left quadrant: 90° to 180°
@@ -55,7 +55,7 @@ impl From<f64> for Quadrant {
 }
 
 /// Rotator struct.
-pub struct Rotator {
+pub(crate) struct Rotator {
     /// The centre of the DEM in relative coordinates.
     centre: (f64, f64),
     /// The index of the last point in a row/column of the DEM.
@@ -72,7 +72,7 @@ pub struct Rotator {
 
 impl Rotator {
     /// Instantiate.
-    pub fn new(angle: f64, width: isize) -> Self {
+    pub(crate) fn new(angle: f64, width: isize) -> Self {
         assert!(
             (0.0f64..360.0f64).contains(&angle),
             "Angle {angle} must be in range 0..360"
@@ -109,7 +109,7 @@ impl Rotator {
     /// we'd just make the angle negative here. But seeing as the rest of the maths involved in
     /// skew rotation is based in positive angles it's better to achieve the same rotation
     /// through a positive but inverted angle.
-    pub fn invert_angle(angle: f64) -> f64 {
+    pub(crate) fn invert_angle(angle: f64) -> f64 {
         if angle > 0.0f64 {
             360.0f64 - angle
         } else {
@@ -122,7 +122,7 @@ impl Rotator {
     ///
     /// Note that each shear step _must_ be rounded. This is essential to achieving a bijective
     /// mapping.
-    pub fn rotate(&self, x: isize, y: isize) -> (isize, isize) {
+    pub(crate) fn rotate(&self, x: isize, y: isize) -> (isize, isize) {
         let (x_centre, y_centre) = self.centre;
         let (quadrant_x, quadrant_y) = self.rotate_to_quadrant(x, y);
 
