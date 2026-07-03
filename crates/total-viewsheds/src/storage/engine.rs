@@ -6,7 +6,7 @@ use std::sync::mpsc;
 use std::thread;
 
 /// `Engine` is a thread-safe trait to store `PolarSegments` for a given `tvs_id`
-pub trait Engine
+pub(crate) trait Engine
 where
     Self: Send + Sync,
 {
@@ -20,7 +20,7 @@ where
 }
 
 /// `NoopEngine` stores no `PolarSegments`, it exists for testing purposes
-pub struct Noop;
+pub(crate) struct Noop;
 impl Engine for Noop {
     fn store_segments(
         &self,
@@ -48,7 +48,7 @@ impl Engine for Noop {
 ///
 /// Because of the large amount of data and need to optimize for quick writes t is not crash safe,
 /// meaning if your program crashes the underlying sql database will likely be corrupted
-pub struct Sqlite {
+pub(crate) struct Sqlite {
     /// `worker_handle` holds the `JoinHandle` for a worker thread which is reading
     /// from the Receiver end of `sender`'s channel.
     /// It uses an `Option` so that it can `take` the inner `JoinHandle` inside drop,
@@ -60,7 +60,7 @@ pub struct Sqlite {
 
 impl Sqlite {
     /// Create a new `SqliteEngine` storing the database at `path`
-    pub fn new<P: AsRef<Path>>(path: P) -> Self {
+    pub(crate) fn new<P: AsRef<Path>>(path: P) -> Self {
         let (tx, rx) = mpsc::sync_channel(1024);
 
         // make an owned copy of Path so that it can be moved into the worker

@@ -10,7 +10,7 @@ const U10_MAX: u32 = (1 << 10) - 1;
 
 #[derive(Default, Debug, Clone, Copy)]
 /// Line of sight data that can be packed within 32 bits.
-pub struct LineOfSightPacked(f32);
+pub(crate) struct LineOfSightPacked(f32);
 
 #[expect(
     clippy::big_endian_bytes,
@@ -21,7 +21,7 @@ impl LineOfSightPacked {
     ///
     /// f32 is better than u32 because  I imagine that floats are just more widely recognised in general.
     /// At the end of the day, they're just bits that are neither valid f32 nor u32.
-    pub fn new(distance: u32, angle: u16) -> Result<Self> {
+    pub(crate) fn new(distance: u32, angle: u16) -> Result<Self> {
         if distance > U22_MAX {
             color_eyre::eyre::bail!("{} is greater than u22 max {U22_MAX}", distance);
         }
@@ -37,7 +37,7 @@ impl LineOfSightPacked {
 
     /// create a packed line of sight without checking if the values fit within
     /// the packed bit widths
-    pub unsafe fn new_unchecked(distance: u32, angle: u16) -> Self {
+    pub(crate) unsafe fn new_unchecked(distance: u32, angle: u16) -> Self {
         let angle_u32 = u32::from(angle);
 
         let distance_bits = (distance & U22_MAX) << 10u32;
@@ -54,25 +54,25 @@ impl LineOfSightPacked {
     }
 
     /// Distance in meters from the point of view to the visible point.
-    pub const fn distance(self) -> u32 {
+    pub(crate) const fn distance(self) -> u32 {
         (self.to_u32() >> 10u32) & U22_MAX
     }
 
     /// The angle of the line of sight from the point of view.
     #[expect(clippy::as_conversions, reason = "(self & 2^10) < 2^16")]
-    pub const fn angle(self) -> u16 {
+    pub(crate) const fn angle(self) -> u16 {
         (self.to_u32() & U10_MAX) as u16
     }
 
     /// Get the raw f32 value. It doesn't represent any useful data, it's just the f32 view of the
     /// packed data.
-    pub const fn as_f32(self) -> f32 {
+    pub(crate) const fn as_f32(self) -> f32 {
         self.0
     }
 
     /// calculate the longer packed line of sight, and when distances are equal
     /// choose the smaller angle
-    pub const fn max(self, rhs: Self) -> Self {
+    pub(crate) const fn max(self, rhs: Self) -> Self {
         if rhs.distance() > self.distance() {
             return rhs;
         }

@@ -5,7 +5,7 @@ use std::path::Path;
 
 /// How we look up polar segments in the database.
 #[derive(Debug)]
-pub enum ID {
+pub(crate) enum ID {
     /// The precise DEM ID of the polar segment.
     DEM(i64),
     /// The neighbourhood ID within which a single DEM ID has been isolated.
@@ -13,20 +13,20 @@ pub enum ID {
 }
 
 /// Sqlite DB connection details.
-pub struct DB {
+pub(crate) struct DB {
     /// A connection to Sqlite
     connection: rusqlite::Connection,
 }
 
 impl DB {
     /// Instantitate.
-    pub fn new<P: AsRef<Path>>(db_path: P) -> Result<Self> {
+    pub(crate) fn new<P: AsRef<Path>>(db_path: P) -> Result<Self> {
         let connection = rusqlite::Connection::open(db_path)?;
         Ok(Self { connection })
     }
 
     /// Save the metadata.
-    pub fn save_metadata(&self, metadata: &tvs_lib::metadata::MetaData) -> Result<()> {
+    pub(crate) fn save_metadata(&self, metadata: &tvs_lib::metadata::MetaData) -> Result<()> {
         tracing::debug!("Saving metadata to {:?}...", self.connection.path());
 
         self.connection.execute(
@@ -49,7 +49,7 @@ impl DB {
     }
 
     /// Load the metadata.
-    pub fn load_metadata(&self) -> Result<tvs_lib::metadata::MetaData> {
+    pub(crate) fn load_metadata(&self) -> Result<tvs_lib::metadata::MetaData> {
         tracing::debug!("Loading metadata from {:?}...", self.connection.path());
 
         let metadata_string: String =
@@ -62,7 +62,10 @@ impl DB {
     }
 
     /// Load all the polar segments for a given ID.
-    pub fn load_segments(&self, id: &ID) -> Result<(Vec<Vec<super::segments::Segment>>, i64)> {
+    pub(crate) fn load_segments(
+        &self,
+        id: &ID,
+    ) -> Result<(Vec<Vec<super::segments::Segment>>, i64)> {
         tracing::debug!(
             "Loading polar segments for {id:?} from {:?}...",
             self.connection.path()

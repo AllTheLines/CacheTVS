@@ -2,7 +2,7 @@
 use color_eyre::{Result, eyre::ContextCompat as _};
 
 /// Convert an array of floats to a grayscale heatmap.
-pub fn save(
+pub(crate) fn save(
     data: &[f32],
     width: u32,
     height: u32,

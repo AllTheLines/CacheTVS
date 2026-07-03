@@ -27,7 +27,7 @@ fn generate_distances(max_los: usize, refraction: f32, scale: f32) -> (Vec<f32>,
 /// Unroll holds an unrolled heatmap and unrolled longest line of sight calculation
 /// Since in Line of Sight-land max/addition are commutative, then Unroll will be materialized
 /// into (f32, f32)
-pub struct UnrollVector<const UNROLL: usize, const VECTOR_WIDTH: usize>
+pub(crate) struct UnrollVector<const UNROLL: usize, const VECTOR_WIDTH: usize>
 where
     [(); UNROLL * VECTOR_WIDTH]:,
 {
@@ -40,7 +40,7 @@ where
 }
 
 /// `UnrolledLOS` implements an Unrolled `LineOfSight` calculation
-pub struct UnrolledVectorLos<const UNROLL: usize, const VECTOR_WIDTH: usize> {
+pub(crate) struct UnrolledVectorLos<const UNROLL: usize, const VECTOR_WIDTH: usize> {
     /// `angles` holds a buffer for line of sight angles to be put into
     /// which is exactly `max_los+1` long
     angles: Vec<f32>,
@@ -81,7 +81,7 @@ where
 impl<const UNROLL: usize, const VECTOR_WIDTH: usize> UnrolledVectorLos<UNROLL, VECTOR_WIDTH> {
     /// `new` initializes a new `UnrolledLOS`, and precalculates all the distances
     /// and earth curvature adjustments
-    pub fn new(max_los: usize, refraction: f32, scale: f32) -> Self {
+    pub(crate) fn new(max_los: usize, refraction: f32, scale: f32) -> Self {
         assert_eq!(
             max_los % VECTOR_WIDTH,
             0,

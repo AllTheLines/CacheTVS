@@ -7,7 +7,7 @@
 use color_eyre::eyre::{ContextCompat as _, Result};
 
 /// The basic raw data needed to compute total viewsheds.
-pub struct Tile {
+pub(crate) struct Tile {
     /// The width of the tile.
     pub width: u32,
     /// The size of single elevation sample in metres.
@@ -20,7 +20,7 @@ pub struct Tile {
 
 impl Tile {
     /// Load a tile.
-    pub fn load(config: &crate::config::Compute) -> Result<Self> {
+    pub(crate) fn load(config: &crate::config::Compute) -> Result<Self> {
         if !config.input.exists() {
             color_eyre::eyre::bail!("Input file not found: {}", config.input.display());
         }

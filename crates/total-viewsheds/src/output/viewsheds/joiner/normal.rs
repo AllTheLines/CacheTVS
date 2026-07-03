@@ -1,66 +1,14 @@
-//! Join the visible segments from each computed angle into the viewshed. These "common" joinings
-//! are the ones the occur for every angle other than the final one. Therefore these should simpler
+//! Join the visible segments from each computed angle into the viewshed. These "normal" joinings
+//! are the ones that occur for every angle other than the final one. Therefore these should simpler
 //! and faster.
 
 use color_eyre::eyre::{Result, bail};
 
-/// Keeps track of active and completed polygons within a viewshed.
-#[derive(Default)]
-pub struct Joiner {
-    /// Polygons that don't intersect with the current angle. They don't need to be checked against
-    /// new segments.
-    pub completed: Vec<super::growable_polygon::GrowablePolygon>,
-    /// Polygons that intersect with the current angle. They must be checked to see if any of their
-    /// openings touch any of the segments of the current angle.
-    pub active: Vec<super::growable_polygon::GrowablePolygon>,
-}
+use crate::output::viewsheds::growable_polygon::Opening;
 
-impl Joiner {
-    /// Build a viewshed of euclidean polygons from polar segments.
-    pub fn build(
-        data: &[Vec<crate::storage::segments::Segment>],
-        dem_scale: f32,
-    ) -> Result<geo::MultiPolygon> {
-        #[expect(
-            clippy::as_conversions,
-            clippy::cast_precision_loss,
-            reason = "The angle count should never strain the f32 mantissa"
-        )]
-        let angle_count = data.len() as f32;
-        let angle_scale = angle_count / 360.0;
-
-        let mut joiner = Self {
-            completed: Vec::new(),
-            active: Vec::new(),
-        };
-
-        for (anglish, segments) in data.iter().enumerate() {
-            #[expect(
-                clippy::as_conversions,
-                clippy::cast_precision_loss,
-                reason = "The angle count should never strain the f32 mantissa"
-            )]
-            let angle = anglish as f32 / angle_scale;
-
-            joiner.build_angle(angle, angle_scale, segments, dem_scale)?;
-        }
-
-        joiner.build_final_angle()?;
-        joiner.move_all_active_polygons_to_completed();
-
-        let mut geo_polygons = Vec::new();
-        for mut raw_polygon in joiner.completed {
-            raw_polygon.dedup_vertices_ignore_openings();
-            let polygon = raw_polygon.to_geo_polygon();
-            tracing::trace!("Final viewshed, adding polygon: {polygon:?}");
-            geo_polygons.push(polygon);
-        }
-
-        Ok(geo::MultiPolygon::new(geo_polygons))
-    }
-
+impl super::Joiner {
     /// Build the viewshed for a single angle.
-    fn build_angle(
+    pub(crate) fn build_angle(
         &mut self,
         angle: f32,
         angle_scale: f32,
@@ -80,7 +28,7 @@ impl Joiner {
 
         let mut new_polygons = Vec::new();
 
-        let polygoner = super::segment_polygon::SegmentPolygon {
+        let polygoner = crate::output::viewsheds::segment_polygon::SegmentPolygon {
             dem_scale,
             angle,
             angle_scale,
@@ -160,14 +108,17 @@ impl Joiner {
 
     /// When a segment doesn't touch anything it becomes its own independent polygon.
     fn create_new_polygon_from_untouched_segment(
-        polygon_segment: &super::segment_polygon::Vertices,
+        polygon_segment: &crate::output::viewsheds::segment_polygon::Vertices,
         angle: f32,
-    ) -> Result<super::growable_polygon::GrowablePolygon> {
+    ) -> Result<crate::output::viewsheds::growable_polygon::GrowablePolygon> {
         tracing::debug!(
             "Segment not touching anything at angle {angle}, \
              so making it its own polygon: {polygon_segment:?}"
         );
-        let mut polygon = super::growable_polygon::GrowablePolygon::new(polygon_segment, angle);
+        let mut polygon = crate::output::viewsheds::growable_polygon::GrowablePolygon::new(
+            polygon_segment,
+            angle,
+        );
         if angle == 0.0 {
             polygon.is_created_at_angle_0 = true;
         }
@@ -195,7 +146,7 @@ impl Joiner {
     }
 
     /// Once all angles have been checked, we can move all active polygons to "completed".
-    fn move_all_active_polygons_to_completed(&mut self) {
+    pub(crate) fn move_all_active_polygons_to_completed(&mut self) {
         let active = self.active.drain(..);
         self.completed.extend(active);
     }
@@ -244,7 +195,7 @@ impl Joiner {
     fn join_segment(
         &mut self,
         growable_polygon_index: usize,
-        segment: &super::segment_polygon::Vertices,
+        segment: &crate::output::viewsheds::segment_polygon::Vertices,
         maybe_joining_polygon_index: Option<usize>,
         angle: f32,
     ) -> Result<bool> {
@@ -262,13 +213,12 @@ impl Joiner {
         let mut iterator = base_polygon.vertices.iter_mut().enumerate().rev();
         while let Some((index, vertex)) = iterator.next() {
             match vertex.opening {
-                super::growable_polygon::Opening::Start(opening_start) => {
+                Opening::Start(opening_start) => {
                     let Some((index_next, vertex_next)) = iterator.next() else {
                         bail!("Opening without following vertex");
                     };
 
-                    let super::growable_polygon::Opening::End(opening_end) = vertex_next.opening
-                    else {
+                    let Opening::End(opening_end) = vertex_next.opening else {
                         bail!("Opening start not followed by opening end");
                     };
 
@@ -278,7 +228,7 @@ impl Joiner {
                         "Checking touch for polygon {growable_polygon_index} at opening index: \
                          {index}, distances: {opening_range:?}",
                     );
-                    if super::growable_polygon::GrowablePolygon::is_touching(
+                    if crate::output::viewsheds::growable_polygon::GrowablePolygon::is_touching(
                         &segment.distances,
                         &opening_range,
                     ) {
@@ -296,14 +246,14 @@ impl Joiner {
                         );
                     }
                 }
-                super::growable_polygon::Opening::End(_) => {
+                Opening::End(_) => {
                     bail!("Unexpected opening end reached");
                 }
-                super::growable_polygon::Opening::Null
-                | super::growable_polygon::Opening::GenesisStart(_)
-                | super::growable_polygon::Opening::GenesisEnd(_)
-                | super::growable_polygon::Opening::NewStart(_)
-                | super::growable_polygon::Opening::NewEnd(_) => (),
+                Opening::Null
+                | Opening::GenesisStart(_)
+                | Opening::GenesisEnd(_)
+                | Opening::NewStart(_)
+                | Opening::NewEnd(_) => (),
             }
         }
 
@@ -342,8 +292,8 @@ impl Joiner {
         growable_polygon_index: usize,
         maybe_joining_polygon_index: Option<usize>,
     ) -> (
-        &mut super::growable_polygon::GrowablePolygon,
-        Option<&mut super::growable_polygon::GrowablePolygon>,
+        &mut crate::output::viewsheds::growable_polygon::GrowablePolygon,
+        Option<&mut crate::output::viewsheds::growable_polygon::GrowablePolygon>,
     ) {
         if let Some(joining_polygon_index) = maybe_joining_polygon_index {
             #[expect(
@@ -369,13 +319,15 @@ impl Joiner {
 
 #[cfg(test)]
 mod test {
-    use super::*;
-
     #[test]
     fn multiple_angles() {
         crate::setup_logging().unwrap();
         let segment = vec![crate::storage::segments::Segment::new(0, 5)];
-        let joined = Joiner::build(&[segment.clone(), segment.clone(), segment], 1.0).unwrap();
+        let joined = crate::output::viewsheds::joiner::build(
+            &[segment.clone(), segment.clone(), segment],
+            1.0,
+        )
+        .unwrap();
         let actual = crate::output::ascii::rasterise(joined);
         let expected = [
             "████████████████████████",
@@ -402,7 +354,7 @@ mod test {
             crate::storage::segments::Segment::new(0, 2),
             crate::storage::segments::Segment::new(3, 1),
         ];
-        let joined = Joiner::build(
+        let joined = crate::output::viewsheds::joiner::build(
             &[
                 main.clone(),
                 main.clone(),
@@ -436,7 +388,7 @@ mod test {
     fn multiple_polygons() {
         crate::setup_logging().unwrap();
         let segment = vec![crate::storage::segments::Segment::new(0, 5)];
-        let joined = Joiner::build(
+        let joined = crate::output::viewsheds::joiner::build(
             &[
                 segment.clone(),
                 vec![],
@@ -471,7 +423,7 @@ mod test {
     fn multiple_polygons_not_touching() {
         crate::setup_logging().unwrap();
         let segment = vec![crate::storage::segments::Segment::new(2, 2)];
-        let joined = Joiner::build(
+        let joined = crate::output::viewsheds::joiner::build(
             &[
                 segment.clone(),
                 vec![],
@@ -507,7 +459,7 @@ mod test {
         crate::setup_logging().unwrap();
         let main = vec![crate::storage::segments::Segment::new(0, 4)];
         let variance = vec![crate::storage::segments::Segment::new(0, 2)];
-        let joined = Joiner::build(
+        let joined = crate::output::viewsheds::joiner::build(
             &[main.clone(), main.clone(), main.clone(), main, variance],
             1.0,
         )
@@ -539,7 +491,11 @@ mod test {
             crate::storage::segments::Segment::new(3, 1),
         ];
         let bottom = vec![crate::storage::segments::Segment::new(0, 2)];
-        let joined = Joiner::build(&[main.clone(), pair, bottom, main.clone(), main], 1.0).unwrap();
+        let joined = crate::output::viewsheds::joiner::build(
+            &[main.clone(), pair, bottom, main.clone(), main],
+            1.0,
+        )
+        .unwrap();
         let actual = crate::output::ascii::rasterise(joined);
         let expected = [
             "████████████████████████",
@@ -563,7 +519,7 @@ mod test {
         crate::setup_logging().unwrap();
         let main = vec![crate::storage::segments::Segment::new(0, 4)];
         let top = vec![crate::storage::segments::Segment::new(2, 2)];
-        let joined = Joiner::build(
+        let joined = crate::output::viewsheds::joiner::build(
             &[
                 main.clone(),
                 top.clone(),
@@ -598,8 +554,11 @@ mod test {
         crate::setup_logging().unwrap();
         let main = vec![crate::storage::segments::Segment::new(0, 4)];
         let lid = vec![crate::storage::segments::Segment::new(2, 1)];
-        let joined =
-            Joiner::build(&[main.clone(), main.clone(), lid, main.clone(), main], 1.0).unwrap();
+        let joined = crate::output::viewsheds::joiner::build(
+            &[main.clone(), main.clone(), lid, main.clone(), main],
+            1.0,
+        )
+        .unwrap();
         let actual = crate::output::ascii::rasterise(joined);
         let expected = [
             "████████████████████████",
@@ -627,7 +586,7 @@ mod test {
             crate::storage::segments::Segment::new(2, 1),
             crate::storage::segments::Segment::new(4, 1),
         ];
-        let joined = Joiner::build(
+        let joined = crate::output::viewsheds::joiner::build(
             &[main.clone(), main.clone(), main.clone(), struts, main],
             1.0,
         )
@@ -658,7 +617,7 @@ mod test {
             crate::storage::segments::Segment::new(4, 1),
         ];
         let long = vec![crate::storage::segments::Segment::new(0, 5)];
-        let joined = Joiner::build(
+        let joined = crate::output::viewsheds::joiner::build(
             &[
                 polygons.clone(),
                 polygons.clone(),
@@ -701,7 +660,9 @@ mod test {
         let first = vec![higher_but_made_first.clone()];
         let second = vec![lower, higher_but_made_first];
         let long = vec![crate::storage::segments::Segment::new(0, 5)];
-        let joined = Joiner::build(&[vec![], first, second, long, vec![]], 1.0).unwrap();
+        let joined =
+            crate::output::viewsheds::joiner::build(&[vec![], first, second, long, vec![]], 1.0)
+                .unwrap();
         let actual = crate::output::ascii::rasterise(joined);
         let expected = [
             "████████████████████████",
@@ -724,7 +685,7 @@ mod test {
     fn inherit_holes_common() {
         crate::setup_logging().unwrap();
 
-        let joined = Joiner::build(
+        let joined = crate::output::viewsheds::joiner::build(
             &[
                 vec![],
                 vec![crate::storage::segments::Segment::new(0, 3)],

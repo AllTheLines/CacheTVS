@@ -2,7 +2,7 @@
 
 /// The 5 vertices of a segment and their distances from the centre.
 #[derive(Debug)]
-pub struct Vertices {
+pub(crate) struct Vertices {
     /// The 5 vertices of a segment. The 4 corners plus a copy of the first vertex to close the
     /// polygon.
     pub vertices: [geo::Coord; 5],
@@ -11,7 +11,7 @@ pub struct Vertices {
 }
 
 /// `SegmentPolygon`
-pub struct SegmentPolygon {
+pub(crate) struct SegmentPolygon {
     /// Scale of DEM data.
     pub dem_scale: f32,
     /// The current sector angle.
@@ -22,7 +22,7 @@ pub struct SegmentPolygon {
 
 impl SegmentPolygon {
     /// Make a single polygon representing a visible region of the planet.
-    pub fn make(&self, opening_index: u32, closing_index: u32) -> Vertices {
+    pub(crate) fn make(&self, opening_index: u32, closing_index: u32) -> Vertices {
         let opening_coord = self.index_to_coordinate(opening_index);
         let closing_coord = self.index_to_coordinate(closing_index);
 

@@ -5,7 +5,7 @@ use color_eyre::Result;
 use geo::Contains as _;
 
 /// `Pruner`
-pub struct Pruner {
+pub(crate) struct Pruner {
     /// Width of the DEM in points
     width: u32,
     /// The DEM coordinates for the Area of Interest.
@@ -14,12 +14,12 @@ pub struct Pruner {
 
 impl Pruner {
     /// Instantiate.
-    pub const fn new(width: u32, polygon: geo::Polygon) -> Self {
+    pub(crate) const fn new(width: u32, polygon: geo::Polygon) -> Self {
         Self { width, polygon }
     }
 
     /// Convert user-provided lon/lat coordinates to a polygon.
-    pub fn lonlat_coords_to_polygon(
+    pub(crate) fn lonlat_coords_to_polygon(
         points: Vec<(f32, f32)>,
         metadata: &tvs_lib::metadata::MetaData,
     ) -> Result<geo::Polygon> {
@@ -41,7 +41,7 @@ impl Pruner {
     }
 
     /// Can the given DEM ID be ignored in computations.
-    pub fn is_prunable(&self, dem_id: i64) -> bool {
+    pub(crate) fn is_prunable(&self, dem_id: i64) -> bool {
         let dem_coord = self.convert_dem_id_to_coord(dem_id);
         !self.polygon.contains(&dem_coord.0)
     }
@@ -52,7 +52,7 @@ impl Pruner {
         reason = "We're only dealing with a max of the DEM's width"
     )]
     /// Convert a DEM 1D index to a 2D coordinate.
-    pub fn convert_dem_id_to_coord(&self, dem_id: i64) -> tvs_lib::dem::Coordinate {
+    pub(crate) fn convert_dem_id_to_coord(&self, dem_id: i64) -> tvs_lib::dem::Coordinate {
         let x = dem_id.rem_euclid(self.width.into()) as f64;
         let y = dem_id.div_euclid(self.width.into()) as f64;
         tvs_lib::dem::Coordinate(geo::coord! {x: x, y: y})
