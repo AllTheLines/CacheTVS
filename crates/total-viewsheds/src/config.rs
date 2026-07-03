@@ -10,7 +10,7 @@ use std::path::PathBuf;
 #[command(
     about = "Generate _all_ the viewsheds for a given Digital Elevation Model, therefore the total viewsheds."
 )]
-pub struct Config {
+pub(crate) struct Config {
     #[command(subcommand)]
     /// The subcommand.
     pub command: Commands,
@@ -18,7 +18,7 @@ pub struct Config {
 
 /// CLI subcommand.
 #[derive(clap::Subcommand, Debug)]
-pub enum Commands {
+pub(crate) enum Commands {
     /// Run main computations.
     Compute(Compute),
     /// Reconstruct a viewshed.
@@ -35,7 +35,7 @@ pub enum Commands {
 
 /// Arguments to the `compute` subcommand.
 #[derive(clap::Parser, Debug, Default)]
-pub struct Compute {
+pub(crate) struct Compute {
     // TODO: make this "reserved rings" and add support to the kernel so that the user can get
     // feedback of the actual number needed.
     //
@@ -154,7 +154,7 @@ pub struct Compute {
 
 /// Arguments to the `viewshed` subcommand.
 #[derive(clap::Parser, Debug)]
-pub struct Viewshed {
+pub(crate) struct Viewshed {
     /// Path or directory where viewshed DB was saved.
     #[arg(value_name = "Path to existing database")]
     pub db_path: std::path::PathBuf,
@@ -170,7 +170,7 @@ pub struct Viewshed {
 
 /// Arguments to the `post-process` subcommand.
 #[derive(clap::Parser, Debug)]
-pub struct PostProcess {
+pub(crate) struct PostProcess {
     /// Directory where viewshed DBs were saved.
     #[arg(value_name = "Path to existing databases")]
     pub db_dir: std::path::PathBuf,
@@ -211,7 +211,7 @@ fn is_perfect_square(argument: &str) -> Result<u16> {
 
 /// Where to run the computations.
 #[derive(clap::ValueEnum, Clone, Debug, Default)]
-pub enum Backend {
+pub(crate) enum Backend {
     /// Optimised cache-efficient CPU kernel
     #[default]
     CPU,
@@ -221,7 +221,7 @@ pub enum Backend {
 
 /// Which calculations to process.
 #[derive(clap::ValueEnum, Clone, Debug, PartialEq, Eq)]
-pub enum Process {
+pub(crate) enum Process {
     /// Calculate everything.
     All,
     /// Compute all the polar segments saving them to disk so that they can be used to later
@@ -231,7 +231,7 @@ pub enum Process {
 
 /// Where to run the computations.
 #[derive(clap::ValueEnum, Clone, Debug, Copy, Default)]
-pub enum HeatmapNormalisation {
+pub(crate) enum HeatmapNormalisation {
     /// Just scale between 0 and 1
     UnitScale,
     /// Scale between 0 and 1 with an exponential factor.

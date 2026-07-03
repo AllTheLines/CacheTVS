@@ -7,7 +7,7 @@ use geo::HasDimensions as _;
 use itertools::izip;
 
 /// The data output by a single angle.
-pub struct OutputData {
+pub(crate) struct OutputData {
     /// The visibile surface area.
     pub surfaces: Vec<f32>,
     /// The longest lines of sight.
@@ -57,7 +57,7 @@ const DEFAULT_UNROLL: usize = const {
 
 /// `kernel` will calculate the longest line of sight heatmap for a given angle and elevation map
 /// assuming that the maximum line of sight is `max_los`
-pub fn kernel(
+pub(crate) fn kernel(
     db_worker: &crate::storage::worker::Worker,
     elevation_map: &[i16],
     output: &mut OutputData,

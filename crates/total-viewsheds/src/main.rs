@@ -2,12 +2,11 @@
 #![feature(portable_simd)]
 #![feature(specialization)]
 #![feature(mpmc_channel)]
+#![feature(generic_const_exprs)]
 #![expect(
     incomplete_features,
     reason = "our usage isn't crazy and unlikely to break"
 )]
-#![feature(generic_const_exprs)]
-#![expect(clippy::pub_use, reason = "I admit I don't understand the other way.")]
 #![cfg_attr(
     test,
     expect(
@@ -40,7 +39,7 @@ mod workers;
 
 /// cpu implements a CPU kernel for the longest line of sight
 mod compute {
-    pub mod area_of_interest;
+    pub(crate) mod area_of_interest;
 
     /// los contains all the traits necessary for implementing a line of sight algorithm
     mod los;
@@ -49,7 +48,7 @@ mod compute {
     mod rotator;
 
     /// kernel is the exported kernel module
-    pub mod kernel;
+    pub(crate) mod kernel;
 
     /// `unrolled_los` holds a fully implemented los trait for unrolled vectorization
     mod unrolled_los;
@@ -57,31 +56,30 @@ mod compute {
     /// `vector_intrinsics` holds all the vector-related LOS intrinsics
     mod vector_intrinsics;
 
-    pub use kernel::kernel;
+    pub(crate) use kernel::kernel;
 }
 
 /// Database for viewsheds
 mod storage {
-    pub mod db;
-    pub mod engine;
-    pub mod segments;
-    pub mod worker;
+    pub(crate) mod db;
+    pub(crate) mod engine;
+    pub(crate) mod segments;
+    pub(crate) mod worker;
 }
 
 /// Various ways to output data.
 mod output {
-    pub mod ascii;
-    pub mod bresenham;
-    pub mod png;
-    pub mod tiff;
+    mod ascii;
+    mod bresenham;
+    pub(crate) mod png;
+    pub(crate) mod tiff;
 
     /// Load, parse and reconstruct euclidean polygon viewsheds from their raw polar segments.
-    pub mod viewsheds {
-        pub mod growable_polygon;
-        pub mod joiner_common;
-        pub mod joiner_final;
-        pub mod segment_polygon;
-        pub mod viewshed;
+    pub(crate) mod viewsheds {
+        mod growable_polygon;
+        mod joiner;
+        mod segment_polygon;
+        pub(crate) mod viewshed;
     }
 }
 
@@ -209,5 +207,5 @@ fn compute(config: &config::Compute) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    pub mod fixtures;
+    pub(crate) mod fixtures;
 }

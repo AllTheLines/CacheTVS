@@ -4,11 +4,11 @@
 /// `Segment` is the rho portion of a line segment in polar coordinates
 /// as (`rho`: u16, `delta_rho`: u16) which are packed into a single u32 for storage
 #[derive(Clone, Default)]
-pub struct Segment(pub u32);
+pub(crate) struct Segment(pub u32);
 
 impl Segment {
     /// `new` creates a `Segment` the segment's start point and the distance
-    pub fn new(start: u16, distance: u16) -> Self {
+    pub(crate) fn new(start: u16, distance: u16) -> Self {
         // pack start/distsance into a u32 in the format of (start|distance)
         let wide_start: u32 = start.into();
         let wide_distance: u32 = distance.into();
@@ -20,7 +20,7 @@ impl Segment {
         clippy::as_conversions,
         reason = "the top 16 bits are guaranteed to be 0"
     )]
-    pub const fn start(&self) -> u16 {
+    pub(crate) const fn start(&self) -> u16 {
         (self.0 >> 16) as u16
     }
 
@@ -30,15 +30,11 @@ impl Segment {
         clippy::cast_possible_truncation,
         reason = "the top 16 bits are guaranteed to be 0"
     )]
-    pub const fn distance(&self) -> u16 {
+    pub(crate) const fn distance(&self) -> u16 {
         self.0 as u16
     }
 }
 
-#[expect(
-    clippy::module_name_repetitions,
-    reason = "That's the name we use in the DB"
-)]
 /// `PolarSegments` holds the degree of a line of sight and the list
 /// of visible `Segments` which is constucted through a Run Length
 /// Encoding algorithm.
@@ -47,7 +43,7 @@ impl Segment {
 ///   1. The kernel is run with higher angular resolutions.
 ///   2. The rotation maths causes some `dem_id`/angles to have multiple pairs.
 #[derive(Clone)]
-pub struct PolarSegments {
+pub(crate) struct PolarSegments {
     /// `degree` is a whole degree in the range [0, 359]
     pub degree: u16,
     /// `visible_segments` is a list of segments visible for a given
@@ -66,7 +62,7 @@ impl PolarSegments {
         clippy::indexing_slicing,
         reason = "we want to panic if out of indexes are oob"
     )]
-    pub fn from_bools(degree: u16, bitmap: &[bool]) -> Self {
+    pub(crate) fn from_bools(degree: u16, bitmap: &[bool]) -> Self {
         let mut visible_segments: Vec<Segment> = Vec::with_capacity(1);
 
         let char_slice: &[u8] = bytemuck::cast_slice(bitmap);

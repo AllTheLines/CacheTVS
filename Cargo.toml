@@ -24,6 +24,7 @@ serde_json = "1.0.143"
 [workspace.lints.rust]
 # It's always good to write as much documentation as possible
 missing_docs = "warn"
+unreachable_pub = "warn"
 
 [workspace.lints.clippy]
 # `clippy::all` is already on by default. It implies the following:
@@ -93,3 +94,8 @@ multiple_unsafe_ops_per_block = "allow"
 
 # i dont write docs with punctuation but you can still tell what im saying
 doc_paragraphs_missing_punctuation = "allow"
+
+# Along with `unreachable_pub = "warn"` this enforces the practice of explicitly defining visibility.
+# Therefore, if a symbol isn't truly public to the outside world then it should be qualified with
+# `pub(crate)`, `pub(super)`, etc.
+redundant_pub_crate = "allow"

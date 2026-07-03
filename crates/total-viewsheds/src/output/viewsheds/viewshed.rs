@@ -7,10 +7,10 @@ use color_eyre::eyre::Result;
 /// but metric projections are not globally correct. So reprojecting to the _viewshed's_ centre
 /// just gives us that little bit more accuracy, especially for larger DEMs.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Coordinate(pub geo::Coord);
+pub(crate) struct Coordinate(pub geo::Coord);
 
 /// `Viewshed`
-pub struct Viewshed<'viewshed> {
+pub(crate) struct Viewshed<'viewshed> {
     /// The DEM used to compute the final data.
     pub dem: &'viewshed tvs_lib::dem::DEM,
     /// Coordinate of the observer for the viewshed we want to reconstruct.
@@ -19,7 +19,7 @@ pub struct Viewshed<'viewshed> {
 
 impl Viewshed<'_> {
     /// Reconstruct a viewshed.
-    pub fn reconstruct(
+    pub(crate) fn reconstruct(
         db_path: std::path::PathBuf,
         requested_lonlat: tvs_lib::projector::LonLatCoord,
     ) -> Result<(tvs_lib::dem::Coordinate, geo::MultiPolygon)> {
@@ -85,7 +85,7 @@ impl Viewshed<'_> {
             color_eyre::eyre::bail!("Point of view ({:?}) is not calculable", viewshed.pov_coord);
         }
 
-        let multi_polygon = super::joiner_common::Joiner::build(&segments, viewshed.dem.scale)?;
+        let multi_polygon = crate::output::viewsheds::joiner::build(&segments, viewshed.dem.scale)?;
         tracing::info!("Viewshed reconstructed in {:?}.", start.elapsed());
 
         Ok((pov_dem_coord, multi_polygon))
@@ -142,7 +142,7 @@ impl Viewshed<'_> {
     }
 
     /// Save the viewshed to disk.
-    pub fn save(
+    pub(crate) fn save(
         viewshed: geo::MultiPolygon,
         output_directory: &std::path::Path,
         viewshed_latlon: tvs_lib::projector::LonLatCoord,
@@ -163,7 +163,7 @@ impl Viewshed<'_> {
 #[cfg(test)]
 impl Viewshed<'_> {
     /// Convert from the viewshed projection to DEM coordinates.
-    pub fn convert_viewshed_coord_to_dem_coord(
+    pub(crate) fn convert_viewshed_coord_to_dem_coord(
         &self,
         viewshed_coord: Coordinate,
     ) -> Result<geo::Coord> {

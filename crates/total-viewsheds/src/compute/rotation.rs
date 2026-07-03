@@ -14,7 +14,7 @@ use std::rc::Rc;
     reason = "rotation should not be out of bounds"
 )]
 #[expect(clippy::expect_used, reason = "invriants broken if options not none")]
-pub fn lines(
+pub(crate) fn lines(
     elevs: &[i16],
     max_los: usize,
     angle: f64,

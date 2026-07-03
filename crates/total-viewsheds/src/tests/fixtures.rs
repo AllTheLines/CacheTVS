@@ -3,7 +3,7 @@
 use color_eyre::eyre::Result;
 
 /// The nodata value from NASA's SRTM data.
-pub const NODATA: f32 = -32768.0;
+pub(crate) const NODATA: f32 = -32768.0;
 
 // This is a little map to help orient yourself when looking at the results:
 //
@@ -21,7 +21,7 @@ pub const NODATA: f32 = -32768.0;
 #[inline]
 #[must_use]
 /// A DEM tile with a symmetrical single peak.
-pub fn single_peak_dem() -> Vec<i16> {
+pub(crate) fn single_peak_dem() -> Vec<i16> {
     vec![
         0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 1, 1, 1, 1, 1, 1, 1, 0,
@@ -55,7 +55,7 @@ pub fn single_peak_dem() -> Vec<i16> {
 #[must_use]
 #[rustfmt::skip]
 /// A bigger DEM for making viewsheds.
-pub fn bigger_dem() -> Vec<i16> {
+pub(crate) fn bigger_dem() -> Vec<i16> {
     let x = 15;
     #[expect(
         clippy::as_conversions,
@@ -82,7 +82,7 @@ pub fn bigger_dem() -> Vec<i16> {
 }
 
 /// Create the TVS heatmap that a compute run outputs.
-pub fn create_tvs_tiff(data: Vec<f32>) -> Result<gdal::Dataset> {
+pub(crate) fn create_tvs_tiff(data: Vec<f32>) -> Result<gdal::Dataset> {
     let width = data.len().isqrt();
     let driver = gdal::DriverManager::get_driver_by_name("MEM")?;
     let dataset = driver.create_with_band_type::<f32, _>("", width, width, 1)?;
