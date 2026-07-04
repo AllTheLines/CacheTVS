@@ -138,10 +138,7 @@ impl super::Joiner {
 
     /// If a polygon wasn't touched by a segment from the current angle then it is moved to `self.completed`.
     fn move_untouched_active_polygons_to_completed(&mut self) {
-        let completed = self
-            .active
-            .extract_if(.., |polygon| !polygon.is_touched)
-            .collect::<Vec<_>>();
+        let completed = self.active.extract_if(.., |polygon| !polygon.is_touched);
         self.completed.extend(completed);
     }
 
@@ -257,31 +254,29 @@ impl super::Joiner {
             }
         }
 
-        if let Some(touching_start) = maybe_touching_start
-            && let Some(touching_end) = maybe_touching_end
-        {
-            let base_vertices_range = touching_end..touching_start;
-            match maybe_joining_polygon {
-                Some(joining_polygon) => {
-                    base_polygon.join_non_starting_polygon(base_vertices_range, joining_polygon)?;
-                    tracing::trace!(
-                        "Polygon {growable_polygon_index} AFTER joined polygon: {:#?}",
-                        base_polygon
-                    );
-                }
-                None => {
-                    base_polygon.join_segment(segment, base_vertices_range, angle)?;
-                    tracing::trace!(
-                        "Polygon {growable_polygon_index} AFTER joined segment: {:#?}",
-                        base_polygon
-                    );
-                }
-            }
+        let base_vertices_range = match (maybe_touching_start, maybe_touching_end) {
+            (Some(start), Some(end)) => end..start,
+            _ => return Ok(false),
+        };
 
-            return Ok(true);
+        match maybe_joining_polygon {
+            Some(joining_polygon) => {
+                base_polygon.join_non_starting_polygon(base_vertices_range, joining_polygon)?;
+                tracing::trace!(
+                    "Polygon {growable_polygon_index} AFTER joined polygon: {:#?}",
+                    base_polygon
+                );
+            }
+            None => {
+                base_polygon.join_segment(segment, base_vertices_range, angle)?;
+                tracing::trace!(
+                    "Polygon {growable_polygon_index} AFTER joined segment: {:#?}",
+                    base_polygon
+                );
+            }
         }
 
-        Ok(false)
+        Ok(true)
     }
 
     /// Get the polygons involved in a touch check.
