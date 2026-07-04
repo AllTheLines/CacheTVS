@@ -23,8 +23,8 @@ impl super::Joiner {
         let starting_polygon_indexes: Vec<usize> = self
             .completed
             .iter()
-            .filter(|item| item.is_created_at_angle_0)
             .enumerate()
+            .filter(|item| item.1.is_created_at_angle_0)
             .map(|item| item.0)
             .collect();
 
@@ -63,6 +63,7 @@ impl super::Joiner {
             .iter()
             .filter(|item| item.is_created_at_angle_0)
             .enumerate()
+            .filter(|item| item.1.is_created_at_angle_0)
             .map(|item| item.0)
             .collect();
 
@@ -161,25 +162,17 @@ impl super::Joiner {
         let mut maybe_touching_start = None;
         let mut maybe_touching_end = None;
 
-        let (base_polygon, maybe_joining_polygon) =
-            if let Some(joining_polygon_index) = maybe_joining_polygon_index {
-                let base_polygon = self
-                    .active
-                    .get_mut(base_polygon_index)
-                    .context("Bad polygon index")?;
-                let joining_polygon = self
-                    .completed
-                    .get_mut(joining_polygon_index)
-                    .context("Bad polygon index")?;
-                (base_polygon, Some(joining_polygon))
-            } else {
-                (
-                    self.active
-                        .get_mut(base_polygon_index)
-                        .context("Bad polygon index")?,
-                    None,
-                )
-            };
+        let base_polygon = self
+            .active
+            .get_mut(base_polygon_index)
+            .context("Bad polygon index")?;
+
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "A bad index would only be from bad code"
+        )]
+        let maybe_joining_polygon =
+            maybe_joining_polygon_index.map(|index| &mut self.completed[index]);
 
         let mut iterator = base_polygon.vertices.iter_mut().enumerate().rev();
         while let Some((index, vertex)) = iterator.next() {
@@ -227,35 +220,32 @@ impl super::Joiner {
             }
         }
 
-        if let Some(touching_start) = maybe_touching_start
-            && let Some(touching_end) = maybe_touching_end
-        {
-            let base_vertices_range = touching_end..touching_start;
+        let base_vertices_range = match (maybe_touching_start, maybe_touching_end) {
+            (Some(start), Some(end)) => end..start,
+            _ => return Ok(false),
+        };
 
-            match maybe_joining_polygon {
-                Some(joining_polygon) => {
-                    tracing::trace!("Final angle, polygon BEFORE: {:#?}", base_polygon);
-                    base_polygon.join_starting_polygon(
-                        base_vertices_range,
-                        joining_vertices_range,
-                        joining_polygon,
-                    )?;
-                    tracing::trace!(
-                        "Final angle, polygon AFTER joined polygon: {:#?}",
-                        base_polygon
-                    );
-                }
-                None => {
-                    tracing::trace!("Final angle, self-polygon BEFORE: {:#?}", base_polygon);
-                    base_polygon.join_self(joining_vertices_range, base_vertices_range);
-                    tracing::trace!("Final angle, self-polygon AFTER: {:#?}", base_polygon);
-                }
+        match maybe_joining_polygon {
+            Some(joining_polygon) => {
+                tracing::trace!("Final angle, polygon BEFORE: {:#?}", base_polygon);
+                base_polygon.join_starting_polygon(
+                    base_vertices_range,
+                    joining_vertices_range,
+                    joining_polygon,
+                )?;
+                tracing::trace!(
+                    "Final angle, polygon AFTER joined polygon: {:#?}",
+                    base_polygon
+                );
             }
-
-            return Ok(true);
+            None => {
+                tracing::trace!("Final angle, self-polygon BEFORE: {:#?}", base_polygon);
+                base_polygon.join_self(joining_vertices_range, base_vertices_range);
+                tracing::trace!("Final angle, self-polygon AFTER: {:#?}", base_polygon);
+            }
         }
 
-        Ok(false)
+        Ok(true)
     }
 }
 
