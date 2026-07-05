@@ -1,10 +1,8 @@
 //! Join the visible segments from each computed angle into the viewshed. These "normal" joinings
-//! are the ones that occur for every angle other than the final one. Therefore these should simpler
-//! and faster.
+//! are the ones that occur for every angle other than the final one. Therefore these should be
+//! simpler and faster.
 
-use color_eyre::eyre::{Result, bail};
-
-use crate::output::viewsheds::growable_polygon::Opening;
+use color_eyre::eyre::Result;
 
 impl super::Joiner {
     /// Build the viewshed for a single angle.
@@ -28,20 +26,19 @@ impl super::Joiner {
 
         let mut new_polygons = Vec::new();
 
-        let polygoner = crate::output::viewsheds::segment_polygon::SegmentPolygon {
+        let segment = crate::output::viewsheds::segment_polygon::SegmentPolygon {
             dem_scale,
             angle,
             angle_scale,
         };
 
         let timing = std::time::Instant::now();
-        let last_segment_index = segments.len().saturating_sub(1);
         for (segment_index, polar_segment) in segments.iter().enumerate() {
-            let is_last_segment = segment_index == last_segment_index;
             let start = u32::from(polar_segment.start());
             let end = u32::from(polar_segment.start() + polar_segment.distance());
             tracing::debug!("Segment {segment_index}, distances range: {:?}", start..end);
-            let polygon_segment = polygoner.make(start, end);
+            let polygon_segment =
+                crate::output::viewsheds::segment_polygon::Vertices::new(&segment, start, end);
             let mut is_segment_touching_anything = false;
             let mut maybe_joining_polygon_index = None;
             let mut joined_polygons_to_remove = Vec::new();
@@ -81,14 +78,8 @@ impl super::Joiner {
             }
 
             tracing::debug!("Removing joined polygons: {joined_polygons_to_remove:?}");
-            for joined_polygon_index in joined_polygons_to_remove {
-                self.active.remove(joined_polygon_index);
-            }
-
-            if is_last_segment {
-                for polygon in &mut self.active {
-                    polygon.downgrade_openings()?;
-                }
+            for joined_polygon_index in joined_polygons_to_remove.iter().rev() {
+                self.active.remove(*joined_polygon_index);
             }
 
             if !is_segment_touching_anything {
@@ -98,6 +89,11 @@ impl super::Joiner {
                 )?);
             }
         }
+
+        for polygon in &mut self.active {
+            polygon.downgrade_openings()?;
+        }
+
         tracing::debug!("Angle {angle} done in {:?}", timing.elapsed());
 
         self.move_untouched_active_polygons_to_completed();
@@ -196,9 +192,6 @@ impl super::Joiner {
         maybe_joining_polygon_index: Option<usize>,
         angle: f32,
     ) -> Result<bool> {
-        let mut maybe_touching_start = None;
-        let mut maybe_touching_end = None;
-
         let (base_polygon, maybe_joining_polygon) =
             self.get_involved_polygons(growable_polygon_index, maybe_joining_polygon_index);
 
@@ -207,56 +200,10 @@ impl super::Joiner {
             base_polygon
         );
 
-        let mut iterator = base_polygon.vertices.iter_mut().enumerate().rev();
-        while let Some((index, vertex)) = iterator.next() {
-            match vertex.opening {
-                Opening::Start(opening_start) => {
-                    let Some((index_next, vertex_next)) = iterator.next() else {
-                        bail!("Opening without following vertex");
-                    };
-
-                    let Opening::End(opening_end) = vertex_next.opening else {
-                        bail!("Opening start not followed by opening end");
-                    };
-
-                    let opening_range = opening_start..opening_end;
-
-                    tracing::debug!(
-                        "Checking touch for polygon {growable_polygon_index} at opening index: \
-                         {index}, distances: {opening_range:?}",
-                    );
-                    if crate::output::viewsheds::growable_polygon::GrowablePolygon::is_touching(
-                        &segment.distances,
-                        &opening_range,
-                    ) {
-                        tracing::debug!(
-                            "🟢 Polygon {growable_polygon_index} touches segment opening"
-                        );
-
-                        if maybe_touching_start.is_none() {
-                            maybe_touching_start = Some(index);
-                        }
-                        maybe_touching_end = Some(index_next + 1);
-                    } else {
-                        tracing::debug!(
-                            "🟡 Polygon {growable_polygon_index} does not touch segment opening"
-                        );
-                    }
-                }
-                Opening::End(_) => {
-                    bail!("Unexpected opening end reached");
-                }
-                Opening::Null
-                | Opening::GenesisStart(_)
-                | Opening::GenesisEnd(_)
-                | Opening::NewStart(_)
-                | Opening::NewEnd(_) => (),
-            }
-        }
-
-        let base_vertices_range = match (maybe_touching_start, maybe_touching_end) {
-            (Some(start), Some(end)) => end..start,
-            _ => return Ok(false),
+        let Some(base_vertices_range) =
+            super::super::vertices::find_contact(&base_polygon.vertices, &segment.distances)
+        else {
+            return Ok(false);
         };
 
         match maybe_joining_polygon {

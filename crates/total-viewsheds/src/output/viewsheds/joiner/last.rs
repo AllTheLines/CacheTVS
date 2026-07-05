@@ -5,7 +5,7 @@
 use color_eyre::eyre::{ContextCompat as _, Result, bail};
 use itertools::Itertools as _;
 
-use crate::output::viewsheds::growable_polygon::Opening;
+use crate::output::viewsheds::vertices::Opening;
 
 impl super::Joiner {
     /// The final angle faces the challenge of joining polygons together from the first angle.
@@ -41,14 +41,13 @@ impl super::Joiner {
         for starting_polygon_index in starting_polygon_indexes {
             for final_polygon_index in 0..self.active.len() {
                 if self
-                    .check_polygons_touching(final_polygon_index, Some(starting_polygon_index))?
+                    .handle_touching_polygons(final_polygon_index, Some(starting_polygon_index))?
                 {
                     touching_starting_polygons.push(starting_polygon_index);
                 }
             }
         }
 
-        // Reverse order so indices remain valid.
         let polygons_to_remove = touching_starting_polygons.iter().rev();
         tracing::debug!(
             "Removing final joined polygons: {:?}",
@@ -61,14 +60,13 @@ impl super::Joiner {
         let self_joining_polygon_indexes: Vec<usize> = self
             .active
             .iter()
-            .filter(|item| item.is_created_at_angle_0)
             .enumerate()
             .filter(|item| item.1.is_created_at_angle_0)
             .map(|item| item.0)
             .collect();
 
         for self_joining_polygon_index in self_joining_polygon_indexes {
-            self.check_polygons_touching(self_joining_polygon_index, None)?;
+            self.handle_touching_polygons(self_joining_polygon_index, None)?;
         }
 
         tracing::debug!("Final angle done in {:?}", timing.elapsed());
@@ -77,7 +75,7 @@ impl super::Joiner {
     }
 
     /// Check whether a final and a starting polygon are touching.
-    fn check_polygons_touching(
+    fn handle_touching_polygons(
         &mut self,
         final_polygon_index: usize,
         maybe_starting_polygon_index: Option<usize>,
@@ -137,7 +135,7 @@ impl super::Joiner {
                     )?;
 
                     if is_touching && maybe_starting_polygon_index.is_some() {
-                        self.check_polygons_touching(final_polygon_index, None)?;
+                        self.handle_touching_polygons(final_polygon_index, None)?;
                         return Ok(true);
                     }
                 }
@@ -159,8 +157,6 @@ impl super::Joiner {
             "Checking base polygon {base_polygon_index} \
              opening indices: {joining_vertices_range:?}"
         );
-        let mut maybe_touching_start = None;
-        let mut maybe_touching_end = None;
 
         let base_polygon = self
             .active
@@ -174,55 +170,10 @@ impl super::Joiner {
         let maybe_joining_polygon =
             maybe_joining_polygon_index.map(|index| &mut self.completed[index]);
 
-        let mut iterator = base_polygon.vertices.iter_mut().enumerate().rev();
-        while let Some((index, vertex)) = iterator.next() {
-            match vertex.opening {
-                Opening::Start(opening_start) => {
-                    let Some((index_next, vertex_next)) = iterator.next() else {
-                        bail!("Opening without following vertex");
-                    };
-
-                    let Opening::End(opening_end) = vertex_next.opening else {
-                        bail!("Opening `Start` not followed by opening `End`");
-                    };
-
-                    let base_opening_range = opening_start..opening_end;
-
-                    tracing::trace!("Checking touching for vertex ({:?})...", vertex);
-                    if crate::output::viewsheds::growable_polygon::GrowablePolygon::is_touching(
-                        &base_opening_range,
-                        &joining_opening_range,
-                    ) {
-                        tracing::trace!(
-                            "Final angle, polygon {base_polygon_index} touches: \
-                            {base_opening_range:?}/{joining_opening_range:?}"
-                        );
-
-                        if maybe_touching_start.is_none() {
-                            maybe_touching_start = Some(index);
-                        }
-                        maybe_touching_end = Some(index_next + 1);
-                    } else {
-                        tracing::trace!(
-                            "Final angle, polygon {base_polygon_index} does not touch: \
-                            {base_opening_range:?}/{joining_opening_range:?}"
-                        );
-                    }
-                }
-                Opening::End(_) => {
-                    bail!("Unexpected opening `End` reached");
-                }
-                Opening::Null
-                | Opening::GenesisStart(_)
-                | Opening::GenesisEnd(_)
-                | Opening::NewStart(_)
-                | Opening::NewEnd(_) => (),
-            }
-        }
-
-        let base_vertices_range = match (maybe_touching_start, maybe_touching_end) {
-            (Some(start), Some(end)) => end..start,
-            _ => return Ok(false),
+        let Some(base_vertices_range) =
+            super::super::vertices::find_contact(&base_polygon.vertices, &joining_opening_range)
+        else {
+            return Ok(false);
         };
 
         match maybe_joining_polygon {

@@ -79,6 +79,7 @@ mod output {
         mod growable_polygon;
         mod joiner;
         mod segment_polygon;
+        mod vertices;
         pub(crate) mod viewshed;
     }
 }
