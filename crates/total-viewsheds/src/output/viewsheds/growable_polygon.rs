@@ -2,55 +2,15 @@
 
 use color_eyre::eyre::{ContextCompat as _, Result, bail};
 
-/// An opening is where one polygon can join a segment, or even another polygon.
-/// The `u32` values in the variants are for storing the polar distance from the centre. This saves
-/// having to do trigonometry to figure out if two openings are touching.
-#[derive(Eq, PartialEq, Debug, Clone)]
-pub(crate) enum Opening {
-    /// No opening. We could also just use `Option::None`, but unwrapping it isn't so ergonomic.
-    Null,
-    /// This i for polygons that start at 0 degrees. It's possible that another polygon (or even
-    /// itself), could connect to it at 360 degrees.
-    GenesisStart(u32),
-    /// The closing of the genesis opening at 0 degrees.
-    GenesisEnd(u32),
-    /// An active opening's start.
-    Start(u32),
-    /// An active opening's end.
-    End(u32),
-    /// When a segment or polygon is successfully attached to an existing polygon, but we still want
-    /// to carry on looking for other attachments in the given angle, we don't want to mistakenly
-    /// attach new segments/polygons to something that's just been attached. Once the whole angle is
-    /// completed, then these get downgraded to the common `Start/End` opendings.
-    NewStart(u32),
-    /// A `New` openings end.
-    NewEnd(u32),
-}
-
-/// A vertex is a single point in a polygon.
-#[derive(Debug, Clone)]
-pub(crate) struct Vertex {
-    /// The coordinate of the vertex in euclidian space.
-    pub coordinate: geo::Coord,
-    /// The kind of opening that this vertex represents.
-    pub opening: Opening,
-}
-
-impl Vertex {
-    /// Is the vertex at the centre of the viewshed? The centre is a special place, it is a
-    /// zero-length opening that isn't nulled if no segments/polygons touch it for a given angle.
-    pub(crate) fn is_centre(&self) -> bool {
-        self.coordinate.x.abs() == 0.0 && self.coordinate.y.abs() == 0.0
-    }
-}
+use crate::output::viewsheds::vertices::Opening;
 
 /// A polygon that grows, but only from its anti-clockwise facing side.
 #[derive(Debug, Clone)]
 pub(crate) struct GrowablePolygon {
     /// The main exterior vertices.
-    pub vertices: Vec<Vertex>,
+    pub vertices: Vec<super::vertices::Vertex>,
     /// Interiore holes within the polygon.
-    pub holes: Vec<Vec<Vertex>>,
+    pub holes: Vec<Vec<super::vertices::Vertex>>,
     /// The distance of the opening furthest from the centre of the viewshed. Used for ordering
     /// active polygons. Polygons must be joined to new segments (and other polygons) in increasing
     /// order to prevent overlaps.
@@ -91,7 +51,7 @@ impl GrowablePolygon {
                 4 => Opening::NewStart(segment_vertices.distances.start),
                 _ => Opening::Null,
             };
-            vertices.push(Vertex {
+            vertices.push(super::vertices::Vertex {
                 coordinate: *segment_vertex,
                 opening: opening.clone(),
             });
@@ -184,11 +144,11 @@ impl GrowablePolygon {
     fn join(
         &mut self,
         base_vertices_range: std::ops::Range<usize>,
-        joining_vertices: Vec<Vertex>,
+        joining_vertices: Vec<super::vertices::Vertex>,
     ) -> Result<()> {
         let old_start = self.extract_old_start(base_vertices_range.end)?;
 
-        let removed_vertices: Vec<Vertex> = self
+        let removed_vertices: Vec<super::vertices::Vertex> = self
             .vertices
             .splice(base_vertices_range.clone(), joining_vertices)
             .collect();
@@ -349,7 +309,8 @@ impl GrowablePolygon {
             "Splicing polygon into itself at: {range:?} ({left_range:?}/{right_range:?})"
         );
 
-        let removed_vertices: Vec<Vertex> = self.vertices.splice(range, vec![]).collect();
+        let removed_vertices: Vec<super::vertices::Vertex> =
+            self.vertices.splice(range, vec![]).collect();
         self.create_holes(&removed_vertices);
     }
 
@@ -367,7 +328,7 @@ impl GrowablePolygon {
     }
 
     /// Create interior holes from the vertices that were removed for the join.
-    fn create_holes(&mut self, vertices: &[Vertex]) {
+    fn create_holes(&mut self, vertices: &[super::vertices::Vertex]) {
         let holes = vertices.split_inclusive(|vertex| matches!(vertex.opening, Opening::End(_)));
 
         for hole in holes {

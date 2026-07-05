@@ -10,6 +10,35 @@ pub(crate) struct Vertices {
     pub distances: std::ops::Range<u32>,
 }
 
+impl Vertices {
+    /// Make a single polygon representing a visible region of the planet.
+    pub(crate) fn new(segment: &SegmentPolygon, opening_index: u32, closing_index: u32) -> Self {
+        let opening_coord = segment.index_to_coordinate(opening_index);
+        let closing_coord = segment.index_to_coordinate(closing_index);
+
+        let spread = 1.0f64 / f64::from(segment.angle_scale) / 2.0f64;
+        let bottom_left = SegmentPolygon::rotate_by(opening_coord, spread);
+        let bottom_right = SegmentPolygon::rotate_by(opening_coord, -spread);
+        let top_left = SegmentPolygon::rotate_by(closing_coord, spread);
+        let top_right = SegmentPolygon::rotate_by(closing_coord, -spread);
+
+        let scale = f64::from(segment.dem_scale);
+
+        let vertices = [
+            bottom_left * scale,
+            bottom_right * scale,
+            top_right * scale,
+            top_left * scale,
+            bottom_left * scale,
+        ];
+
+        Self {
+            vertices,
+            distances: opening_index..closing_index,
+        }
+    }
+}
+
 /// `SegmentPolygon`
 pub(crate) struct SegmentPolygon {
     /// Scale of DEM data.
@@ -21,33 +50,6 @@ pub(crate) struct SegmentPolygon {
 }
 
 impl SegmentPolygon {
-    /// Make a single polygon representing a visible region of the planet.
-    pub(crate) fn make(&self, opening_index: u32, closing_index: u32) -> Vertices {
-        let opening_coord = self.index_to_coordinate(opening_index);
-        let closing_coord = self.index_to_coordinate(closing_index);
-
-        let spread = 1.0f64 / f64::from(self.angle_scale) / 2.0f64;
-        let bottom_left = Self::rotate_by(opening_coord, spread);
-        let bottom_right = Self::rotate_by(opening_coord, -spread);
-        let top_left = Self::rotate_by(closing_coord, spread);
-        let top_right = Self::rotate_by(closing_coord, -spread);
-
-        let scale = f64::from(self.dem_scale);
-
-        let vertices = [
-            bottom_left * scale,
-            bottom_right * scale,
-            top_right * scale,
-            top_left * scale,
-            bottom_left * scale,
-        ];
-
-        Vertices {
-            vertices,
-            distances: opening_index..closing_index,
-        }
-    }
-
     /// Convert an index along a line of sight into a coordinate.
     fn index_to_coordinate(&self, index: u32) -> super::viewshed::Coordinate {
         let radians = self.angle.to_radians();
@@ -103,10 +105,9 @@ mod test {
             dem: &dem,
             pov_coord: tvs_lib::dem::Coordinate(setup.pov),
         };
-        let viewsheder = builder(&viewshed, setup.angle);
-        let vertices = viewsheder
-            .make(setup.opening_index, setup.closing_index)
-            .vertices;
+        let segment = builder(&viewshed, setup.angle);
+        let vertices =
+            super::Vertices::new(&segment, setup.opening_index, setup.closing_index).vertices;
         let polygon = geo::Polygon::new(geo::LineString(vertices.into()), vec![]);
 
         let mut polygon_as_dem_coords = Vec::new();
