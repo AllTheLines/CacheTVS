@@ -265,7 +265,7 @@ mod test {
     fn multiple_angles() {
         crate::setup_logging().unwrap();
         let segment = vec![crate::storage::segments::Segment::new(0, 5)];
-        let joined = crate::output::viewsheds::joiner::build(
+        let joined = crate::output::viewsheds::joiner::build_viewshed_polygon(
             &[segment.clone(), segment.clone(), segment],
             1.0,
         )
@@ -296,7 +296,7 @@ mod test {
             crate::storage::segments::Segment::new(0, 2),
             crate::storage::segments::Segment::new(3, 1),
         ];
-        let joined = crate::output::viewsheds::joiner::build(
+        let joined = crate::output::viewsheds::joiner::build_viewshed_polygon(
             &[
                 main.clone(),
                 main.clone(),
@@ -330,7 +330,7 @@ mod test {
     fn multiple_polygons() {
         crate::setup_logging().unwrap();
         let segment = vec![crate::storage::segments::Segment::new(0, 5)];
-        let joined = crate::output::viewsheds::joiner::build(
+        let joined = crate::output::viewsheds::joiner::build_viewshed_polygon(
             &[
                 segment.clone(),
                 vec![],
@@ -365,7 +365,7 @@ mod test {
     fn multiple_polygons_not_touching() {
         crate::setup_logging().unwrap();
         let segment = vec![crate::storage::segments::Segment::new(2, 2)];
-        let joined = crate::output::viewsheds::joiner::build(
+        let joined = crate::output::viewsheds::joiner::build_viewshed_polygon(
             &[
                 segment.clone(),
                 vec![],
@@ -401,7 +401,7 @@ mod test {
         crate::setup_logging().unwrap();
         let main = vec![crate::storage::segments::Segment::new(0, 4)];
         let variance = vec![crate::storage::segments::Segment::new(0, 2)];
-        let joined = crate::output::viewsheds::joiner::build(
+        let joined = crate::output::viewsheds::joiner::build_viewshed_polygon(
             &[main.clone(), main.clone(), main.clone(), main, variance],
             1.0,
         )
@@ -433,7 +433,7 @@ mod test {
             crate::storage::segments::Segment::new(3, 1),
         ];
         let bottom = vec![crate::storage::segments::Segment::new(0, 2)];
-        let joined = crate::output::viewsheds::joiner::build(
+        let joined = crate::output::viewsheds::joiner::build_viewshed_polygon(
             &[main.clone(), pair, bottom, main.clone(), main],
             1.0,
         )
@@ -461,7 +461,7 @@ mod test {
         crate::setup_logging().unwrap();
         let main = vec![crate::storage::segments::Segment::new(0, 4)];
         let top = vec![crate::storage::segments::Segment::new(2, 2)];
-        let joined = crate::output::viewsheds::joiner::build(
+        let joined = crate::output::viewsheds::joiner::build_viewshed_polygon(
             &[
                 main.clone(),
                 top.clone(),
@@ -496,7 +496,7 @@ mod test {
         crate::setup_logging().unwrap();
         let main = vec![crate::storage::segments::Segment::new(0, 4)];
         let lid = vec![crate::storage::segments::Segment::new(2, 1)];
-        let joined = crate::output::viewsheds::joiner::build(
+        let joined = crate::output::viewsheds::joiner::build_viewshed_polygon(
             &[main.clone(), main.clone(), lid, main.clone(), main],
             1.0,
         )
@@ -528,7 +528,7 @@ mod test {
             crate::storage::segments::Segment::new(2, 1),
             crate::storage::segments::Segment::new(4, 1),
         ];
-        let joined = crate::output::viewsheds::joiner::build(
+        let joined = crate::output::viewsheds::joiner::build_viewshed_polygon(
             &[main.clone(), main.clone(), main.clone(), struts, main],
             1.0,
         )
@@ -559,7 +559,7 @@ mod test {
             crate::storage::segments::Segment::new(4, 1),
         ];
         let long = vec![crate::storage::segments::Segment::new(0, 5)];
-        let joined = crate::output::viewsheds::joiner::build(
+        let joined = crate::output::viewsheds::joiner::build_viewshed_polygon(
             &[
                 polygons.clone(),
                 polygons.clone(),
@@ -602,9 +602,11 @@ mod test {
         let first = vec![higher_but_made_first.clone()];
         let second = vec![lower, higher_but_made_first];
         let long = vec![crate::storage::segments::Segment::new(0, 5)];
-        let joined =
-            crate::output::viewsheds::joiner::build(&[vec![], first, second, long, vec![]], 1.0)
-                .unwrap();
+        let joined = crate::output::viewsheds::joiner::build_viewshed_polygon(
+            &[vec![], first, second, long, vec![]],
+            1.0,
+        )
+        .unwrap();
         let actual = crate::output::ascii::rasterise(joined);
         let expected = [
             "████████████████████████",
@@ -627,7 +629,7 @@ mod test {
     fn inherit_holes_common() {
         crate::setup_logging().unwrap();
 
-        let joined = crate::output::viewsheds::joiner::build(
+        let joined = crate::output::viewsheds::joiner::build_viewshed_polygon(
             &[
                 vec![],
                 vec![crate::storage::segments::Segment::new(0, 3)],

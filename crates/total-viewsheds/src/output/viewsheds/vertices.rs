@@ -67,9 +67,20 @@ impl<'vertices> OpeningsIterator<'vertices> {
 impl Iterator for OpeningsIterator<'_> {
     type Item = (usize, std::ops::Range<u32>);
 
+    #[expect(
+        clippy::panic,
+        reason = "Opening ordering is a requirement of the algorithm"
+    )]
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            if self.index <= 1 {
+            if self.index == 0 {
+                #[expect(
+                    clippy::indexing_slicing,
+                    reason = "There always has to be a first element"
+                )]
+                if matches!(self.vertices[0].opening, Opening::Start(_)) {
+                    panic!("Dangling Opening::Start");
+                };
                 return None;
             }
 
@@ -80,11 +91,8 @@ impl Iterator for OpeningsIterator<'_> {
             let is_previously_start = matches!(self.previous_opening, Opening::Start(_));
             let is_end_without_a_start = is_currently_end && !is_previously_start;
             assert!(!is_end_without_a_start, "Dangling Opening::End");
+
             if let Opening::Start(start) = left.opening {
-                #[expect(
-                    clippy::panic,
-                    reason = "Opening ordering is a requirement of the algorithm"
-                )]
                 let Opening::End(end) = right.opening else {
                     panic!("Opening::Start not followed by Opening::End");
                 };
@@ -92,7 +100,7 @@ impl Iterator for OpeningsIterator<'_> {
                 self.previous_opening = right.opening.clone();
                 let opening_range = start..end;
                 let opening_index = self.index;
-                self.index -= 2;
+                self.index = self.index.saturating_sub(2);
                 return Some((opening_index, opening_range));
             }
 
@@ -107,37 +115,110 @@ pub(crate) fn find_contact(
     vertices: &[Vertex],
     joining_opening_range: &std::ops::Range<u32>,
 ) -> Option<std::ops::Range<usize>> {
-    let mut maybe_touching_start = None;
-    let mut maybe_touching_end = None;
+    OpeningsIterator::new(vertices)
+        .filter(|(base_opening_index, base_opening_range)| {
+            tracing::debug!(
+                "Checking if openings touch: \
+                 index: {base_opening_index:?}, \
+                 base distances: {base_opening_range:?}, \
+                 joining distances: {joining_opening_range:?}",
+            );
 
-    let openings = OpeningsIterator::new(vertices);
+            let is_touching =
+                crate::output::viewsheds::growable_polygon::GrowablePolygon::is_touching(
+                    base_opening_range,
+                    joining_opening_range,
+                );
 
-    for (base_opening_index, base_opening_range) in openings {
-        tracing::debug!(
-            "Checking if openings touch: \
-             index: {base_opening_index:?}, \
-             base distances: {base_opening_range:?}, \
-            joining distances: {joining_opening_range:?}",
-        );
+            if is_touching {
+                tracing::debug!("🟢 Openings touch");
+            } else {
+                tracing::debug!("🟡 Openings don't touch");
+            }
 
-        if !crate::output::viewsheds::growable_polygon::GrowablePolygon::is_touching(
-            &base_opening_range,
-            joining_opening_range,
-        ) {
-            tracing::debug!("🟡 Openings don't touch");
-            continue;
+            is_touching
+        })
+        .fold(None, |accumulator, (index, _)| {
+            let range_of_touch = accumulator.map_or(index..index, |range| {
+                std::cmp::min(range.start, index)..std::cmp::max(range.end, index)
+            });
+
+            Some(range_of_touch)
+        })
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    fn vertex(opening: super::Opening) -> Vertex {
+        super::Vertex {
+            coordinate: geo::Coord::zero(),
+            opening,
         }
-
-        tracing::debug!("🟢 Openings touch");
-
-        if maybe_touching_start.is_none() {
-            maybe_touching_start = Some(base_opening_index);
-        }
-        maybe_touching_end = Some(base_opening_index);
     }
 
-    match (maybe_touching_start, maybe_touching_end) {
-        (Some(start), Some(end)) => Some(end..start),
-        _ => None,
+    fn run(mut vertices: Vec<super::Vertex>) -> Vec<(usize, std::ops::Range<u32>)> {
+        vertices.reverse();
+        OpeningsIterator::new(&vertices).collect::<Vec<_>>()
+    }
+
+    // TODO:
+    //   I actually think side by side openings would themselves be a bug, but I haven't
+    //   verified that so better test for it just in case.
+    #[test]
+    fn openings_side_by_side_should_not_panic() {
+        let vertices = vec![
+            vertex(super::Opening::Start(0)),
+            vertex(super::Opening::End(1)),
+            vertex(super::Opening::Start(3)),
+            vertex(super::Opening::End(4)),
+        ];
+        assert_eq!(run(vertices), vec![(3, 0..1), (1, 3..4)]);
+    }
+
+    #[test]
+    #[should_panic(expected = "Opening::Start not followed by Opening::End")]
+    fn start_not_followed_by_end_panics() {
+        let vertices = vec![
+            vertex(super::Opening::Start(0)),
+            vertex(super::Opening::Null),
+            vertex(super::Opening::End(0)),
+        ];
+        run(vertices);
+    }
+
+    #[test]
+    #[should_panic(expected = "Dangling Opening::Start")]
+    fn start_in_final_position_panics() {
+        let vertices = vec![
+            vertex(super::Opening::Null),
+            vertex(super::Opening::Null),
+            vertex(super::Opening::Start(0)),
+        ];
+        run(vertices);
+    }
+
+    #[test]
+    #[should_panic(expected = "Dangling Opening::End")]
+    fn end_in_initial_position_panics() {
+        let vertices = vec![
+            vertex(super::Opening::End(0)),
+            vertex(super::Opening::Start(0)),
+            vertex(super::Opening::End(0)),
+        ];
+        run(vertices);
+    }
+
+    #[test]
+    #[should_panic(expected = "Dangling Opening::End")]
+    fn dangling_end_panics() {
+        let vertices = vec![
+            vertex(super::Opening::Null),
+            vertex(super::Opening::End(0)),
+            vertex(super::Opening::Start(0)),
+            vertex(super::Opening::End(0)),
+        ];
+        run(vertices);
     }
 }
