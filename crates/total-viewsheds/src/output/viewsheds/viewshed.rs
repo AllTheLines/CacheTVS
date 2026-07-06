@@ -85,7 +85,10 @@ impl Viewshed<'_> {
             color_eyre::eyre::bail!("Point of view ({:?}) is not calculable", viewshed.pov_coord);
         }
 
-        let multi_polygon = crate::output::viewsheds::joiner::build(&segments, viewshed.dem.scale)?;
+        let multi_polygon = crate::output::viewsheds::joiner::build_viewshed_polygon(
+            &segments,
+            viewshed.dem.scale,
+        )?;
         tracing::info!("Viewshed reconstructed in {:?}.", start.elapsed());
 
         Ok((pov_dem_coord, multi_polygon))
