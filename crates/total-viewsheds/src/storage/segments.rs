@@ -1,40 +1,6 @@
 //! A "segment" is a single area of visibility for a given angle on a viewshed. There may be many
 //! segments per angle.
 
-/// `Segment` is the rho portion of a line segment in polar coordinates
-/// as (`rho`: u16, `delta_rho`: u16) which are packed into a single u32 for storage
-#[derive(Clone, Default)]
-pub(crate) struct Segment(pub u32);
-
-impl Segment {
-    /// `new` creates a `Segment` the segment's start point and the distance
-    pub(crate) fn new(start: u16, distance: u16) -> Self {
-        // pack start/distsance into a u32 in the format of (start|distance)
-        let wide_start: u32 = start.into();
-        let wide_distance: u32 = distance.into();
-        Self((wide_start << 16) | wide_distance)
-    }
-
-    /// `start` returns the starting point of the `Segment`
-    #[expect(
-        clippy::as_conversions,
-        reason = "the top 16 bits are guaranteed to be 0"
-    )]
-    pub(crate) const fn start(&self) -> u16 {
-        (self.0 >> 16) as u16
-    }
-
-    /// `distance` returns the distance the `Segment` takes
-    #[expect(
-        clippy::as_conversions,
-        clippy::cast_possible_truncation,
-        reason = "the top 16 bits are guaranteed to be 0"
-    )]
-    pub(crate) const fn distance(&self) -> u16 {
-        self.0 as u16
-    }
-}
-
 /// `PolarSegments` holds the degree of a line of sight and the list
 /// of visible `Segments` which is constucted through a Run Length
 /// Encoding algorithm.
@@ -48,7 +14,7 @@ pub(crate) struct PolarSegments {
     pub degree: u16,
     /// `visible_segments` is a list of segments visible for a given
     /// angle and tvs id
-    pub visible_segments: Vec<Segment>,
+    pub visible_segments: Vec<viewshed_reconstructor::segment::Segment>,
 }
 
 impl PolarSegments {
@@ -63,7 +29,8 @@ impl PolarSegments {
         reason = "we want to panic if out of indexes are oob"
     )]
     pub(crate) fn from_bools(degree: u16, bitmap: &[bool]) -> Self {
-        let mut visible_segments: Vec<Segment> = Vec::with_capacity(1);
+        let mut visible_segments: Vec<viewshed_reconstructor::segment::Segment> =
+            Vec::with_capacity(1);
 
         let char_slice: &[u8] = bytemuck::cast_slice(bitmap);
 
@@ -72,7 +39,7 @@ impl PolarSegments {
             let first_zero_index =
                 memchr::memchr(0, &char_slice[cur_index..]).unwrap_or(char_slice.len() - cur_index);
 
-            visible_segments.push(Segment::new(
+            visible_segments.push(viewshed_reconstructor::segment::Segment::new(
                 u16::try_from(cur_index).expect("cur_index overflowed"),
                 u16::try_from(first_zero_index).expect("first_zero_index overflowed"),
             ));

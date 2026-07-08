@@ -65,7 +65,7 @@ impl DB {
     pub(crate) fn load_segments(
         &self,
         id: &ID,
-    ) -> Result<(Vec<Vec<super::segments::Segment>>, i64)> {
+    ) -> Result<(Vec<Vec<viewshed_reconstructor::segment::Segment>>, i64)> {
         tracing::debug!(
             "Loading polar segments for {id:?} from {:?}...",
             self.connection.path()
@@ -118,12 +118,14 @@ impl DB {
     }
 
     /// Convert blob to `Segment`s.
-    fn bytes_to_segments(bytes: &[u8]) -> Result<Vec<super::segments::Segment>> {
+    fn bytes_to_segments(bytes: &[u8]) -> Result<Vec<viewshed_reconstructor::segment::Segment>> {
         let mut out = Vec::with_capacity(bytes.len().div_euclid(4));
         for chunk in bytes.chunks(4) {
             let array: [u8; 4] = chunk.try_into()?;
             #[expect(clippy::big_endian_bytes, reason = "That's how we save them in the DB")]
-            out.push(super::segments::Segment(u32::from_be_bytes(array)));
+            out.push(viewshed_reconstructor::segment::Segment(
+                u32::from_be_bytes(array),
+            ));
         }
         Ok(out)
     }

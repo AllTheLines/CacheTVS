@@ -6,6 +6,7 @@ use color_eyre::eyre::Result;
 /// point of view. The other option would be a metric projection with an anchor in the DEM centre,
 /// but metric projections are not globally correct. So reprojecting to the _viewshed's_ centre
 /// just gives us that little bit more accuracy, especially for larger DEMs.
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct Coordinate(pub geo::Coord);
 
@@ -85,13 +86,57 @@ impl Viewshed<'_> {
             color_eyre::eyre::bail!("Point of view ({:?}) is not calculable", viewshed.pov_coord);
         }
 
-        let multi_polygon = crate::output::viewsheds::joiner::build_viewshed_polygon(
-            &segments,
-            viewshed.dem.scale,
-        )?;
+        let multi_polygon = Self::build_viewshed_polygon(&segments, viewshed.dem.scale)?;
         tracing::info!("Viewshed reconstructed in {:?}.", start.elapsed());
 
         Ok((pov_dem_coord, multi_polygon))
+    }
+
+    /// Build a viewshed of euclidean polygons from polar segments.
+    pub(crate) fn build_viewshed_polygon(
+        data: &[Vec<viewshed_reconstructor::segment::Segment>],
+        dem_scale: f32,
+    ) -> Result<geo::MultiPolygon> {
+        let raw_polygons = viewshed_reconstructor::joiner::Joiner::join(data, dem_scale)?;
+        let mut geo_polygons = Vec::new();
+        for raw_polygon in raw_polygons {
+            let geo_polygon = Self::to_geo_polygon(&raw_polygon.to_polygon());
+            tracing::trace!("Final viewshed, adding polygon: {geo_polygon:?}");
+            geo_polygons.push(geo_polygon);
+        }
+
+        Ok(geo::MultiPolygon::new(geo_polygons))
+    }
+
+    /// Convert the polygon to the `geo` crate's representation. Ready for exporting to `GeoJSON`.
+    pub(crate) fn to_geo_polygon(
+        polygon: &viewshed_reconstructor::polygon::Polygon,
+    ) -> geo::Polygon {
+        let holes: Vec<geo::LineString> = polygon
+            .interior
+            .iter()
+            .map(|hole| {
+                geo::LineString(
+                    hole.iter()
+                        .map(|coordinate| geo::Coord {
+                            x: coordinate.x,
+                            y: coordinate.y,
+                        })
+                        .collect::<Vec<geo::Coord>>(),
+                )
+            })
+            .collect();
+
+        let vertices: Vec<geo::Coord> = polygon
+            .exterior
+            .iter()
+            .map(|coordinate| geo::Coord {
+                x: coordinate.x,
+                y: coordinate.y,
+            })
+            .collect();
+
+        geo::Polygon::new(geo::LineString(vertices), holes)
     }
 
     #[expect(
@@ -189,7 +234,7 @@ impl Viewshed<'_> {
 
 #[cfg(test)]
 mod test {
-    use crate::output::ascii::assert_rasterised;
+    use tvs_lib::ascii::assert_rasterised;
 
     const SUMMIT_VIEWSHED: [&str; 12] = [
         "████████████████████████",

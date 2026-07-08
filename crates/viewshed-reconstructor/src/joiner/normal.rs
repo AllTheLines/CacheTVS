@@ -10,7 +10,7 @@ impl super::Joiner {
         &mut self,
         angle: f32,
         angle_scale: f32,
-        segments: &[crate::storage::segments::Segment],
+        segments: &[crate::segment::Segment],
         dem_scale: f32,
     ) -> Result<()> {
         tracing::debug!("");
@@ -26,7 +26,7 @@ impl super::Joiner {
 
         let mut new_polygons = Vec::new();
 
-        let segment = crate::output::viewsheds::segment_polygon::SegmentPolygon {
+        let segment = crate::segment_polygon::SegmentPolygon {
             dem_scale,
             angle,
             angle_scale,
@@ -37,8 +37,7 @@ impl super::Joiner {
             let start = u32::from(polar_segment.start());
             let end = u32::from(polar_segment.start() + polar_segment.distance());
             tracing::debug!("Segment {segment_index}, distances range: {:?}", start..end);
-            let polygon_segment =
-                crate::output::viewsheds::segment_polygon::Vertices::new(&segment, start, end);
+            let polygon_segment = crate::segment_polygon::Vertices::new(&segment, start, end);
             let mut is_segment_touching_anything = false;
             let mut maybe_joining_polygon_index = None;
             let mut joined_polygons_to_remove = Vec::new();
@@ -104,17 +103,14 @@ impl super::Joiner {
 
     /// When a segment doesn't touch anything it becomes its own independent polygon.
     fn create_new_polygon_from_untouched_segment(
-        polygon_segment: &crate::output::viewsheds::segment_polygon::Vertices,
+        polygon_segment: &crate::segment_polygon::Vertices,
         angle: f32,
-    ) -> Result<crate::output::viewsheds::growable_polygon::GrowablePolygon> {
+    ) -> Result<crate::growable_polygon::GrowablePolygon> {
         tracing::debug!(
             "Segment not touching anything at angle {angle}, \
              so making it its own polygon: {polygon_segment:?}"
         );
-        let mut polygon = crate::output::viewsheds::growable_polygon::GrowablePolygon::new(
-            polygon_segment,
-            angle,
-        );
+        let mut polygon = crate::growable_polygon::GrowablePolygon::new(polygon_segment, angle);
         if angle == 0.0 {
             polygon.is_created_at_angle_0 = true;
         }
@@ -188,7 +184,7 @@ impl super::Joiner {
     fn join_segment(
         &mut self,
         growable_polygon_index: usize,
-        segment: &crate::output::viewsheds::segment_polygon::Vertices,
+        segment: &crate::segment_polygon::Vertices,
         maybe_joining_polygon_index: Option<usize>,
         angle: f32,
     ) -> Result<bool> {
@@ -234,8 +230,8 @@ impl super::Joiner {
         growable_polygon_index: usize,
         maybe_joining_polygon_index: Option<usize>,
     ) -> (
-        &mut crate::output::viewsheds::growable_polygon::GrowablePolygon,
-        Option<&mut crate::output::viewsheds::growable_polygon::GrowablePolygon>,
+        &mut crate::growable_polygon::GrowablePolygon,
+        Option<&mut crate::growable_polygon::GrowablePolygon>,
     ) {
         if let Some(joining_polygon_index) = maybe_joining_polygon_index {
             #[expect(
@@ -261,16 +257,16 @@ impl super::Joiner {
 
 #[cfg(test)]
 mod test {
+    use tvs_lib::ascii::assert_rasterised;
+
+    use crate::joiner::{Joiner, rasterise_multi_polygon};
+
     #[test]
     fn multiple_angles() {
-        crate::setup_logging().unwrap();
-        let segment = vec![crate::storage::segments::Segment::new(0, 5)];
-        let joined = crate::output::viewsheds::joiner::build_viewshed_polygon(
-            &[segment.clone(), segment.clone(), segment],
-            1.0,
-        )
-        .unwrap();
-        let actual = crate::output::ascii::rasterise(joined);
+        crate::setup_logging();
+        let segment = vec![crate::segment::Segment::new(0, 5)];
+        let joined = Joiner::join(&[segment.clone(), segment.clone(), segment], 1.0).unwrap();
+        let actual = rasterise_multi_polygon(joined);
         let expected = [
             "████████████████████████",
             "█████████████████▀██████",
@@ -285,18 +281,18 @@ mod test {
             "███████████████▄▄ ██████",
             "████████████████████████",
         ];
-        crate::output::ascii::assert_rasterised(&actual, &expected);
+        assert_rasterised(&actual, &expected);
     }
 
     #[test]
     fn multiple_segments() {
-        crate::setup_logging().unwrap();
-        let main = vec![crate::storage::segments::Segment::new(0, 5)];
+        crate::setup_logging();
+        let main = vec![crate::segment::Segment::new(0, 5)];
         let multiple = vec![
-            crate::storage::segments::Segment::new(0, 2),
-            crate::storage::segments::Segment::new(3, 1),
+            crate::segment::Segment::new(0, 2),
+            crate::segment::Segment::new(3, 1),
         ];
-        let joined = crate::output::viewsheds::joiner::build_viewshed_polygon(
+        let joined = Joiner::join(
             &[
                 main.clone(),
                 main.clone(),
@@ -308,7 +304,7 @@ mod test {
             1.0,
         )
         .unwrap();
-        let actual = crate::output::ascii::rasterise(joined);
+        let actual = rasterise_multi_polygon(joined);
         let expected = [
             "████████████████████████",
             "████████████ ▀▀█████████",
@@ -323,14 +319,14 @@ mod test {
             "████████▄▄▀▀█▀▀▄▄███████",
             "████████████▄███████████",
         ];
-        crate::output::ascii::assert_rasterised(&actual, &expected);
+        assert_rasterised(&actual, &expected);
     }
 
     #[test]
     fn multiple_polygons() {
-        crate::setup_logging().unwrap();
-        let segment = vec![crate::storage::segments::Segment::new(0, 5)];
-        let joined = crate::output::viewsheds::joiner::build_viewshed_polygon(
+        crate::setup_logging();
+        let segment = vec![crate::segment::Segment::new(0, 5)];
+        let joined = Joiner::join(
             &[
                 segment.clone(),
                 vec![],
@@ -343,7 +339,7 @@ mod test {
             1.0,
         )
         .unwrap();
-        let actual = crate::output::ascii::rasterise(joined);
+        let actual = rasterise_multi_polygon(joined);
         let expected = [
             "████████████████████████",
             "█████████▀▀▀▀▄ █████████",
@@ -358,14 +354,14 @@ mod test {
             "████████████████████████",
             "████████████████████████",
         ];
-        crate::output::ascii::assert_rasterised(&actual, &expected);
+        assert_rasterised(&actual, &expected);
     }
 
     #[test]
     fn multiple_polygons_not_touching() {
-        crate::setup_logging().unwrap();
-        let segment = vec![crate::storage::segments::Segment::new(2, 2)];
-        let joined = crate::output::viewsheds::joiner::build_viewshed_polygon(
+        crate::setup_logging();
+        let segment = vec![crate::segment::Segment::new(2, 2)];
+        let joined = Joiner::join(
             &[
                 segment.clone(),
                 vec![],
@@ -378,7 +374,7 @@ mod test {
             1.0,
         )
         .unwrap();
-        let actual = crate::output::ascii::rasterise(joined);
+        let actual = rasterise_multi_polygon(joined);
         let expected = [
             "████████████████████████",
             "████████████████████████",
@@ -393,20 +389,20 @@ mod test {
             "████████████████████████",
             "████████████████████████",
         ];
-        crate::output::ascii::assert_rasterised(&actual, &expected);
+        assert_rasterised(&actual, &expected);
     }
 
     #[test]
     fn varying_sized_segments() {
-        crate::setup_logging().unwrap();
-        let main = vec![crate::storage::segments::Segment::new(0, 4)];
-        let variance = vec![crate::storage::segments::Segment::new(0, 2)];
-        let joined = crate::output::viewsheds::joiner::build_viewshed_polygon(
+        crate::setup_logging();
+        let main = vec![crate::segment::Segment::new(0, 4)];
+        let variance = vec![crate::segment::Segment::new(0, 2)];
+        let joined = Joiner::join(
             &[main.clone(), main.clone(), main.clone(), main, variance],
             1.0,
         )
         .unwrap();
-        let actual = crate::output::ascii::rasterise(joined);
+        let actual = rasterise_multi_polygon(joined);
         let expected = [
             "████████████████████████",
             "████████████████████████",
@@ -421,24 +417,20 @@ mod test {
             "██████████▄▄████████████",
             "████████████████████████",
         ];
-        crate::output::ascii::assert_rasterised(&actual, &expected);
+        assert_rasterised(&actual, &expected);
     }
 
     #[test]
     fn untouched_openings_get_closed() {
-        crate::setup_logging().unwrap();
-        let main = vec![crate::storage::segments::Segment::new(0, 4)];
+        crate::setup_logging();
+        let main = vec![crate::segment::Segment::new(0, 4)];
         let pair = vec![
-            crate::storage::segments::Segment::new(0, 2),
-            crate::storage::segments::Segment::new(3, 1),
+            crate::segment::Segment::new(0, 2),
+            crate::segment::Segment::new(3, 1),
         ];
-        let bottom = vec![crate::storage::segments::Segment::new(0, 2)];
-        let joined = crate::output::viewsheds::joiner::build_viewshed_polygon(
-            &[main.clone(), pair, bottom, main.clone(), main],
-            1.0,
-        )
-        .unwrap();
-        let actual = crate::output::ascii::rasterise(joined);
+        let bottom = vec![crate::segment::Segment::new(0, 2)];
+        let joined = Joiner::join(&[main.clone(), pair, bottom, main.clone(), main], 1.0).unwrap();
+        let actual = rasterise_multi_polygon(joined);
         let expected = [
             "████████████████████████",
             "████████████████████████",
@@ -453,15 +445,15 @@ mod test {
             "██████████▄▄████████████",
             "████████████████████████",
         ];
-        crate::output::ascii::assert_rasterised(&actual, &expected);
+        assert_rasterised(&actual, &expected);
     }
 
     #[test]
     fn centre_is_touched_after_more_than_one_angle() {
-        crate::setup_logging().unwrap();
-        let main = vec![crate::storage::segments::Segment::new(0, 4)];
-        let top = vec![crate::storage::segments::Segment::new(2, 2)];
-        let joined = crate::output::viewsheds::joiner::build_viewshed_polygon(
+        crate::setup_logging();
+        let main = vec![crate::segment::Segment::new(0, 4)];
+        let top = vec![crate::segment::Segment::new(2, 2)];
+        let joined = Joiner::join(
             &[
                 main.clone(),
                 top.clone(),
@@ -473,7 +465,7 @@ mod test {
             1.0,
         )
         .unwrap();
-        let actual = crate::output::ascii::rasterise(joined);
+        let actual = rasterise_multi_polygon(joined);
         let expected = [
             "████████████████████████",
             "████████████████████████",
@@ -488,20 +480,17 @@ mod test {
             "████████████▄███████████",
             "████████████████████████",
         ];
-        crate::output::ascii::assert_rasterised(&actual, &expected);
+        assert_rasterised(&actual, &expected);
     }
 
     #[test]
     fn a_hole() {
-        crate::setup_logging().unwrap();
-        let main = vec![crate::storage::segments::Segment::new(0, 4)];
-        let lid = vec![crate::storage::segments::Segment::new(2, 1)];
-        let joined = crate::output::viewsheds::joiner::build_viewshed_polygon(
-            &[main.clone(), main.clone(), lid, main.clone(), main],
-            1.0,
-        )
-        .unwrap();
-        let actual = crate::output::ascii::rasterise(joined);
+        crate::setup_logging();
+        let main = vec![crate::segment::Segment::new(0, 4)];
+        let lid = vec![crate::segment::Segment::new(2, 1)];
+        let joined =
+            Joiner::join(&[main.clone(), main.clone(), lid, main.clone(), main], 1.0).unwrap();
+        let actual = rasterise_multi_polygon(joined);
         let expected = [
             "████████████████████████",
             "████████████████████████",
@@ -516,24 +505,24 @@ mod test {
             "██████████▄▄████████████",
             "████████████████████████",
         ];
-        crate::output::ascii::assert_rasterised(&actual, &expected);
+        assert_rasterised(&actual, &expected);
     }
 
     #[test]
     fn multiple_holes() {
-        crate::setup_logging().unwrap();
-        let main = vec![crate::storage::segments::Segment::new(0, 6)];
+        crate::setup_logging();
+        let main = vec![crate::segment::Segment::new(0, 6)];
         let struts = vec![
-            crate::storage::segments::Segment::new(0, 1),
-            crate::storage::segments::Segment::new(2, 1),
-            crate::storage::segments::Segment::new(4, 1),
+            crate::segment::Segment::new(0, 1),
+            crate::segment::Segment::new(2, 1),
+            crate::segment::Segment::new(4, 1),
         ];
-        let joined = crate::output::viewsheds::joiner::build_viewshed_polygon(
+        let joined = Joiner::join(
             &[main.clone(), main.clone(), main.clone(), struts, main],
             1.0,
         )
         .unwrap();
-        let actual = crate::output::ascii::rasterise(joined);
+        let actual = rasterise_multi_polygon(joined);
         let expected = [
             "████████▀▀██████████████",
             "████████▀▄▄▄▄▄▀▀▀███████",
@@ -548,18 +537,18 @@ mod test {
             "██████▄▀██████▀▀▀▄▄▄▄███",
             "███████▄▀▀▄▄▄▄██████████",
         ];
-        crate::output::ascii::assert_rasterised(&actual, &expected);
+        assert_rasterised(&actual, &expected);
     }
 
     #[test]
     fn segment_joins_to_multiple_polygons() {
-        crate::setup_logging().unwrap();
+        crate::setup_logging();
         let polygons = vec![
-            crate::storage::segments::Segment::new(2, 1),
-            crate::storage::segments::Segment::new(4, 1),
+            crate::segment::Segment::new(2, 1),
+            crate::segment::Segment::new(4, 1),
         ];
-        let long = vec![crate::storage::segments::Segment::new(0, 5)];
-        let joined = crate::output::viewsheds::joiner::build_viewshed_polygon(
+        let long = vec![crate::segment::Segment::new(0, 5)];
+        let joined = Joiner::join(
             &[
                 polygons.clone(),
                 polygons.clone(),
@@ -571,7 +560,7 @@ mod test {
             1.0,
         )
         .unwrap();
-        let actual = crate::output::ascii::rasterise(joined);
+        let actual = rasterise_multi_polygon(joined);
         let expected = [
             "████████████████████████",
             "██████████▀▀ ███████████",
@@ -586,28 +575,24 @@ mod test {
             "████████▄▄▀▀▄▀▀▄▄███████",
             "████████████▄███████████",
         ];
-        crate::output::ascii::assert_rasterised(&actual, &expected);
+        assert_rasterised(&actual, &expected);
     }
 
     #[test]
     fn join_in_distance_order() {
-        crate::setup_logging().unwrap();
+        crate::setup_logging();
 
         // Even though this polygon is made first and so naturally appears first in the `self.active`
         // list of polygons, it is in fact _nearer_ the centre and so must be joined before newer but
         // higher polygons.
-        let higher_but_made_first = crate::storage::segments::Segment::new(2, 2);
+        let higher_but_made_first = crate::segment::Segment::new(2, 2);
 
-        let lower = crate::storage::segments::Segment::new(0, 1);
+        let lower = crate::segment::Segment::new(0, 1);
         let first = vec![higher_but_made_first.clone()];
         let second = vec![lower, higher_but_made_first];
-        let long = vec![crate::storage::segments::Segment::new(0, 5)];
-        let joined = crate::output::viewsheds::joiner::build_viewshed_polygon(
-            &[vec![], first, second, long, vec![]],
-            1.0,
-        )
-        .unwrap();
-        let actual = crate::output::ascii::rasterise(joined);
+        let long = vec![crate::segment::Segment::new(0, 5)];
+        let joined = Joiner::join(&[vec![], first, second, long, vec![]], 1.0).unwrap();
+        let actual = rasterise_multi_polygon(joined);
         let expected = [
             "████████████████████████",
             "████████▀ ██████████████",
@@ -622,33 +607,33 @@ mod test {
             "██████████▄▄████████████",
             "████████████████████████",
         ];
-        crate::output::ascii::assert_rasterised(&actual, &expected);
+        assert_rasterised(&actual, &expected);
     }
 
     #[test]
     fn inherit_holes_common() {
-        crate::setup_logging().unwrap();
+        crate::setup_logging();
 
-        let joined = crate::output::viewsheds::joiner::build_viewshed_polygon(
+        let joined = Joiner::join(
             &[
                 vec![],
-                vec![crate::storage::segments::Segment::new(0, 3)],
+                vec![crate::segment::Segment::new(0, 3)],
                 vec![
-                    crate::storage::segments::Segment::new(0, 1),
-                    crate::storage::segments::Segment::new(2, 1),
+                    crate::segment::Segment::new(0, 1),
+                    crate::segment::Segment::new(2, 1),
                 ],
                 vec![
-                    crate::storage::segments::Segment::new(0, 3),
-                    crate::storage::segments::Segment::new(4, 1),
+                    crate::segment::Segment::new(0, 3),
+                    crate::segment::Segment::new(4, 1),
                 ],
-                vec![crate::storage::segments::Segment::new(0, 5)],
+                vec![crate::segment::Segment::new(0, 5)],
                 vec![],
                 vec![],
             ],
             1.0,
         )
         .unwrap();
-        let actual = crate::output::ascii::rasterise(joined);
+        let actual = rasterise_multi_polygon(joined);
         let expected = [
             "████████████████████████",
             "████████████████████████",
@@ -663,6 +648,6 @@ mod test {
             "██████▄█████████████████",
             "████████████████████████",
         ];
-        crate::output::ascii::assert_rasterised(&actual, &expected);
+        assert_rasterised(&actual, &expected);
     }
 }
