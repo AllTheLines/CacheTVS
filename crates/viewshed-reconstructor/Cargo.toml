@@ -1,0 +1,20 @@
+[package]
+name = "viewshed-reconstructor"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+color-eyre.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+geo.workspace = true
+tvs-lib = { path = "../tvs-lib", version = "0.1.0" }
+
+[lints]
+workspace = true
+

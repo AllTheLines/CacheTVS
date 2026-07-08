@@ -7,7 +7,7 @@ use color_eyre::Result;
 
 /// Keeps track of active and completed polygons within a viewshed.
 #[derive(Default)]
-struct Joiner {
+pub struct Joiner {
     /// Polygons that don't intersect with the current angle. They don't need to be checked against
     /// new segments.
     completed: Vec<super::growable_polygon::GrowablePolygon>,
@@ -18,8 +18,12 @@ struct Joiner {
 
 impl Joiner {
     /// Join segments into a collection of polygons.
-    fn join(
-        data: &[Vec<crate::storage::segments::Segment>],
+    ///
+    /// # Errors
+    ///   If joining segments fails.
+    #[inline]
+    pub fn join(
+        data: &[Vec<crate::segment::Segment>],
         dem_scale: f32,
     ) -> Result<Vec<super::growable_polygon::GrowablePolygon>> {
         #[expect(
@@ -48,24 +52,49 @@ impl Joiner {
 
         joiner.build_final_angle()?;
         joiner.move_all_active_polygons_to_completed();
+        for polygon in &mut joiner.completed {
+            polygon.dedup_vertices_ignore_openings();
+        }
 
         Ok(joiner.completed)
     }
 }
 
-/// Build a viewshed of euclidean polygons from polar segments.
-pub(crate) fn build_viewshed_polygon(
-    data: &[Vec<crate::storage::segments::Segment>],
-    dem_scale: f32,
-) -> Result<geo::MultiPolygon> {
-    let raw_polygons = Joiner::join(data, dem_scale)?;
-    let mut geo_polygons = Vec::new();
-    for mut raw_polygon in raw_polygons {
-        raw_polygon.dedup_vertices_ignore_openings();
-        let polygon = raw_polygon.to_geo_polygon();
-        tracing::trace!("Final viewshed, adding polygon: {polygon:?}");
-        geo_polygons.push(polygon);
+#[cfg(test)]
+fn rasterise_multi_polygon(
+    multi_polygon: Vec<crate::growable_polygon::GrowablePolygon>,
+) -> Vec<String> {
+    let width = 12u32;
+    let centre = f64::from(width.div_euclid(2));
+
+    let mut multi_polygons_geo = Vec::new();
+
+    for polygon in multi_polygon {
+        let mut line_exterior = Vec::new();
+        for coordinate in polygon.to_polygon().exterior {
+            let foo = geo::Coord {
+                x: coordinate.x + centre,
+                y: coordinate.y + centre,
+            };
+            line_exterior.push(foo);
+        }
+
+        let mut holes = Vec::new();
+        for hole in polygon.to_polygon().interior {
+            let mut line = Vec::new();
+            for coordinate in hole {
+                let foo = geo::Coord {
+                    x: coordinate.x + centre,
+                    y: coordinate.y + centre,
+                };
+                line.push(foo);
+            }
+            holes.push(geo::LineString::from(line));
+        }
+
+        let exterior = geo::LineString::from(line_exterior);
+        multi_polygons_geo.push(geo::Polygon::new(exterior, holes));
     }
 
-    Ok(geo::MultiPolygon::new(geo_polygons))
+    tvs_lib::ascii::rasterise_multi_polygon_geo(&geo::MultiPolygon::new(multi_polygons_geo), width)
 }

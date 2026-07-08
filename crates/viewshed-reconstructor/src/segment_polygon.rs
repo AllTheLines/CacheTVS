@@ -5,7 +5,7 @@
 pub(crate) struct Vertices {
     /// The 5 vertices of a segment. The 4 corners plus a copy of the first vertex to close the
     /// polygon.
-    pub vertices: [geo::Coord; 5],
+    pub vertices: [crate::polygon::Coordinate; 5],
     /// The distances of the top and bottom of the segment from the centre.
     pub distances: std::ops::Range<u32>,
 }
@@ -25,11 +25,11 @@ impl Vertices {
         let scale = f64::from(segment.dem_scale);
 
         let vertices = [
-            bottom_left * scale,
-            bottom_right * scale,
-            top_right * scale,
-            top_left * scale,
-            bottom_left * scale,
+            bottom_left.scale(scale),
+            bottom_right.scale(scale),
+            top_right.scale(scale),
+            top_left.scale(scale),
+            bottom_left.scale(scale),
         ];
 
         Self {
@@ -51,14 +51,14 @@ pub(crate) struct SegmentPolygon {
 
 impl SegmentPolygon {
     /// Convert an index along a line of sight into a coordinate.
-    fn index_to_coordinate(&self, index: u32) -> super::viewshed::Coordinate {
+    fn index_to_coordinate(&self, index: u32) -> crate::polygon::Coordinate {
         let radians = self.angle.to_radians();
         let distance = f64::from(index);
 
-        super::viewshed::Coordinate(geo::coord! {
+        crate::polygon::Coordinate {
             x: distance * f64::from(radians.cos()),
-            y: distance * f64::from(radians.sin())
-        })
+            y: distance * f64::from(radians.sin()),
+        }
     }
 
     /// Rotate a point about the centre of the viewshed.
@@ -66,26 +66,25 @@ impl SegmentPolygon {
         clippy::suboptimal_flops,
         reason = "I think readability is more important?"
     )]
-    fn rotate_by(point: super::viewshed::Coordinate, angle: f64) -> geo::Coord {
-        let dx = point.0.x;
-        let dy = point.0.y;
+    fn rotate_by(point: crate::polygon::Coordinate, angle: f64) -> crate::polygon::Coordinate {
+        let dx = point.x;
+        let dy = point.y;
         let cos = angle.to_radians().cos();
         let sin = angle.to_radians().sin();
-        geo::coord! {
+        crate::polygon::Coordinate {
             x: dx * cos - dy * sin,
-            y: dx * sin + dy * cos
+            y: dx * sin + dy * cos,
         }
     }
 }
 
 #[cfg(test)]
 mod test {
-    fn builder(
-        viewshed: &crate::output::viewsheds::viewshed::Viewshed,
-        angle: f32,
-    ) -> crate::output::viewsheds::segment_polygon::SegmentPolygon {
-        crate::output::viewsheds::segment_polygon::SegmentPolygon {
-            dem_scale: viewshed.dem.scale,
+    use super::*;
+
+    fn builder(angle: f32) -> SegmentPolygon {
+        SegmentPolygon {
+            dem_scale: 1.0,
             angle,
             angle_scale: 1.0,
         }
@@ -93,33 +92,29 @@ mod test {
 
     #[derive(Debug)]
     struct VisiblePolygonFor {
-        pov: geo::Coord,
         angle: f32,
         opening_index: u32,
         closing_index: u32,
     }
 
-    fn make_visible_polygon_for(setup: &VisiblePolygonFor) -> Vec<geo::Coord> {
-        let dem = crate::run::test::make_dem(&crate::tests::fixtures::single_peak_dem());
-        let viewshed = crate::output::viewsheds::viewshed::Viewshed {
-            dem: &dem,
-            pov_coord: tvs_lib::dem::Coordinate(setup.pov),
-        };
-        let segment = builder(&viewshed, setup.angle);
+    fn make_visible_polygon_for(setup: &VisiblePolygonFor) -> Vec<crate::polygon::Coordinate> {
+        let segment = builder(setup.angle);
         let vertices =
             super::Vertices::new(&segment, setup.opening_index, setup.closing_index).vertices;
-        let polygon = geo::Polygon::new(geo::LineString(vertices.into()), vec![]);
 
         let mut polygon_as_dem_coords = Vec::new();
-        for coord in &polygon.exterior().0 {
-            let converted_coord = viewshed
-                .convert_viewshed_coord_to_dem_coord(
-                    crate::output::viewsheds::viewshed::Coordinate(*coord),
-                )
-                .unwrap();
-            polygon_as_dem_coords.push(round_coordinate(converted_coord));
+        for vertex in &vertices {
+            let dem_coord = crate::polygon::Coordinate {
+                x: vertex.x + 4.0,
+                y: -vertex.y + 4.0,
+            };
+            polygon_as_dem_coords.push(round_coordinate(dem_coord));
         }
         polygon_as_dem_coords
+    }
+
+    pub(crate) fn coord(x: f64, y: f64) -> crate::polygon::Coordinate {
+        crate::polygon::Coordinate { x, y }
     }
 
     fn round(float: f64) -> f64 {
@@ -127,10 +122,10 @@ mod test {
         (float * factor).round() / factor
     }
 
-    fn round_coordinate(coordinate: geo::Coord) -> geo::Coord {
-        geo::coord! {
-          x: round(coordinate.x),
-          y: round(coordinate.y),
+    fn round_coordinate(coordinate: crate::polygon::Coordinate) -> crate::polygon::Coordinate {
+        crate::polygon::Coordinate {
+            x: round(coordinate.x),
+            y: round(coordinate.y),
         }
     }
 
@@ -150,29 +145,27 @@ mod test {
     mod from_centre_to_top_right {
         use super::*;
 
-        const POV: geo::Coord = geo::coord! {x: 4.0, y: 4.0};
         const ANGLE: f32 = 45.0;
 
         // The polygon we're making is `abcd` from the above guide.
+        #[expect(clippy::unreadable_literal, reason = "It's just a test")]
         #[test]
         fn making_a_visible_polygon() {
             assert_eq!(
                 make_visible_polygon_for(&VisiblePolygonFor {
-                    pov: POV,
                     angle: ANGLE,
                     opening_index: 1,
                     closing_index: 2,
                 }),
                 vec![
-                    (4.7009079, 3.2867515),
-                    (4.7132491, 3.2990927),
-                    (5.4264998, 2.5981837),
-                    (5.4018174, 2.5735014),
-                    (4.7009079, 3.2867515)
+                    coord(4.7009093, 3.2867496),
+                    coord(4.7132504, 3.2990907),
+                    coord(5.4265009, 2.5981815),
+                    coord(5.4018185, 2.5734991),
+                    coord(4.7009093, 3.2867496),
                 ]
                 .into_iter()
-                .map(Into::into)
-                .collect::<Vec<geo::Coord>>()
+                .collect::<Vec<crate::polygon::Coordinate>>()
             );
         }
     }
@@ -184,38 +177,36 @@ mod test {
     // 1  .  .  .  .  .  .  .  .  .
     // 2  .  .  .  .  .  .  .  .  .
     // 3  .  .  .  .  .  .  .  .  .
+    // 5  .  .  .  .  o  .a .  .  .
+    // 6  .  .  .  .  .  (  .d .  .
+    // 7  .  .  .  .  . b.  )  .  .
+    // 8  .  .  .  .  .  . c.  .  .
     // 4  .  .  .  .  .  .  .  .  .
-    // 5  .  .  .  o  .a .  .  .  .
-    // 6  .  .  .  .  (  .d .  .  .
-    // 7  .  .  .  . b.  )  .  .  .
-    // 8  .  .  .  .  . c.  .  .  .
     //
     mod from_bottom_left_to_bottom_right {
         use super::*;
 
-        const POV: geo::Coord = geo::coord! {x: 3.0, y: 5.0};
         const ANGLE: f32 = 135.0 + 180.0;
 
         // The polygon we're making is `abcd` from the above guide.
+        #[expect(clippy::unreadable_literal, reason = "It's just a test")]
         #[test]
         fn making_a_visible_polygon() {
             assert_eq!(
                 make_visible_polygon_for(&VisiblePolygonFor {
-                    pov: POV,
                     angle: ANGLE,
                     opening_index: 1,
                     closing_index: 2,
                 }),
                 vec![
-                    (3.7132486, 5.7009105),
-                    (3.7009074, 5.7132517),
-                    (4.4018163, 6.4265025),
-                    (4.4264987, 6.4018201),
-                    (3.7132486, 5.7009105)
+                    coord(4.7132503, 4.7009094),
+                    coord(4.7009091, 4.7132506),
+                    coord(5.4018183, 5.4265011),
+                    coord(5.4265006, 5.4018187),
+                    coord(4.7132503, 4.7009094),
                 ]
                 .into_iter()
-                .map(Into::into)
-                .collect::<Vec<geo::Coord>>()
+                .collect::<Vec<crate::polygon::Coordinate>>()
             );
         }
     }

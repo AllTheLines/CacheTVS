@@ -2,11 +2,11 @@
 
 use color_eyre::eyre::{ContextCompat as _, Result, bail};
 
-use crate::output::viewsheds::vertices::Opening;
+use crate::vertices::Opening;
 
 /// A polygon that grows, but only from its anti-clockwise facing side.
 #[derive(Debug, Clone)]
-pub(crate) struct GrowablePolygon {
+pub struct GrowablePolygon {
     /// The main exterior vertices.
     pub vertices: Vec<super::vertices::Vertex>,
     /// Interiore holes within the polygon.
@@ -26,10 +26,7 @@ pub(crate) struct GrowablePolygon {
 impl GrowablePolygon {
     /// Create a new growable polygon. It always begins with a single polar segment converted to
     /// its euclidean coordinates.
-    pub(crate) fn new(
-        segment_vertices: &crate::output::viewsheds::segment_polygon::Vertices,
-        angle: f32,
-    ) -> Self {
+    pub(crate) fn new(segment_vertices: &super::segment_polygon::Vertices, angle: f32) -> Self {
         let mut vertices = Vec::new();
         for (segment_index, segment_vertex) in segment_vertices.vertices.iter().enumerate() {
             let opening = match segment_index {
@@ -80,10 +77,7 @@ impl GrowablePolygon {
     ///              w└──┘x       w└──┘x
     ///
     ///  (abcde)  +  (wxyz) =  (wxyzcdeb)
-    fn new_for_insertion(
-        segment_vertices: &crate::output::viewsheds::segment_polygon::Vertices,
-        angle: f32,
-    ) -> Self {
+    fn new_for_insertion(segment_vertices: &super::segment_polygon::Vertices, angle: f32) -> Self {
         let mut polygon = Self::new(segment_vertices, angle);
 
         #[expect(
@@ -167,7 +161,7 @@ impl GrowablePolygon {
     /// Insert a segment into the polygon.
     pub(crate) fn join_segment(
         &mut self,
-        segment_vertices: &crate::output::viewsheds::segment_polygon::Vertices,
+        segment_vertices: &super::segment_polygon::Vertices,
         vertices_range: std::ops::Range<usize>,
         angle: f32,
     ) -> Result<()> {
@@ -349,25 +343,27 @@ impl GrowablePolygon {
     }
 
     /// Convert the polygon to the `geo` crate's representation. Ready for exporting to `GeoJSON`.
-    pub(crate) fn to_geo_polygon(&self) -> geo::Polygon {
-        let holes: Vec<geo::LineString> = self
+    pub fn to_polygon(&self) -> crate::polygon::Polygon {
+        let holes: Vec<Vec<crate::polygon::Coordinate>> = self
             .holes
             .iter()
             .map(|hole| {
-                geo::LineString(
-                    hole.iter()
-                        .map(|vertex| vertex.coordinate)
-                        .collect::<Vec<geo::Coord>>(),
-                )
+                hole.iter()
+                    .map(|vertex| vertex.coordinate)
+                    .collect::<Vec<crate::polygon::Coordinate>>()
             })
             .collect();
 
-        let vertices: Vec<geo::Coord> = self
+        let vertices: Vec<crate::polygon::Coordinate> = self
             .vertices
             .iter()
             .map(|vertex| vertex.coordinate)
             .collect();
-        geo::Polygon::new(geo::LineString(vertices), holes)
+
+        crate::polygon::Polygon {
+            exterior: vertices,
+            interior: holes,
+        }
     }
 
     /// Remove adjacent vertices that are either identical or extremely similar. This reduces the
@@ -392,7 +388,10 @@ impl GrowablePolygon {
     }
 
     /// Are the two coordinates identical or as good as identical.
-    fn are_coordinates_within_tolerance(left: &geo::Coord, right: &geo::Coord) -> bool {
+    fn are_coordinates_within_tolerance(
+        left: &crate::polygon::Coordinate,
+        right: &crate::polygon::Coordinate,
+    ) -> bool {
         let tolerance = 1e-6f64;
         (left.x - right.x).abs() < tolerance && (left.y - right.y).abs() < tolerance
     }
