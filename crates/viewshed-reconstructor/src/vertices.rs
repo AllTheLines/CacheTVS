@@ -3,9 +3,9 @@
 
 /// A vertex is a single point in a polygon.
 #[derive(Debug, Clone)]
-pub(crate) struct Vertex {
+pub struct Vertex {
     /// The coordinate of the vertex in euclidian space.
-    pub coordinate: geo::Coord,
+    pub coordinate: crate::polygon::Coordinate,
     /// The kind of opening that this vertex represents.
     pub opening: Opening,
 }
@@ -22,7 +22,7 @@ impl Vertex {
 /// The `u32` values in the variants are for storing the polar distance from the centre. This saves
 /// having to do trigonometry to figure out if two openings are touching.
 #[derive(Eq, PartialEq, Debug, Clone)]
-pub(crate) enum Opening {
+pub enum Opening {
     /// No opening. We could also just use `Option::None`, but unwrapping it isn't so ergonomic.
     Null,
     /// This i for polygons that start at 0 degrees. It's possible that another polygon (or even
@@ -124,11 +124,10 @@ pub(crate) fn find_contact(
                  joining distances: {joining_opening_range:?}",
             );
 
-            let is_touching =
-                crate::output::viewsheds::growable_polygon::GrowablePolygon::is_touching(
-                    base_opening_range,
-                    joining_opening_range,
-                );
+            let is_touching = crate::growable_polygon::GrowablePolygon::is_touching(
+                base_opening_range,
+                joining_opening_range,
+            );
 
             if is_touching {
                 tracing::debug!("🟢 Openings touch");
@@ -153,7 +152,7 @@ mod test {
 
     fn vertex(opening: super::Opening) -> Vertex {
         super::Vertex {
-            coordinate: geo::Coord::zero(),
+            coordinate: crate::polygon::Coordinate::zero(),
             opening,
         }
     }

@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/total-viewsheds",
     "crates/tvs-lib",
+    "crates/viewshed-reconstructor",
 ]
 
 [workspace.dependencies]
@@ -10,6 +11,8 @@ color-eyre = "0.6.5"
 geo = "0.31.0"
 serde = "1.0.219"
 serde_json = "1.0.143"
+tracing = { version = "0.1.41" }
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 
 # Canonical lints for whole crate
 #

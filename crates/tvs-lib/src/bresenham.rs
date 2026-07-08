@@ -1,4 +1,4 @@
-#![cfg(test)]
+//! Rasterise lines using the Bresenham algorithm.
 
 #[derive(Clone, Copy, Debug)]
 /// A raster coodinate.
@@ -38,7 +38,7 @@ pub(crate) struct Bresenham {
 
 impl Bresenham {
     /// Instantiate.
-    pub(crate) fn new(from: RasterCoord, to: RasterCoord) -> Self {
+    pub(crate) const fn new(from: RasterCoord, to: RasterCoord) -> Self {
         let delta = RasterCoord {
             x: (to.x - from.x).abs(),
             y: (to.y - from.y).abs(),

@@ -18,9 +18,10 @@ memchr = "2.8.0"
 serde_json.workspace = true
 rusqlite = { version = "0.38.0", features = ["bundled"] }
 rayon = "1.12.0"
-tracing = { version = "0.1.41" }
-tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
 tvs-lib = { path = "../tvs-lib", version = "0.1.0" }
+viewshed-reconstructor = { path = "../viewshed-reconstructor", version = "0.1.0" }
 
 [dev-dependencies]
 tempfile = "3.20.0"
