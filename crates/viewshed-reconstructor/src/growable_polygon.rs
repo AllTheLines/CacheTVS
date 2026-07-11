@@ -1,7 +1,5 @@
 //! Growable polygons are polygons constructed one angle at a time from polar segments.
 
-use color_eyre::eyre::{ContextCompat as _, Result, bail};
-
 use crate::vertices::Opening;
 
 /// A polygon that grows, but only from its anti-clockwise facing side.
@@ -100,18 +98,19 @@ impl GrowablePolygon {
     /// polygon as follows:
     ///   * `Opening::NewStart/NewEnd` become `Opening::Start/End`.
     ///   * `Opening::Start/End` become `Opening::Null`.
-    pub(crate) fn downgrade_openings(&mut self) -> Result<()> {
+    pub(crate) fn downgrade_openings(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
         tracing::trace!("Downgrading openings");
         let mut iterator = self.vertices.iter_mut().rev();
         while let Some(vertex) = iterator.next() {
             match vertex.opening {
                 Opening::Null | Opening::GenesisStart(_) | Opening::GenesisEnd(_) => {}
                 Opening::End(_) => {
-                    bail!("Dangling `Opening`");
+                    panic!("Dangling `Opening`");
                 }
                 Opening::Start(_) => {
                     let Some(next) = iterator.next() else {
-                        bail!("`Opening::Start` without adjacent end");
+                        panic!("`Opening::Start` without adjacent end");
                     };
 
                     vertex.opening = Opening::Null;
@@ -125,8 +124,6 @@ impl GrowablePolygon {
                 }
             }
         }
-
-        Ok(())
     }
 
     /// Insert new vertices into the polygon. Can be either a segment or an entire other growable
@@ -139,8 +136,8 @@ impl GrowablePolygon {
         &mut self,
         base_vertices_range: std::ops::Range<usize>,
         joining_vertices: Vec<super::vertices::Vertex>,
-    ) -> Result<()> {
-        let old_start = self.extract_old_start(base_vertices_range.end)?;
+    ) {
+        let old_start = self.extract_old_start(base_vertices_range.end);
 
         let removed_vertices: Vec<super::vertices::Vertex> = self
             .vertices
@@ -149,13 +146,11 @@ impl GrowablePolygon {
 
         self.vertices
             .get_mut(base_vertices_range.start)
-            .context("Couldn't get new opening start index")?
+            .expect("Couldn't get new opening start index")
             .opening = old_start;
 
         self.dedup_vertices_but_keep_openings();
         self.create_holes(&removed_vertices);
-
-        Ok(())
     }
 
     /// Insert a segment into the polygon.
@@ -164,20 +159,19 @@ impl GrowablePolygon {
         segment_vertices: &super::segment_polygon::Vertices,
         vertices_range: std::ops::Range<usize>,
         angle: f32,
-    ) -> Result<()> {
+    ) {
+        #[cfg(not(target_arch = "wasm32"))]
         tracing::trace!(
             "Splicing new segment ({:?}) at: {vertices_range:?}",
             segment_vertices.distances
         );
 
         let segment = Self::new_for_insertion(segment_vertices, angle);
-        self.join(vertices_range, segment.vertices)?;
+        self.join(vertices_range, segment.vertices);
 
         if segment.furthest_opening < self.furthest_opening {
             self.furthest_opening = segment.furthest_opening;
         }
-
-        Ok(())
     }
 
     /// Insert another polygon into the `self` polygon, where `self` isn't the final polygon.
@@ -201,7 +195,7 @@ impl GrowablePolygon {
         &mut self,
         base_vertices_range: std::ops::Range<usize>,
         joining_polygon: &mut Self,
-    ) -> Result<()> {
+    ) {
         let mut maybe_joining_new_end_index = None;
         for (index, vertex) in joining_polygon.vertices.iter_mut().enumerate().rev() {
             // Find where in the joining polygon we are opening up to be joined by the base polygon.
@@ -218,7 +212,7 @@ impl GrowablePolygon {
             }
         }
         let Some(joining_new_end_index) = maybe_joining_new_end_index else {
-            bail!("Couldn't find `Opening::NewEnd` for joining polygon");
+            panic!("Couldn't find `Opening::NewEnd` for joining polygon");
         };
 
         // We can assume that the vertex at which we join the incoming polygon is always 1 before
@@ -229,12 +223,13 @@ impl GrowablePolygon {
         // is joined.
         joining_polygon.vertices.rotate_left(joining_vertices_entry);
 
+        #[cfg(not(target_arch = "wasm32"))]
         tracing::trace!(
             "Splicing existing polygon at {base_vertices_range:?}, \
             joining polygon: {joining_polygon:#?}, rotated at {joining_vertices_entry}",
         );
 
-        self.join(base_vertices_range, joining_polygon.vertices.clone())?;
+        self.join(base_vertices_range, joining_polygon.vertices.clone());
 
         self.holes.extend(joining_polygon.holes.clone());
 
@@ -245,8 +240,6 @@ impl GrowablePolygon {
         if joining_polygon.is_created_at_angle_0 {
             self.is_created_at_angle_0 = true;
         }
-
-        Ok(())
     }
 
     /// Insert a starting polygon (from angle 0) into a final polygon (from angle ~360).
@@ -255,7 +248,8 @@ impl GrowablePolygon {
         base_vertices_range: std::ops::Range<usize>,
         joining_vertices_range: std::ops::Range<usize>,
         joining_polygon: &mut Self,
-    ) -> Result<()> {
+    ) {
+        #[cfg(not(target_arch = "wasm32"))]
         tracing::trace!(
             "Splicing final polygon at {base_vertices_range:?}, \
              with: {:#?} at {joining_vertices_range:?}",
@@ -266,12 +260,12 @@ impl GrowablePolygon {
         joining_polygon
             .vertices
             .get_mut(joining_vertices_range.start)
-            .context("Bad joining vertex index")?
+            .expect("Bad joining vertex index")
             .opening = Opening::Null;
         joining_polygon
             .vertices
             .get_mut(joining_vertices_range.end)
-            .context("Bad joining vertex index")?
+            .expect("Bad joining vertex index")
             .opening = Opening::Null;
 
         // Rotating achieves the effect of unlooping the polygon at the point at which the polygon
@@ -280,11 +274,9 @@ impl GrowablePolygon {
             .vertices
             .rotate_left(joining_vertices_range.start);
 
-        self.join(base_vertices_range, joining_polygon.vertices.clone())?;
+        self.join(base_vertices_range, joining_polygon.vertices.clone());
 
         self.holes.extend(joining_polygon.holes.clone());
-
-        Ok(())
     }
 
     /// Join a polygon into itself.
@@ -299,6 +291,7 @@ impl GrowablePolygon {
             right_range.start..left_range.start
         };
 
+        #[cfg(not(target_arch = "wasm32"))]
         tracing::trace!(
             "Splicing polygon into itself at: {range:?} ({left_range:?}/{right_range:?})"
         );
@@ -309,16 +302,16 @@ impl GrowablePolygon {
     }
 
     /// Extract the starting vertex of an opening that has just been joined to.
-    pub(crate) fn extract_old_start(&mut self, index: usize) -> Result<Opening> {
+    pub(crate) fn extract_old_start(&mut self, index: usize) -> Opening {
         let vertex = self
             .vertices
             .get_mut(index)
-            .context("Bad index for old opening start")?;
+            .expect("Bad index for old opening start");
 
         let old_start = vertex.opening.clone();
         vertex.opening = Opening::Null;
 
-        Ok(old_start)
+        old_start
     }
 
     /// Create interior holes from the vertices that were removed for the join.
@@ -327,6 +320,7 @@ impl GrowablePolygon {
 
         for hole in holes {
             if hole.iter().any(|vertex| !vertex.is_centre()) {
+                #[cfg(not(target_arch = "wasm32"))]
                 tracing::trace!("Hole: {hole:?}");
                 self.holes.push(hole.to_vec());
             }

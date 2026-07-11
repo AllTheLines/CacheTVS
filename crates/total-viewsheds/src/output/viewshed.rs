@@ -86,7 +86,7 @@ impl Viewshed<'_> {
             color_eyre::eyre::bail!("Point of view ({:?}) is not calculable", viewshed.pov_coord);
         }
 
-        let multi_polygon = Self::build_viewshed_polygon(&segments, viewshed.dem.scale)?;
+        let multi_polygon = Self::build_viewshed_polygon(&segments, viewshed.dem.scale);
         tracing::info!("Viewshed reconstructed in {:?}.", start.elapsed());
 
         Ok((pov_dem_coord, multi_polygon))
@@ -96,8 +96,8 @@ impl Viewshed<'_> {
     pub(crate) fn build_viewshed_polygon(
         data: &[Vec<viewshed_reconstructor::segment::Segment>],
         dem_scale: f32,
-    ) -> Result<geo::MultiPolygon> {
-        let raw_polygons = viewshed_reconstructor::joiner::Joiner::join(data, dem_scale)?;
+    ) -> geo::MultiPolygon {
+        let raw_polygons = viewshed_reconstructor::joiner::Joiner::join(data, dem_scale);
         let mut geo_polygons = Vec::new();
         for raw_polygon in raw_polygons {
             let geo_polygon = Self::to_geo_polygon(&raw_polygon.to_polygon());
@@ -105,7 +105,7 @@ impl Viewshed<'_> {
             geo_polygons.push(geo_polygon);
         }
 
-        Ok(geo::MultiPolygon::new(geo_polygons))
+        geo::MultiPolygon::new(geo_polygons)
     }
 
     /// Convert the polygon to the `geo` crate's representation. Ready for exporting to `GeoJSON`.

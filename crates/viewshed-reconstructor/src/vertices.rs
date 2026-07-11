@@ -117,6 +117,7 @@ pub(crate) fn find_contact(
 ) -> Option<std::ops::Range<usize>> {
     OpeningsIterator::new(vertices)
         .filter(|(base_opening_index, base_opening_range)| {
+            #[cfg(not(target_arch = "wasm32"))]
             tracing::debug!(
                 "Checking if openings touch: \
                  index: {base_opening_index:?}, \
@@ -130,8 +131,10 @@ pub(crate) fn find_contact(
             );
 
             if is_touching {
+                #[cfg(not(target_arch = "wasm32"))]
                 tracing::debug!("🟢 Openings touch");
             } else {
+                #[cfg(not(target_arch = "wasm32"))]
                 tracing::debug!("🟡 Openings don't touch");
             }
 
