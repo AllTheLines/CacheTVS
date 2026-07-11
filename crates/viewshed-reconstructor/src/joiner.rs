@@ -3,8 +3,6 @@
 mod last;
 mod normal;
 
-use color_eyre::Result;
-
 /// Keeps track of active and completed polygons within a viewshed.
 #[derive(Default)]
 pub struct Joiner {
@@ -22,10 +20,11 @@ impl Joiner {
     /// # Errors
     ///   If joining segments fails.
     #[inline]
+    #[must_use]
     pub fn join(
         data: &[Vec<crate::segment::Segment>],
         dem_scale: f32,
-    ) -> Result<Vec<super::growable_polygon::GrowablePolygon>> {
+    ) -> Vec<super::growable_polygon::GrowablePolygon> {
         #[expect(
             clippy::as_conversions,
             clippy::cast_precision_loss,
@@ -47,16 +46,16 @@ impl Joiner {
             )]
             let angle = anglish as f32 / angle_scale;
 
-            joiner.build_angle(angle, angle_scale, segments, dem_scale)?;
+            joiner.build_angle(angle, angle_scale, segments, dem_scale);
         }
 
-        joiner.build_final_angle()?;
+        joiner.build_final_angle();
         joiner.move_all_active_polygons_to_completed();
         for polygon in &mut joiner.completed {
             polygon.dedup_vertices_ignore_openings();
         }
 
-        Ok(joiner.completed)
+        joiner.completed
     }
 }
 

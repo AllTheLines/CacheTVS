@@ -2,8 +2,6 @@
 //! are the ones that occur for every angle other than the final one. Therefore these should be
 //! simpler and faster.
 
-use color_eyre::eyre::Result;
-
 impl super::Joiner {
     /// Build the viewshed for a single angle.
     pub(crate) fn build_angle(
@@ -12,15 +10,18 @@ impl super::Joiner {
         angle_scale: f32,
         segments: &[crate::segment::Segment],
         dem_scale: f32,
-    ) -> Result<()> {
-        tracing::debug!("");
-        tracing::debug!("Building viewshed for angle: {angle}");
-        tracing::debug!(
-            "Polygon counts, completed: {}, active: {}. Segments: {}",
-            self.completed.len(),
-            self.active.len(),
-            segments.len()
-        );
+    ) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            tracing::debug!("");
+            tracing::debug!("Building viewshed for angle: {angle}");
+            tracing::debug!(
+                "Polygon counts, completed: {}, active: {}. Segments: {}",
+                self.completed.len(),
+                self.active.len(),
+                segments.len()
+            );
+        };
 
         self.prepare_active_polygons();
 
@@ -32,10 +33,10 @@ impl super::Joiner {
             angle_scale,
         };
 
-        let timing = std::time::Instant::now();
         for (segment_index, polar_segment) in segments.iter().enumerate() {
             let start = u32::from(polar_segment.start());
             let end = u32::from(polar_segment.start() + polar_segment.distance());
+            #[cfg(not(target_arch = "wasm32"))]
             tracing::debug!("Segment {segment_index}, distances range: {:?}", start..end);
             let polygon_segment = crate::segment_polygon::Vertices::new(&segment, start, end);
             let mut is_segment_touching_anything = false;
@@ -43,14 +44,12 @@ impl super::Joiner {
             let mut joined_polygons_to_remove = Vec::new();
 
             for active_polygon_index in 0..self.active.len() {
-                let touchging_timing = std::time::Instant::now();
-
                 let is_segment_touching_this_polygon = self.join_segment(
                     active_polygon_index,
                     &polygon_segment,
                     maybe_joining_polygon_index,
                     angle,
-                )?;
+                );
 
                 #[expect(
                     clippy::indexing_slicing,
@@ -69,13 +68,9 @@ impl super::Joiner {
                 } else {
                     maybe_joining_polygon_index = None;
                 }
-
-                tracing::debug!(
-                    "Segment checked against active {active_polygon_index} in {:?}",
-                    touchging_timing.elapsed()
-                );
             }
 
+            #[cfg(not(target_arch = "wasm32"))]
             tracing::debug!("Removing joined polygons: {joined_polygons_to_remove:?}");
             for joined_polygon_index in joined_polygons_to_remove.iter().rev() {
                 self.active.remove(*joined_polygon_index);
@@ -85,27 +80,24 @@ impl super::Joiner {
                 new_polygons.push(Self::create_new_polygon_from_untouched_segment(
                     &polygon_segment,
                     angle,
-                )?);
+                ));
             }
         }
 
         for polygon in &mut self.active {
-            polygon.downgrade_openings()?;
+            polygon.downgrade_openings();
         }
-
-        tracing::debug!("Angle {angle} done in {:?}", timing.elapsed());
 
         self.move_untouched_active_polygons_to_completed();
         self.active.extend(new_polygons);
-
-        Ok(())
     }
 
     /// When a segment doesn't touch anything it becomes its own independent polygon.
     fn create_new_polygon_from_untouched_segment(
         polygon_segment: &crate::segment_polygon::Vertices,
         angle: f32,
-    ) -> Result<crate::growable_polygon::GrowablePolygon> {
+    ) -> crate::growable_polygon::GrowablePolygon {
+        #[cfg(not(target_arch = "wasm32"))]
         tracing::debug!(
             "Segment not touching anything at angle {angle}, \
              so making it its own polygon: {polygon_segment:?}"
@@ -114,9 +106,9 @@ impl super::Joiner {
         if angle == 0.0 {
             polygon.is_created_at_angle_0 = true;
         }
-        polygon.downgrade_openings()?;
+        polygon.downgrade_openings();
 
-        Ok(polygon)
+        polygon
     }
 
     /// Set all active polygons to untouched and order them based on their openings' distance from
@@ -187,10 +179,11 @@ impl super::Joiner {
         segment: &crate::segment_polygon::Vertices,
         maybe_joining_polygon_index: Option<usize>,
         angle: f32,
-    ) -> Result<bool> {
+    ) -> bool {
         let (base_polygon, maybe_joining_polygon) =
             self.get_involved_polygons(growable_polygon_index, maybe_joining_polygon_index);
 
+        #[cfg(not(target_arch = "wasm32"))]
         tracing::trace!(
             "Polygon {growable_polygon_index} BEFORE: {:#?}",
             base_polygon
@@ -199,19 +192,21 @@ impl super::Joiner {
         let Some(base_vertices_range) =
             super::super::vertices::find_contact(&base_polygon.vertices, &segment.distances)
         else {
-            return Ok(false);
+            return false;
         };
 
         match maybe_joining_polygon {
             Some(joining_polygon) => {
-                base_polygon.join_non_starting_polygon(base_vertices_range, joining_polygon)?;
+                base_polygon.join_non_starting_polygon(base_vertices_range, joining_polygon);
+                #[cfg(not(target_arch = "wasm32"))]
                 tracing::trace!(
                     "Polygon {growable_polygon_index} AFTER joined polygon: {:#?}",
                     base_polygon
                 );
             }
             None => {
-                base_polygon.join_segment(segment, base_vertices_range, angle)?;
+                base_polygon.join_segment(segment, base_vertices_range, angle);
+                #[cfg(not(target_arch = "wasm32"))]
                 tracing::trace!(
                     "Polygon {growable_polygon_index} AFTER joined segment: {:#?}",
                     base_polygon
@@ -219,7 +214,7 @@ impl super::Joiner {
             }
         }
 
-        Ok(true)
+        true
     }
 
     /// Get the polygons involved in a touch check.
@@ -265,7 +260,7 @@ mod test {
     fn multiple_angles() {
         crate::setup_logging();
         let segment = vec![crate::segment::Segment::new(0, 5)];
-        let joined = Joiner::join(&[segment.clone(), segment.clone(), segment], 1.0).unwrap();
+        let joined = Joiner::join(&[segment.clone(), segment.clone(), segment], 1.0);
         let actual = rasterise_multi_polygon(joined);
         let expected = [
             "████████████████████████",
@@ -302,8 +297,7 @@ mod test {
                 main,
             ],
             1.0,
-        )
-        .unwrap();
+        );
         let actual = rasterise_multi_polygon(joined);
         let expected = [
             "████████████████████████",
@@ -337,8 +331,7 @@ mod test {
                 vec![],
             ],
             1.0,
-        )
-        .unwrap();
+        );
         let actual = rasterise_multi_polygon(joined);
         let expected = [
             "████████████████████████",
@@ -372,8 +365,7 @@ mod test {
                 vec![],
             ],
             1.0,
-        )
-        .unwrap();
+        );
         let actual = rasterise_multi_polygon(joined);
         let expected = [
             "████████████████████████",
@@ -400,8 +392,7 @@ mod test {
         let joined = Joiner::join(
             &[main.clone(), main.clone(), main.clone(), main, variance],
             1.0,
-        )
-        .unwrap();
+        );
         let actual = rasterise_multi_polygon(joined);
         let expected = [
             "████████████████████████",
@@ -429,7 +420,7 @@ mod test {
             crate::segment::Segment::new(3, 1),
         ];
         let bottom = vec![crate::segment::Segment::new(0, 2)];
-        let joined = Joiner::join(&[main.clone(), pair, bottom, main.clone(), main], 1.0).unwrap();
+        let joined = Joiner::join(&[main.clone(), pair, bottom, main.clone(), main], 1.0);
         let actual = rasterise_multi_polygon(joined);
         let expected = [
             "████████████████████████",
@@ -463,8 +454,7 @@ mod test {
                 main,
             ],
             1.0,
-        )
-        .unwrap();
+        );
         let actual = rasterise_multi_polygon(joined);
         let expected = [
             "████████████████████████",
@@ -488,8 +478,7 @@ mod test {
         crate::setup_logging();
         let main = vec![crate::segment::Segment::new(0, 4)];
         let lid = vec![crate::segment::Segment::new(2, 1)];
-        let joined =
-            Joiner::join(&[main.clone(), main.clone(), lid, main.clone(), main], 1.0).unwrap();
+        let joined = Joiner::join(&[main.clone(), main.clone(), lid, main.clone(), main], 1.0);
         let actual = rasterise_multi_polygon(joined);
         let expected = [
             "████████████████████████",
@@ -520,8 +509,7 @@ mod test {
         let joined = Joiner::join(
             &[main.clone(), main.clone(), main.clone(), struts, main],
             1.0,
-        )
-        .unwrap();
+        );
         let actual = rasterise_multi_polygon(joined);
         let expected = [
             "████████▀▀██████████████",
@@ -558,8 +546,7 @@ mod test {
                 vec![],
             ],
             1.0,
-        )
-        .unwrap();
+        );
         let actual = rasterise_multi_polygon(joined);
         let expected = [
             "████████████████████████",
@@ -591,7 +578,7 @@ mod test {
         let first = vec![higher_but_made_first.clone()];
         let second = vec![lower, higher_but_made_first];
         let long = vec![crate::segment::Segment::new(0, 5)];
-        let joined = Joiner::join(&[vec![], first, second, long, vec![]], 1.0).unwrap();
+        let joined = Joiner::join(&[vec![], first, second, long, vec![]], 1.0);
         let actual = rasterise_multi_polygon(joined);
         let expected = [
             "████████████████████████",
@@ -631,8 +618,7 @@ mod test {
                 vec![],
             ],
             1.0,
-        )
-        .unwrap();
+        );
         let actual = rasterise_multi_polygon(joined);
         let expected = [
             "████████████████████████",

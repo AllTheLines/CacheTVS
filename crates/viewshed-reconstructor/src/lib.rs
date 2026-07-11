@@ -2,6 +2,12 @@
 //!
 //! You could just use
 
+#![expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "We're not using errors to keep the WASM bundle size small"
+)]
+
 #[cfg(test)]
 use tracing_subscriber::{Layer as _, layer::SubscriberExt as _, util::SubscriberInitExt as _};
 
@@ -11,6 +17,7 @@ pub mod polygon;
 pub mod segment;
 mod segment_polygon;
 mod vertices;
+mod wasm;
 
 /// Setup logging.
 #[cfg(test)]
