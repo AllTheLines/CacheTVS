@@ -6,13 +6,22 @@ edition = "2024"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+[dependencies]
+# TODO:
+#   Wrap tracing calls in our own macros in order to reduce the bundle size of
+#   production WASM builds.
 tracing.workspace = true
+
+[features]
+enable-logging = ["tracing-wasm"]
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tracing-subscriber.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1.7"
 js-sys = "0.3.103"
+tracing-wasm = { version = "0.2", optional = true }
 wasm-bindgen = "0.2"
 
 [dev-dependencies]

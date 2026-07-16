@@ -10,7 +10,16 @@ How to compile for WASM:
 rustup target add wasm32-unknown-unknown
 cargo install wasm-pack
 
+# Development
 wasm-pack build \
+  --target web \
+  --out-dir /publicish/Workspace/viewview/website/src/lib/viewshed-reconstructor \
+  crates/viewshed-reconstructor \
+  -- --features enable-logging
+
+# Production
+wasm-pack build \
+  --release \
   --target web \
   --out-dir /publicish/Workspace/viewview/website/src/lib/viewshed-reconstructor \
   crates/viewshed-reconstructor

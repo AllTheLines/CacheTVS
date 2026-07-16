@@ -28,6 +28,7 @@ tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 # It's always good to write as much documentation as possible
 missing_docs = "warn"
 unreachable_pub = "warn"
+unexpected_cfgs = { level = "allow", check-cfg = ["cfg(rust_analyzer)"] }
 
 [workspace.lints.clippy]
 # `clippy::all` is already on by default. It implies the following:

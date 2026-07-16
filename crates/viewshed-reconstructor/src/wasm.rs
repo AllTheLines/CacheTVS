@@ -1,14 +1,16 @@
 //! Support using this crate in the browser with WASM.
 
-// #![cfg(target_arch = "wasm32")]
+#![cfg(any(target_arch = "wasm32", rust_analyzer))]
 
-#[cfg(target_arch = "wasm32")]
 use js_sys::Array;
-#[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
+#[cfg(feature = "enable-logging")]
+use std::sync::Once;
+#[cfg(feature = "enable-logging")]
+static INIT_WASM_LOGGING: Once = Once::new();
+
 /// WASM only supports simple types, so this is a simple representation of a polygon.
-#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub struct PlainPolygon {
     /// The exterior coordinates of the polygon. x/y components are flattened, so the first
@@ -22,7 +24,6 @@ pub struct PlainPolygon {
     hole_indices: Vec<u32>,
 }
 
-#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 impl PlainPolygon {
     /// Getter for `exterior`.
@@ -47,7 +48,6 @@ impl PlainPolygon {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
 impl PlainPolygon {
     /// Instantiate.
     #[inline]
@@ -87,13 +87,23 @@ impl PlainPolygon {
 ///   When reconstructing the viewshed fails.
 #[expect(
     unreachable_pub,
-    reason = "We won't it to be `pub` for WASM but not avaiable outside the crate"
+    reason = "We want it to be `pub` for WASM but not avaiable outside the crate"
 )]
-#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 #[must_use]
 pub fn reconstruct(js_data: &js_sys::Array, dem_scale: f32) -> js_sys::Array {
     console_error_panic_hook::set_once();
+
+    #[cfg(feature = "enable-logging")]
+    {
+        INIT_WASM_LOGGING.call_once(|| {
+            let config = tracing_wasm::WASMLayerConfigBuilder::new()
+                .set_max_level(tracing::Level::DEBUG)
+                .build();
+            tracing_wasm::set_as_global_default_with_config(config);
+        });
+    }
+
     let mut rust_data: Vec<Vec<crate::segment::Segment>> = Vec::new();
 
     for segments_for_angle in js_data.iter() {
