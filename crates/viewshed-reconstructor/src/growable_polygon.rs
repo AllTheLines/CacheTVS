@@ -9,10 +9,10 @@ pub struct GrowablePolygon {
     pub vertices: Vec<super::vertices::Vertex>,
     /// Interiore holes within the polygon.
     pub holes: Vec<Vec<super::vertices::Vertex>>,
-    /// The distance of the opening furthest from the centre of the viewshed. Used for ordering
+    /// The distances of the openings ordered from the centre of the viewshed. Used for ordering
     /// active polygons. Polygons must be joined to new segments (and other polygons) in increasing
     /// order to prevent overlaps.
-    pub furthest_opening: u32,
+    pub lowest_openings: Vec<u32>,
     /// Has the polygon been touched by anything in the current angle? If not, then it is marked as
     /// an isolated polygon that doesn't need to be checked for touches on subsequent angles.
     pub is_touched: bool,
@@ -55,7 +55,7 @@ impl GrowablePolygon {
         Self {
             vertices,
             holes: Vec::new(),
-            furthest_opening: segment_vertices.distances.start,
+            lowest_openings: vec![segment_vertices.distances.start],
             is_touched: false,
             is_created_at_angle_0: false,
         }
@@ -98,8 +98,9 @@ impl GrowablePolygon {
     /// polygon as follows:
     ///   * `Opening::NewStart/NewEnd` become `Opening::Start/End`.
     ///   * `Opening::Start/End` become `Opening::Null`.
+    //
+    // TODO(optimise): Only iterate over cached openings.
     pub(crate) fn downgrade_openings(&mut self) {
-        #[cfg(not(target_arch = "wasm32"))]
         tracing::trace!("Downgrading openings");
         let mut iterator = self.vertices.iter_mut().rev();
         while let Some(vertex) = iterator.next() {
@@ -135,13 +136,13 @@ impl GrowablePolygon {
     fn join(
         &mut self,
         base_vertices_range: std::ops::Range<usize>,
-        joining_vertices: Vec<super::vertices::Vertex>,
+        joining_vertices: &[super::vertices::Vertex],
     ) {
         let old_start = self.extract_old_start(base_vertices_range.end);
 
         let removed_vertices: Vec<super::vertices::Vertex> = self
             .vertices
-            .splice(base_vertices_range.clone(), joining_vertices)
+            .splice(base_vertices_range.clone(), joining_vertices.to_vec())
             .collect();
 
         self.vertices
@@ -151,6 +152,21 @@ impl GrowablePolygon {
 
         self.dedup_vertices_but_keep_openings();
         self.create_holes(&removed_vertices);
+        self.set_lowest_opening();
+    }
+
+    /// Record the polygon's openings in order of their distance from the centre of the viewshed.
+    //
+    // TODO(optimise): Only iterate over cached openings.
+    fn set_lowest_opening(&mut self) {
+        self.lowest_openings = Vec::new();
+        for vertex in &self.vertices {
+            if let Opening::Start(distance) = vertex.opening {
+                self.lowest_openings.push(distance);
+            }
+        }
+
+        self.lowest_openings.sort_unstable();
     }
 
     /// Insert a segment into the polygon.
@@ -160,18 +176,13 @@ impl GrowablePolygon {
         vertices_range: std::ops::Range<usize>,
         angle: f32,
     ) {
-        #[cfg(not(target_arch = "wasm32"))]
-        tracing::trace!(
+        tracing::debug!(
             "Splicing new segment ({:?}) at: {vertices_range:?}",
             segment_vertices.distances
         );
 
         let segment = Self::new_for_insertion(segment_vertices, angle);
-        self.join(vertices_range, segment.vertices);
-
-        if segment.furthest_opening < self.furthest_opening {
-            self.furthest_opening = segment.furthest_opening;
-        }
+        self.join(vertices_range, &segment.vertices);
     }
 
     /// Insert another polygon into the `self` polygon, where `self` isn't the final polygon.
@@ -197,6 +208,7 @@ impl GrowablePolygon {
         joining_polygon: &mut Self,
     ) {
         let mut maybe_joining_new_end_index = None;
+        // TODO(optimise): Only iterate over cached openings.
         for (index, vertex) in joining_polygon.vertices.iter_mut().enumerate().rev() {
             // Find where in the joining polygon we are opening up to be joined by the base polygon.
             if matches!(vertex.opening, Opening::NewEnd(_)) {
@@ -223,19 +235,15 @@ impl GrowablePolygon {
         // is joined.
         joining_polygon.vertices.rotate_left(joining_vertices_entry);
 
-        #[cfg(not(target_arch = "wasm32"))]
-        tracing::trace!(
+        tracing::debug!(
             "Splicing existing polygon at {base_vertices_range:?}, \
-            joining polygon: {joining_polygon:#?}, rotated at {joining_vertices_entry}",
+            joining polygon rotated at {joining_vertices_entry}",
         );
+        tracing::trace!("Joining polygon: {joining_polygon:#?}");
 
-        self.join(base_vertices_range, joining_polygon.vertices.clone());
+        self.join(base_vertices_range, &joining_polygon.vertices);
 
         self.holes.extend(joining_polygon.holes.clone());
-
-        if joining_polygon.furthest_opening < self.furthest_opening {
-            self.furthest_opening = joining_polygon.furthest_opening;
-        }
 
         if joining_polygon.is_created_at_angle_0 {
             self.is_created_at_angle_0 = true;
@@ -249,7 +257,6 @@ impl GrowablePolygon {
         joining_vertices_range: std::ops::Range<usize>,
         joining_polygon: &mut Self,
     ) {
-        #[cfg(not(target_arch = "wasm32"))]
         tracing::trace!(
             "Splicing final polygon at {base_vertices_range:?}, \
              with: {:#?} at {joining_vertices_range:?}",
@@ -274,7 +281,7 @@ impl GrowablePolygon {
             .vertices
             .rotate_left(joining_vertices_range.start);
 
-        self.join(base_vertices_range, joining_polygon.vertices.clone());
+        self.join(base_vertices_range, &joining_polygon.vertices);
 
         self.holes.extend(joining_polygon.holes.clone());
     }
@@ -291,7 +298,6 @@ impl GrowablePolygon {
             right_range.start..left_range.start
         };
 
-        #[cfg(not(target_arch = "wasm32"))]
         tracing::trace!(
             "Splicing polygon into itself at: {range:?} ({left_range:?}/{right_range:?})"
         );
@@ -320,7 +326,6 @@ impl GrowablePolygon {
 
         for hole in holes {
             if hole.iter().any(|vertex| !vertex.is_centre()) {
-                #[cfg(not(target_arch = "wasm32"))]
                 tracing::trace!("Hole: {hole:?}");
                 self.holes.push(hole.to_vec());
             }
@@ -363,7 +368,8 @@ impl GrowablePolygon {
     /// Remove adjacent vertices that are either identical or extremely similar. This reduces the
     /// byte size of the final polygon and speeds up the algorithm by about 10%.
     //
-    // TODO: Could the algorithm be improved so that this wasn't needed?
+    // TODO(optimise): Only iterate over cached openings.
+    // TODO: Could the algorithm be improved so that this function wasn't even needed?
     fn dedup_vertices_but_keep_openings(&mut self) {
         self.vertices.dedup_by(|left, right| {
             if !matches!(left.opening, Opening::Null) || !matches!(right.opening, Opening::Null) {
@@ -388,5 +394,10 @@ impl GrowablePolygon {
     ) -> bool {
         let tolerance = 1e-6f64;
         (left.x - right.x).abs() < tolerance && (left.y - right.y).abs() < tolerance
+    }
+
+    /// Check if the polygon is valid.
+    pub fn self_intersects(&self) -> bool {
+        crate::validity::check(&self.vertices)
     }
 }

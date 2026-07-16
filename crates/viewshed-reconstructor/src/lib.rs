@@ -16,6 +16,7 @@ pub mod joiner;
 pub mod polygon;
 pub mod segment;
 mod segment_polygon;
+mod validity;
 mod vertices;
 mod wasm;
 

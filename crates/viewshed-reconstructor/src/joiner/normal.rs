@@ -10,20 +10,17 @@ impl super::Joiner {
         angle_scale: f32,
         segments: &[crate::segment::Segment],
         dem_scale: f32,
-    ) {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            tracing::debug!("");
-            tracing::debug!("Building viewshed for angle: {angle}");
-            tracing::debug!(
-                "Polygon counts, completed: {}, active: {}. Segments: {}",
-                self.completed.len(),
-                self.active.len(),
-                segments.len()
-            );
-        };
+    ) -> bool {
+        tracing::debug!("");
+        tracing::debug!("🏳️ Building viewshed for angle: {angle}");
+        tracing::debug!(
+            "Polygon counts, completed: {}, active: {}. Segments: {}",
+            self.completed.len(),
+            self.active.len(),
+            segments.len()
+        );
 
-        self.prepare_active_polygons();
+        self.set_all_active_polygons_to_untouched();
 
         let mut new_polygons = Vec::new();
 
@@ -36,20 +33,46 @@ impl super::Joiner {
         for (segment_index, polar_segment) in segments.iter().enumerate() {
             let start = u32::from(polar_segment.start());
             let end = u32::from(polar_segment.start() + polar_segment.distance());
-            #[cfg(not(target_arch = "wasm32"))]
-            tracing::debug!("Segment {segment_index}, distances range: {:?}", start..end);
             let polygon_segment = crate::segment_polygon::Vertices::new(&segment, start, end);
             let mut is_segment_touching_anything = false;
             let mut maybe_joining_polygon_index = None;
             let mut joined_polygons_to_remove = Vec::new();
+            let mut running_highest = 0;
+            tracing::debug!("Segment {segment_index}, distances range: {:?}", start..end);
+
+            self.order_active_polygons_by_distance_from_centre();
 
             for active_polygon_index in 0..self.active.len() {
-                let is_segment_touching_this_polygon = self.join_segment(
+                if self.is_polygon_surrounded(active_polygon_index, running_highest) {
+                    // TODO: This is a hack. Thankfully it's rare, so I've never actually seen a
+                    // touching but unjoined polygon in the wild. Without the hack though what you
+                    // do see is lots of unsightly artifacting eminating from the affected polygon.
+                    tracing::warn!(
+                        "Polygon {active_polygon_index} falls inside previous polygon, skipping join checks."
+                    );
+                    continue;
+                }
+
+                let Some(is_segment_touching_this_polygon) = self.join_segment(
                     active_polygon_index,
                     &polygon_segment,
                     maybe_joining_polygon_index,
                     angle,
-                );
+                ) else {
+                    self.remove_all_polygons_apart_from_bad_ones(
+                        active_polygon_index,
+                        maybe_joining_polygon_index,
+                    );
+                    return false;
+                };
+
+                let polygon_highest = self
+                    .get_active_polygon(active_polygon_index)
+                    .lowest_openings
+                    .iter()
+                    .max()
+                    .expect("Polygon without any openings");
+                running_highest = *polygon_highest;
 
                 #[expect(
                     clippy::indexing_slicing,
@@ -62,16 +85,15 @@ impl super::Joiner {
                     is_segment_touching_anything = true;
                     if let Some(joining_polygon_index) = maybe_joining_polygon_index {
                         joined_polygons_to_remove.push(joining_polygon_index);
-                    } else {
-                        maybe_joining_polygon_index = Some(active_polygon_index);
                     }
+                    maybe_joining_polygon_index = Some(active_polygon_index);
                 } else {
                     maybe_joining_polygon_index = None;
                 }
             }
 
-            #[cfg(not(target_arch = "wasm32"))]
             tracing::debug!("Removing joined polygons: {joined_polygons_to_remove:?}");
+            joined_polygons_to_remove.dedup();
             for joined_polygon_index in joined_polygons_to_remove.iter().rev() {
                 self.active.remove(*joined_polygon_index);
             }
@@ -90,6 +112,28 @@ impl super::Joiner {
 
         self.move_untouched_active_polygons_to_completed();
         self.active.extend(new_polygons);
+
+        true
+    }
+
+    /// Get a reference to an active polygon.
+    fn get_active_polygon(&self, index: usize) -> &crate::growable_polygon::GrowablePolygon {
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "We're getting the indexes from `.len()`"
+        )]
+        &self.active[index]
+    }
+
+    /// Check for an edge case where a polygon is between 2 openings of another polygon.
+    fn is_polygon_surrounded(&self, index: usize, running_highest: u32) -> bool {
+        let polygon_lowest = self
+            .get_active_polygon(index)
+            .lowest_openings
+            .iter()
+            .min()
+            .expect("Polygon without any openings");
+        polygon_lowest < &running_highest
     }
 
     /// When a segment doesn't touch anything it becomes its own independent polygon.
@@ -97,7 +141,6 @@ impl super::Joiner {
         polygon_segment: &crate::segment_polygon::Vertices,
         angle: f32,
     ) -> crate::growable_polygon::GrowablePolygon {
-        #[cfg(not(target_arch = "wasm32"))]
         tracing::debug!(
             "Segment not touching anything at angle {angle}, \
              so making it its own polygon: {polygon_segment:?}"
@@ -111,12 +154,21 @@ impl super::Joiner {
         polygon
     }
 
-    /// Set all active polygons to untouched and order them based on their openings' distance from
-    /// the centre.
-    pub(crate) fn prepare_active_polygons(&mut self) {
-        self.active.sort_by_key(|polygon| polygon.furthest_opening);
+    /// Set all active polygons to untouched.
+    pub(crate) fn set_all_active_polygons_to_untouched(&mut self) {
         self.active.iter_mut().for_each(|active| {
             active.is_touched = false;
+        });
+    }
+
+    /// Order active polygons by their lowest opening's distance from the centre.
+    pub(crate) fn order_active_polygons_by_distance_from_centre(&mut self) {
+        self.active.sort_by_key(|polygon| {
+            *polygon
+                .lowest_openings
+                .iter()
+                .min()
+                .expect("Active polygon without any openings")
         });
     }
 
@@ -179,34 +231,65 @@ impl super::Joiner {
         segment: &crate::segment_polygon::Vertices,
         maybe_joining_polygon_index: Option<usize>,
         angle: f32,
-    ) -> bool {
+    ) -> Option<bool> {
         let (base_polygon, maybe_joining_polygon) =
             self.get_involved_polygons(growable_polygon_index, maybe_joining_polygon_index);
 
-        #[cfg(not(target_arch = "wasm32"))]
         tracing::trace!(
             "Polygon {growable_polygon_index} BEFORE: {:#?}",
             base_polygon
         );
 
+        tracing::debug!(
+            "Polygon {growable_polygon_index} ({})",
+            base_polygon.vertices.len()
+        );
+
         let Some(base_vertices_range) =
             super::super::vertices::find_contact(&base_polygon.vertices, &segment.distances)
         else {
-            return false;
+            return Some(false);
         };
 
         match maybe_joining_polygon {
             Some(joining_polygon) => {
-                base_polygon.join_non_starting_polygon(base_vertices_range, joining_polygon);
-                #[cfg(not(target_arch = "wasm32"))]
+                base_polygon
+                    .join_non_starting_polygon(base_vertices_range.clone(), joining_polygon);
                 tracing::trace!(
                     "Polygon {growable_polygon_index} AFTER joined polygon: {:#?}",
                     base_polygon
                 );
+
+                #[cfg(debug_assertions)]
+                {
+                    let base_polygon_original = base_polygon.clone();
+                    if base_polygon.self_intersects() {
+                        tracing::debug!(
+                            "Base polygon ({}) before join: {:#?}",
+                            base_polygon_original.vertices.len(),
+                            base_polygon_original
+                        );
+                        tracing::warn!(
+                            "Possibly bad base vertices range: {:#?}",
+                            base_vertices_range
+                        );
+                        tracing::warn!(
+                            "Possibly bad joining_vertices ({}): {:#?}",
+                            joining_polygon.vertices.len(),
+                            joining_polygon
+                        );
+                        tracing::warn!(
+                            "Bad base polygon ({}) after join: {:#?}",
+                            base_polygon.vertices.len(),
+                            base_polygon
+                        );
+                        *base_polygon = base_polygon_original;
+                        return None;
+                    }
+                }
             }
             None => {
                 base_polygon.join_segment(segment, base_vertices_range, angle);
-                #[cfg(not(target_arch = "wasm32"))]
                 tracing::trace!(
                     "Polygon {growable_polygon_index} AFTER joined segment: {:#?}",
                     base_polygon
@@ -214,7 +297,7 @@ impl super::Joiner {
             }
         }
 
-        true
+        Some(true)
     }
 
     /// Get the polygons involved in a touch check.
@@ -246,6 +329,25 @@ impl super::Joiner {
                 reason = "We're getting the indexes from `.len()`"
             )]
             (&mut self.active[growable_polygon_index], None)
+        }
+    }
+
+    /// When an invalid polygon is detected we want to isolate them for rendering.
+    fn remove_all_polygons_apart_from_bad_ones(
+        &mut self,
+        active_polygon_index: usize,
+        maybe_joining_polygon_index: Option<usize>,
+    ) {
+        self.completed.drain(..);
+        let base = self.get_active_polygon(active_polygon_index).clone();
+        self.completed.push(base);
+
+        if let Some(joining_polygon_index) = maybe_joining_polygon_index {
+            let joining = self.get_active_polygon(joining_polygon_index).clone();
+            self.active.drain(..);
+            self.completed.push(joining);
+        } else {
+            self.active.drain(..);
         }
     }
 }
@@ -561,6 +663,51 @@ mod test {
             "████▄▄▀▀▄▄▀▀▄▀▀▄▄▀▀▄▄███",
             "████████▄▄▀▀▄▀▀▄▄███████",
             "████████████▄███████████",
+        ];
+        assert_rasterised(&actual, &expected);
+    }
+
+    #[test]
+    fn surrounded_polygon() {
+        crate::setup_logging();
+        let surroundings = vec![
+            crate::segment::Segment::new(0, 1),
+            crate::segment::Segment::new(4, 1),
+        ];
+        let with_inner = vec![
+            crate::segment::Segment::new(0, 1),
+            crate::segment::Segment::new(2, 1),
+            crate::segment::Segment::new(4, 1),
+        ];
+        let long = vec![crate::segment::Segment::new(0, 5)];
+        let joined = Joiner::join(
+            &[
+                long.clone(),
+                surroundings.clone(),
+                surroundings,
+                with_inner.clone(),
+                with_inner,
+                long,
+                vec![],
+            ],
+            1.0,
+        );
+        let actual = rasterise_multi_polygon(joined);
+        // Strictly speaking this is incorrect as it doesn't join. But joining would be very
+        // complicated. At least it is not distorted and doesn't generate self-intersections.
+        let expected = [
+            "████████████████████████",
+            "█████████▀▀▀▀▄ █████████",
+            "█████▀▄ ▄████▀▄█████████",
+            "████▀▄█  ████ ██████████",
+            "███▀▄█ ▀▄▄▀██ ████▀▀▄ ██",
+            "██▀▄█ ▀▄█ ▀▄ █▀▀▄▄███ ██",
+            "██▄▀ █▄▄▄█▄▀▄ ▀▀█████ ██",
+            "███▄▀ █████▄▄███▄▄▀▀█ ██",
+            "████▄▀ ██████████▀▄█▀▄██",
+            "█████▄▀▄▄▀▀▀▀██▀▄▀▀▄████",
+            "██████▄▄▀▀▀▀█▄▄▀▄███████",
+            "████████████▄▄▄█████████",
         ];
         assert_rasterised(&actual, &expected);
     }

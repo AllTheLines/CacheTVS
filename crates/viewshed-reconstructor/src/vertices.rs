@@ -88,9 +88,10 @@ impl Iterator for OpeningsIterator<'_> {
             let (left, right) = { (&self.vertices[self.index], &self.vertices[self.index - 1]) };
 
             let is_currently_end = matches!(left.opening, Opening::End(_));
-            let is_previously_start = matches!(self.previous_opening, Opening::Start(_));
-            let is_end_without_a_start = is_currently_end && !is_previously_start;
-            assert!(!is_end_without_a_start, "Dangling Opening::End");
+            if is_currently_end {
+                let is_previously_start = matches!(self.previous_opening, Opening::Start(_));
+                assert!(is_previously_start, "Dangling Opening::End");
+            }
 
             if let Opening::Start(start) = left.opening {
                 let Opening::End(end) = right.opening else {
@@ -111,32 +112,31 @@ impl Iterator for OpeningsIterator<'_> {
 }
 
 /// Check if 2 openings touch.
+//
+// TODO(optimise): Only iterate over cached openings.
 pub(crate) fn find_contact(
     vertices: &[Vertex],
     joining_opening_range: &std::ops::Range<u32>,
 ) -> Option<std::ops::Range<usize>> {
     OpeningsIterator::new(vertices)
         .filter(|(base_opening_index, base_opening_range)| {
-            #[cfg(not(target_arch = "wasm32"))]
-            tracing::debug!(
-                "Checking if openings touch: \
-                 index: {base_opening_index:?}, \
-                 base distances: {base_opening_range:?}, \
-                 joining distances: {joining_opening_range:?}",
-            );
-
             let is_touching = crate::growable_polygon::GrowablePolygon::is_touching(
                 base_opening_range,
                 joining_opening_range,
             );
 
-            if is_touching {
-                #[cfg(not(target_arch = "wasm32"))]
-                tracing::debug!("🟢 Openings touch");
+            let message = if is_touching {
+                "🟢 Openings touch"
             } else {
-                #[cfg(not(target_arch = "wasm32"))]
-                tracing::debug!("🟡 Openings don't touch");
-            }
+                "🟡 Openings don't touch"
+            };
+
+            tracing::debug!(
+                "{message}: \
+                 index: {base_opening_index:?}, \
+                 base distances: {base_opening_range:?}, \
+                 joining distances: {joining_opening_range:?}",
+            );
 
             is_touching
         })
