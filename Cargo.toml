@@ -50,7 +50,7 @@ cargo = { level = "warn", priority = -1 }
 # > The clippy::restriction group will restrict you in some way.
 # > If you enable a restriction lint for your crate it is recommended to also fix code that
 # > this lint triggers on. However, those lints are really strict by design and you might want
-# > to #[allow] them in some special cases, with a comment justifying that.
+# > to #[expect] them in some special cases, with a comment justifying that.
 restriction = { level = "warn", priority = -1 }
 blanket_clippy_restriction_lints = "allow"
 

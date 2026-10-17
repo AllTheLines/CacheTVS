@@ -51,12 +51,9 @@ fn index_one_shard(path: &std::path::Path) -> rusqlite::Result<()> {
 
     tracing::debug!("Creating indexes for {path:?}...");
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS dem_id__index ON polar_segments(dem_id)",
+        "CREATE INDEX IF NOT EXISTS neighbourhood_id__index ON polar_segments(neighbourhood_id)",
         [],
     )?;
-
-    tracing::debug!("Analyzing {path:?}...");
-    conn.execute("ANALYZE", [])?;
 
     // Why we don't VACCUM:
     // It will attempt to copy the newly indexed database over to a new file, rebuilding the indexes
