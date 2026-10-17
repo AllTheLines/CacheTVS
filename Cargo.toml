@@ -28,6 +28,7 @@ tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 # It's always good to write as much documentation as possible
 missing_docs = "warn"
 unreachable_pub = "warn"
+unexpected_cfgs = { level = "allow", check-cfg = ["cfg(rust_analyzer)"] }
 
 [workspace.lints.clippy]
 # `clippy::all` is already on by default. It implies the following:
@@ -49,7 +50,7 @@ cargo = { level = "warn", priority = -1 }
 # > The clippy::restriction group will restrict you in some way.
 # > If you enable a restriction lint for your crate it is recommended to also fix code that
 # > this lint triggers on. However, those lints are really strict by design and you might want
-# > to #[allow] them in some special cases, with a comment justifying that.
+# > to #[expect] them in some special cases, with a comment justifying that.
 restriction = { level = "warn", priority = -1 }
 blanket_clippy_restriction_lints = "allow"
 

@@ -46,10 +46,16 @@ impl Joiner {
             )]
             let angle = anglish as f32 / angle_scale;
 
-            joiner.build_angle(angle, angle_scale, segments, dem_scale);
+            if !joiner.build_angle(angle, angle_scale, segments, dem_scale) {
+                break;
+            }
         }
 
+        // This is buggy code. For our current production purposes the cosmetic appearance of
+        // viewsheds without joining on the final angle is imperceptable.
+        #[cfg(debug_assertions)]
         joiner.build_final_angle();
+
         joiner.move_all_active_polygons_to_completed();
         for polygon in &mut joiner.completed {
             polygon.dedup_vertices_ignore_openings();

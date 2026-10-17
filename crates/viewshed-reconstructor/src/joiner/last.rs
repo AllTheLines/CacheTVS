@@ -7,12 +7,7 @@ use crate::vertices::Opening;
 impl super::Joiner {
     /// The final angle faces the challenge of joining polygons together from the first angle.
     pub(crate) fn build_final_angle(&mut self) {
-        #[cfg(not(target_arch = "wasm32"))]
         tracing::trace!("Building viewshed for final angle");
-
-        self.active.sort_by_key(|polygon| polygon.furthest_opening);
-        self.completed
-            .sort_by_key(|polygon| polygon.furthest_opening);
 
         let starting_polygon_indexes: Vec<usize> = self
             .completed
@@ -22,17 +17,18 @@ impl super::Joiner {
             .map(|item| item.0)
             .collect();
 
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            tracing::debug!("");
-            let total_polygons = starting_polygon_indexes.len() + self.active.len();
-            tracing::debug!("Final angle, polygons to check: {}", total_polygons);
-            tracing::trace!(
-                "Final angle, completed polygon (started at angle 0) indices: {:?}. Active polygons: {:?}",
-                starting_polygon_indexes,
-                self.active.len()
-            );
-        };
+        tracing::debug!("");
+        let total_polygons = starting_polygon_indexes.len() + self.active.len();
+        tracing::debug!(
+            "Final angle, completed polygons: {}, polygons to check: {}",
+            self.completed.len(),
+            total_polygons
+        );
+        tracing::trace!(
+            "Final angle, completed polygon (started at angle 0) indices: {:?}. Active polygons: {:?}",
+            starting_polygon_indexes,
+            self.active.len()
+        );
 
         let mut touching_starting_polygons = Vec::new();
         for starting_polygon_index in starting_polygon_indexes {
@@ -45,7 +41,6 @@ impl super::Joiner {
         }
 
         let polygons_to_remove = touching_starting_polygons.iter().rev();
-        #[cfg(not(target_arch = "wasm32"))]
         tracing::debug!(
             "Removing final joined polygons: {:?}",
             polygons_to_remove.clone().collect::<Vec<_>>()
@@ -73,10 +68,13 @@ impl super::Joiner {
         final_polygon_index: usize,
         maybe_starting_polygon_index: Option<usize>,
     ) -> bool {
-        #[cfg(not(target_arch = "wasm32"))]
+        let starting_polygon_debug = match maybe_starting_polygon_index {
+            Some(id) => format!("{id}"),
+            None => "self".to_owned(),
+        };
         tracing::debug!(
             "Checking final polygon {final_polygon_index} \
-             against starting polygon {maybe_starting_polygon_index:?}"
+             against starting polygon {starting_polygon_debug}"
         );
 
         let vertices_clone = if let Some(starting_polygon_index) = maybe_starting_polygon_index {
@@ -109,7 +107,6 @@ impl super::Joiner {
                         panic!("`Opening::GenesisEnd` without a following vertex");
                     };
                     let Opening::GenesisStart(end) = next.1.opening else {
-                        #[cfg(not(target_arch = "wasm32"))]
                         tracing::error!(
                             "Bad opening ({:?}) in polygon: {vertices_clone:#?}",
                             next.1.opening
@@ -148,7 +145,6 @@ impl super::Joiner {
         maybe_joining_polygon_index: Option<usize>,
         joining_vertices_range: std::ops::Range<usize>,
     ) -> bool {
-        #[cfg(not(target_arch = "wasm32"))]
         tracing::debug!(
             "Checking base polygon {base_polygon_index} \
              opening indices: {joining_vertices_range:?}"
@@ -166,32 +162,29 @@ impl super::Joiner {
         let maybe_joining_polygon =
             maybe_joining_polygon_index.map(|index| &mut self.completed[index]);
 
+        base_polygon.cache_openings();
         let Some(base_vertices_range) =
-            super::super::vertices::find_contact(&base_polygon.vertices, &joining_opening_range)
+            super::super::vertices::find_contact(base_polygon, &joining_opening_range)
         else {
             return false;
         };
 
         match maybe_joining_polygon {
             Some(joining_polygon) => {
-                #[cfg(not(target_arch = "wasm32"))]
                 tracing::trace!("Final angle, polygon BEFORE: {:#?}", base_polygon);
                 base_polygon.join_starting_polygon(
                     base_vertices_range,
                     joining_vertices_range,
                     joining_polygon,
                 );
-                #[cfg(not(target_arch = "wasm32"))]
                 tracing::trace!(
                     "Final angle, polygon AFTER joined polygon: {:#?}",
                     base_polygon
                 );
             }
             None => {
-                #[cfg(not(target_arch = "wasm32"))]
                 tracing::trace!("Final angle, self-polygon BEFORE: {:#?}", base_polygon);
                 base_polygon.join_self(joining_vertices_range, base_vertices_range);
-                #[cfg(not(target_arch = "wasm32"))]
                 tracing::trace!("Final angle, self-polygon AFTER: {:#?}", base_polygon);
             }
         }
@@ -375,6 +368,68 @@ mod test {
             "███████████▄▄▄██████████",
             "████████████████████████",
         ];
+        assert_rasterised(&actual, &expected);
+    }
+
+    #[test]
+    #[ignore = "This is just a record of the data that triggers the bug"]
+    fn self_join_then_join_another_polygon() {
+        crate::setup_logging();
+        let single = vec![crate::segment::Segment::new(0, 1)];
+        let double = vec![
+            crate::segment::Segment::new(0, 1),
+            crate::segment::Segment::new(2, 3),
+        ];
+        let joined = Joiner::join(
+            &[
+                vec![
+                    crate::segment::Segment::new(0, 1),
+                    // crate::segment::Segment::new(3, 1),
+                ],
+                single.clone(),
+                single.clone(),
+                single.clone(),
+                single.clone(),
+                single,
+                vec![crate::segment::Segment::new(0, 5)],
+                double.clone(),
+                double,
+            ],
+            1.0,
+        );
+        let actual = rasterise_multi_polygon(joined);
+        let expected = [""];
+        assert_rasterised(&actual, &expected);
+    }
+
+    #[test]
+    #[ignore = "This is just a record of the data that triggers the bug"]
+    fn dangling_opening_genesis_start() {
+        crate::setup_logging();
+        let single = vec![crate::segment::Segment::new(0, 1)];
+        let double = vec![
+            crate::segment::Segment::new(0, 1),
+            crate::segment::Segment::new(2, 3),
+        ];
+        let joined = Joiner::join(
+            &[
+                vec![
+                    crate::segment::Segment::new(0, 1),
+                    crate::segment::Segment::new(3, 1),
+                ],
+                single.clone(),
+                single.clone(),
+                single.clone(),
+                single.clone(),
+                single,
+                vec![crate::segment::Segment::new(0, 5)],
+                double.clone(),
+                double,
+            ],
+            1.0,
+        );
+        let actual = rasterise_multi_polygon(joined);
+        let expected = [""];
         assert_rasterised(&actual, &expected);
     }
 
