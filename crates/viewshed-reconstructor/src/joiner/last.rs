@@ -162,8 +162,9 @@ impl super::Joiner {
         let maybe_joining_polygon =
             maybe_joining_polygon_index.map(|index| &mut self.completed[index]);
 
+        base_polygon.cache_openings();
         let Some(base_vertices_range) =
-            super::super::vertices::find_contact(&base_polygon.vertices, &joining_opening_range)
+            super::super::vertices::find_contact(base_polygon, &joining_opening_range)
         else {
             return false;
         };

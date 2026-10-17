@@ -66,14 +66,6 @@ impl super::Joiner {
                     return false;
                 };
 
-                let polygon_highest = self
-                    .get_active_polygon(active_polygon_index)
-                    .lowest_openings
-                    .iter()
-                    .max()
-                    .expect("Polygon without any openings");
-                running_highest = *polygon_highest;
-
                 #[expect(
                     clippy::indexing_slicing,
                     reason = "We're getting the indexes from `.len()`"
@@ -87,9 +79,20 @@ impl super::Joiner {
                         joined_polygons_to_remove.push(joining_polygon_index);
                     }
                     maybe_joining_polygon_index = Some(active_polygon_index);
+                    tracing::debug!("Caching openings for {active_polygon_index}");
+                    active_polygon.cache_openings();
                 } else {
                     maybe_joining_polygon_index = None;
                 }
+
+                let polygon_highest = self
+                    .get_active_polygon(active_polygon_index)
+                    .openings
+                    .last()
+                    .expect("Polygon without any openings")
+                    .range
+                    .start;
+                running_highest = polygon_highest;
             }
 
             tracing::debug!("Removing joined polygons: {joined_polygons_to_remove:?}");
@@ -106,7 +109,8 @@ impl super::Joiner {
             }
         }
 
-        for polygon in &mut self.active {
+        for (index, polygon) in self.active.iter_mut().enumerate() {
+            tracing::trace!("Downgrading openings for polygon {index}");
             polygon.downgrade_openings();
         }
 
@@ -129,11 +133,12 @@ impl super::Joiner {
     fn is_polygon_surrounded(&self, index: usize, running_highest: u32) -> bool {
         let polygon_lowest = self
             .get_active_polygon(index)
-            .lowest_openings
-            .iter()
-            .min()
-            .expect("Polygon without any openings");
-        polygon_lowest < &running_highest
+            .openings
+            .first()
+            .expect("Polygon without any openings")
+            .range
+            .start;
+        polygon_lowest < running_highest
     }
 
     /// When a segment doesn't touch anything it becomes its own independent polygon.
@@ -164,11 +169,12 @@ impl super::Joiner {
     /// Order active polygons by their lowest opening's distance from the centre.
     pub(crate) fn order_active_polygons_by_distance_from_centre(&mut self) {
         self.active.sort_by_key(|polygon| {
-            *polygon
-                .lowest_openings
-                .iter()
-                .min()
+            polygon
+                .openings
+                .first()
                 .expect("Active polygon without any openings")
+                .range
+                .start
         });
     }
 
@@ -246,7 +252,7 @@ impl super::Joiner {
         );
 
         let Some(base_vertices_range) =
-            super::super::vertices::find_contact(&base_polygon.vertices, &segment.distances)
+            super::super::vertices::find_contact(base_polygon, &segment.distances)
         else {
             return Some(false);
         };

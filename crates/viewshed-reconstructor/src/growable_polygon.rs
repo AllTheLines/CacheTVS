@@ -1,6 +1,6 @@
 //! Growable polygons are polygons constructed one angle at a time from polar segments.
 
-use crate::vertices::Opening;
+use crate::vertices::{Opening, OpeningKind};
 
 /// A polygon that grows, but only from its anti-clockwise facing side.
 #[derive(Debug, Clone)]
@@ -9,10 +9,8 @@ pub struct GrowablePolygon {
     pub vertices: Vec<super::vertices::Vertex>,
     /// Interiore holes within the polygon.
     pub holes: Vec<Vec<super::vertices::Vertex>>,
-    /// The distances of the openings ordered from the centre of the viewshed. Used for ordering
-    /// active polygons. Polygons must be joined to new segments (and other polygons) in increasing
-    /// order to prevent overlaps.
-    pub lowest_openings: Vec<u32>,
+    /// Opening/closing pairs
+    pub openings: Vec<crate::vertices::OpeningPair>,
     /// Has the polygon been touched by anything in the current angle? If not, then it is marked as
     /// an isolated polygon that doesn't need to be checked for touches on subsequent angles.
     pub is_touched: bool,
@@ -52,13 +50,23 @@ impl GrowablePolygon {
             });
         }
 
-        Self {
+        let mut polygon = Self {
             vertices,
             holes: Vec::new(),
-            lowest_openings: vec![segment_vertices.distances.start],
+            openings: Vec::new(),
             is_touched: false,
             is_created_at_angle_0: false,
-        }
+        };
+
+        polygon.cache_openings();
+        polygon
+    }
+
+    /// Find and cache opening pairs
+    pub fn cache_openings(&mut self) {
+        self.openings = crate::vertices::OpeningPairs::find(&self.vertices)
+            .into_iter()
+            .collect::<Vec<_>>();
     }
 
     /// Create a new polygon ready to be inserted into an existing polygon.
@@ -94,37 +102,32 @@ impl GrowablePolygon {
         polygon
     }
 
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "There's no meaningful way to recover"
+    )]
     /// Once all the segments for an angle have been checked we convert the openings in the new
     /// polygon as follows:
     ///   * `Opening::NewStart/NewEnd` become `Opening::Start/End`.
     ///   * `Opening::Start/End` become `Opening::Null`.
-    //
-    // TODO(optimise): Only iterate over cached openings.
     pub(crate) fn downgrade_openings(&mut self) {
-        tracing::trace!("Downgrading openings");
-        let mut iterator = self.vertices.iter_mut().rev();
-        while let Some(vertex) = iterator.next() {
-            match vertex.opening {
-                Opening::Null | Opening::GenesisStart(_) | Opening::GenesisEnd(_) => {}
-                Opening::End(_) => {
-                    panic!("Dangling `Opening`");
+        self.openings
+            .retain_mut(|opening_pair| match opening_pair.kind {
+                OpeningKind::Normal => {
+                    self.vertices[opening_pair.index - 1].opening = Opening::Null;
+                    self.vertices[opening_pair.index].opening = Opening::Null;
+                    false
                 }
-                Opening::Start(_) => {
-                    let Some(next) = iterator.next() else {
-                        panic!("`Opening::Start` without adjacent end");
-                    };
-
-                    vertex.opening = Opening::Null;
-                    next.opening = Opening::Null;
+                OpeningKind::New => {
+                    self.vertices[opening_pair.index].opening =
+                        Opening::Start(opening_pair.range.start);
+                    self.vertices[opening_pair.index - 1].opening =
+                        Opening::End(opening_pair.range.end);
+                    opening_pair.kind = OpeningKind::Normal;
+                    true
                 }
-                Opening::NewStart(at) => {
-                    vertex.opening = Opening::Start(at);
-                }
-                Opening::NewEnd(at) => {
-                    vertex.opening = Opening::End(at);
-                }
-            }
-        }
+                OpeningKind::Genesis => true,
+            });
     }
 
     /// Insert new vertices into the polygon. Can be either a segment or an entire other growable
@@ -150,23 +153,11 @@ impl GrowablePolygon {
             .expect("Couldn't get new opening start index")
             .opening = old_start;
 
+        // Doesn't seem to speed up the algorithm, so just useful for debugging.
+        #[cfg(debug_assertions)]
         self.dedup_vertices_but_keep_openings();
+
         self.create_holes(&removed_vertices);
-        self.set_lowest_opening();
-    }
-
-    /// Record the polygon's openings in order of their distance from the centre of the viewshed.
-    //
-    // TODO(optimise): Only iterate over cached openings.
-    fn set_lowest_opening(&mut self) {
-        self.lowest_openings = Vec::new();
-        for vertex in &self.vertices {
-            if let Opening::Start(distance) = vertex.opening {
-                self.lowest_openings.push(distance);
-            }
-        }
-
-        self.lowest_openings.sort_unstable();
     }
 
     /// Insert a segment into the polygon.
@@ -208,21 +199,26 @@ impl GrowablePolygon {
         joining_polygon: &mut Self,
     ) {
         let mut maybe_joining_new_end_index = None;
-        // TODO(optimise): Only iterate over cached openings.
-        for (index, vertex) in joining_polygon.vertices.iter_mut().enumerate().rev() {
+        joining_polygon.openings.retain_mut(|opening_pair| {
             // Find where in the joining polygon we are opening up to be joined by the base polygon.
-            if matches!(vertex.opening, Opening::NewEnd(_)) {
-                maybe_joining_new_end_index = Some(index);
+            if matches!(opening_pair.kind, OpeningKind::New) {
+                maybe_joining_new_end_index = Some(opening_pair.index - 1);
             }
 
+            #[expect(
+                clippy::indexing_slicing,
+                reason = "There's no meaningful way to recover"
+            )]
             // Nullify all openings so we don't try to join them in the future.
             // TODO: why can't this be done via the `downgrade_openings()` method?
-            let is_start = matches!(vertex.opening, Opening::Start(_));
-            let is_end = matches!(vertex.opening, Opening::End(_));
-            if is_start || is_end {
-                vertex.opening = Opening::Null;
+            if matches!(opening_pair.kind, OpeningKind::Normal) {
+                joining_polygon.vertices[opening_pair.index].opening = Opening::Null;
+                joining_polygon.vertices[opening_pair.index - 1].opening = Opening::Null;
+                return false;
             }
-        }
+            true
+        });
+
         let Some(joining_new_end_index) = maybe_joining_new_end_index else {
             panic!("Couldn't find `Opening::NewEnd` for joining polygon");
         };
@@ -368,7 +364,6 @@ impl GrowablePolygon {
     /// Remove adjacent vertices that are either identical or extremely similar. This reduces the
     /// byte size of the final polygon and speeds up the algorithm by about 10%.
     //
-    // TODO(optimise): Only iterate over cached openings.
     // TODO: Could the algorithm be improved so that this function wasn't even needed?
     fn dedup_vertices_but_keep_openings(&mut self) {
         self.vertices.dedup_by(|left, right| {
@@ -380,7 +375,7 @@ impl GrowablePolygon {
     }
 
     /// Dedupe vertices, but allow destroying opening metadata. This is useful right at the very end
-    /// of the reconstruction.
+    /// of the reconstruction for reducing the number of coordinates to render.
     pub(crate) fn dedup_vertices_ignore_openings(&mut self) {
         self.vertices.dedup_by(|left, right| {
             Self::are_coordinates_within_tolerance(&left.coordinate, &right.coordinate)

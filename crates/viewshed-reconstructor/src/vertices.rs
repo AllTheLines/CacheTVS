@@ -43,8 +43,30 @@ pub enum Opening {
     NewEnd(u32),
 }
 
+/// The kind of opening.
+#[derive(Debug, Clone)]
+pub enum OpeningKind {
+    /// An opening on a starting angle 0 polygon.
+    Genesis,
+    /// A normal opening.
+    Normal,
+    /// An opening that has been added before the end of parsing the current angle.
+    New,
+}
+
+/// An opening/closing on a polygon.
+#[derive(Debug, Clone)]
+pub struct OpeningPair {
+    /// The vertex index.
+    pub index: usize,
+    /// The index range of the opneing.
+    pub range: std::ops::Range<u32>,
+    /// The kind of opening.
+    pub kind: OpeningKind,
+}
+
 /// Iterator for finding start/open vertex pairs for openings.
-pub(crate) struct OpeningsIterator<'vertices> {
+pub(crate) struct OpeningPairs<'vertices> {
     /// The vertices to scan.
     vertices: &'vertices [Vertex],
     /// The current index of the iterator.
@@ -53,25 +75,33 @@ pub(crate) struct OpeningsIterator<'vertices> {
     previous_opening: Opening,
 }
 
-impl<'vertices> OpeningsIterator<'vertices> {
+impl<'vertices> OpeningPairs<'vertices> {
     /// Instantiate.
-    pub(crate) const fn new(vertices: &'vertices [Vertex]) -> Self {
+    const fn new(vertices: &'vertices [Vertex]) -> Self {
         Self {
             vertices,
             index: vertices.len() - 1,
             previous_opening: Opening::Null,
         }
     }
-}
 
-impl Iterator for OpeningsIterator<'_> {
-    type Item = (usize, std::ops::Range<u32>);
+    /// Find all the opening pairs on a polygon.
+    pub(crate) fn find(vertices: &'vertices [Vertex]) -> Vec<OpeningPair> {
+        let mut finder = Self::new(vertices);
+        let mut opening_pairs = Vec::new();
+        while let Some(opening_pair) = finder.next() {
+            opening_pairs.push(opening_pair);
+        }
+        opening_pairs.sort_by_key(|opening_pair| opening_pair.range.start);
+        opening_pairs
+    }
 
     #[expect(
         clippy::panic,
         reason = "Opening ordering is a requirement of the algorithm"
     )]
-    fn next(&mut self) -> Option<Self::Item> {
+    /// Loop over indexes to find opening pairs.
+    fn next(&mut self) -> Option<OpeningPair> {
         loop {
             if self.index == 0 {
                 #[expect(
@@ -93,35 +123,61 @@ impl Iterator for OpeningsIterator<'_> {
                 assert!(is_previously_start, "Dangling Opening::End");
             }
 
+            if let Opening::NewStart(start) = left.opening {
+                let Opening::NewEnd(end) = right.opening else {
+                    panic!("Opening::NewStart not followed by Opening::NewEnd");
+                };
+
+                let pair =
+                    self.opening_pair_found(right.opening.clone(), start..end, OpeningKind::New);
+                return Some(pair);
+            }
+
             if let Opening::Start(start) = left.opening {
                 let Opening::End(end) = right.opening else {
                     panic!("Opening::Start not followed by Opening::End");
                 };
 
-                self.previous_opening = right.opening.clone();
-                let opening_range = start..end;
-                let opening_index = self.index;
-                self.index = self.index.saturating_sub(2);
-                return Some((opening_index, opening_range));
+                let pair =
+                    self.opening_pair_found(right.opening.clone(), start..end, OpeningKind::Normal);
+                return Some(pair);
             }
 
             self.previous_opening = left.opening.clone();
             self.index -= 1;
         }
     }
+
+    /// Handle the finding of an opening pair.
+    const fn opening_pair_found(
+        &mut self,
+        previous: Opening,
+        range: std::ops::Range<u32>,
+        kind: OpeningKind,
+    ) -> OpeningPair {
+        self.previous_opening = previous;
+        let opening_index = self.index;
+        self.index = self.index.saturating_sub(2);
+        OpeningPair {
+            index: opening_index,
+            range,
+            kind,
+        }
+    }
 }
 
 /// Check if 2 openings touch.
-//
-// TODO(optimise): Only iterate over cached openings.
 pub(crate) fn find_contact(
-    vertices: &[Vertex],
+    growable_polygon: &crate::growable_polygon::GrowablePolygon,
     joining_opening_range: &std::ops::Range<u32>,
 ) -> Option<std::ops::Range<usize>> {
-    OpeningsIterator::new(vertices)
-        .filter(|(base_opening_index, base_opening_range)| {
+    growable_polygon
+        .openings
+        .iter()
+        .filter(|opening_pair| matches!(opening_pair.kind, OpeningKind::Normal))
+        .filter(|opening_pair| {
             let is_touching = crate::growable_polygon::GrowablePolygon::is_touching(
-                base_opening_range,
+                &opening_pair.range,
                 joining_opening_range,
             );
 
@@ -133,14 +189,17 @@ pub(crate) fn find_contact(
 
             tracing::debug!(
                 "{message}: \
-                 index: {base_opening_index:?}, \
-                 base distances: {base_opening_range:?}, \
+                 index: {:?}, \
+                 base distances: {:?}, \
                  joining distances: {joining_opening_range:?}",
+                opening_pair.index,
+                opening_pair.range
             );
 
             is_touching
         })
-        .fold(None, |accumulator, (index, _)| {
+        .fold(None, |accumulator, opening_pair| {
+            let index = opening_pair.index;
             let range_of_touch = accumulator.map_or(index..index, |range| {
                 std::cmp::min(range.start, index)..std::cmp::max(range.end, index)
             });
@@ -162,7 +221,10 @@ mod test {
 
     fn run(mut vertices: Vec<super::Vertex>) -> Vec<(usize, std::ops::Range<u32>)> {
         vertices.reverse();
-        OpeningsIterator::new(&vertices).collect::<Vec<_>>()
+        OpeningPairs::find(&vertices)
+            .into_iter()
+            .map(|opening| (opening.index, opening.range))
+            .collect::<Vec<_>>()
     }
 
     // TODO:
